@@ -95,9 +95,6 @@ class ConvPaintWidget(QWidget):
         self.main_layout.addWidget(tab_header_widget)
         self.main_layout.addWidget(self.tabs)
         
-        # Disable project tab as long as not activated
-        # self.tabs.setTabEnabled(self.tabs.tab_names.index('Project'), False)
-        
         # Align rows in some tabs on top
         for tab_name in ['Home', 'Model options', 'Advanced']:
             if tab_name in self.tabs.tab_names:

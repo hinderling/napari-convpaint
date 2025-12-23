@@ -11,7 +11,7 @@ This tool, that comes both as a napari plugin and an intuitive Python API, can b
 
 Following an idea similar to other tools like ilastik, its main strength lies in its capability to use features from basically any model that creates meaningful features describing an image: from neural networks like VGG16 to foundational ViTs such as DINOV2, but also popular models such as Ilastik or Cellpose. This enables the segmentation of virtually any type of image, from simple to complex - without the need of switching and learning new tools.
 
-**Find more information and tutorials in the [docs](https://guiwitz.github.io/napari-convpaint/) or read the [preprint of the paper](https://doi.org/10.1101/2024.09.12.610926).**
+**Find more information and tutorials in the [docs](https://guiwitz.github.io/napari-convpaint/), the recording of the [presentation at I2K 2025 conference](https://www.youtube.com/watch?v=zoxaWo9J4nE) or read the [preprint of the paper](https://doi.org/10.1101/2024.09.12.610926).**
 
 ![overview conv-paint](/images/network_github.png)
 
@@ -51,7 +51,7 @@ cp_model.train(image, annotations)
 segmentation = cp_model.segment(image)
 ```
 
-There are many other options, such as predicting all classes as separate *probabilities* (see below). Please refer to the [documentation](https://guiwitz.github.io/napari-convpaint/book/Landing.html) for more details.
+There are many other options, such as predicting all classes as separate *probabilities* (see below). Please refer to the [documentation](https://guiwitz.github.io/napari-convpaint/book/Convpaint_api_introduction.html) for more details.
 
 ```Python
 probas = cp_model.predict_probas(image)
