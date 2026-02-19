@@ -587,7 +587,7 @@ class ConvPaintWidget(QWidget):
         # Add connections and initialize by setting default model and params
         self._add_connections()
         if self.image_layer_selection_widget.value is not None:
-            try:
+            try: # This should technically not be necessary, as we are not raising errors, but is added as a precaution
                 self._on_select_layer()
             except Exception:
                 warnings.warn(
@@ -1104,10 +1104,10 @@ class ConvPaintWidget(QWidget):
         """Assign the layer to segment and update data radio buttons accordingly"""
 
         # Check if the selected image has compatible dimensions
-        img_check = self.image_layer_selection_widget.value
-        if img_check is not None and (img_check.ndim < 2 or img_check.ndim > 4):
+        data_dims = self._get_data_dims(self._get_selected_img())
+        if data_dims not in self.supported_dims:
             warnings.warn(
-                f'Selected image has {img_check.ndim} dimensions, but only '
+                f'Non-supported image dimensions {data_dims}. Only '
                 f'2D-4D images are supported. Please select a compatible image.'
             )
             self.add_layers_btn.setEnabled(False)
@@ -1246,7 +1246,7 @@ class ConvPaintWidget(QWidget):
 
         # Check if annotations of at least 2 classes are present
         if annot is None:
-            raise Exception('No annotation layer selected. Please create one.')
+            raise Exception('No annotation layer selected. Please create/select one.')
         unique_labels = np.unique(annot.data)
         unique_labels = unique_labels[unique_labels != 0]
         if len(unique_labels) < 2:
@@ -1360,10 +1360,18 @@ class ConvPaintWidget(QWidget):
 
         with progress(total=0) as pbr:
             pbr.set_description(f"Prediction")
+            
+            # Check dimensionality
+            data_dims = self._get_data_dims(self._get_selected_img())
+            if data_dims not in self.supported_data_dims:
+                warnings.warn(f'Non-supported image dimensions {data_dims}. Prediction not performed.')
+                return
+            
             # Get the data
             image_plane = self._get_current_plane_norm()
-            # Predict image (use backend function which returns probabilities and segmentation); skip norm as it is done above
             in_channels = self._parse_in_channels(self.input_channels)
+            
+            # Predict image (use backend function which returns probabilities and segmentation); skip norm as it is done above
             probas, segmentation = self.cp_model._predict(image_plane, add_seg=True, in_channels=in_channels, skip_norm=True, use_dask=self.use_dask)
 
         with warnings.catch_warnings():
@@ -1371,7 +1379,6 @@ class ConvPaintWidget(QWidget):
             self.viewer.window._status_bar._toggle_activity_dock(False)
 
         # Get the current step in case of stacks
-        data_dims = self._get_data_dims(self._get_selected_img())
         step = self.viewer.dims.current_step[-3] if data_dims in ['3D_single', '4D', '3D_RGB'] else None
 
         # Add segmentation layer if enabled
@@ -1384,9 +1391,9 @@ class ConvPaintWidget(QWidget):
             # Update segmentation layer
             if data_dims in ['2D', '2D_RGB', '3D_multi']:
                 self.viewer.layers[self.seg_prefix].data = segmentation
-            else: # 3D_single, 4D, 3D_RGB
-                # seg has no channel dim -> z is first
+            elif data_dims in ['3D_single', '4D', '3D_RGB']: # seg has no channel dim -> z is first
                 self.viewer.layers[self.seg_prefix].data[step] = segmentation
+            # Case `data_dims is None` and other invalid cases are already caught above, so we don't need an else statement here
             self.viewer.layers[self.seg_prefix].refresh()
 
         # Add probabilities if enabled
@@ -1400,8 +1407,9 @@ class ConvPaintWidget(QWidget):
             # Update probabilities layer
             if data_dims in ['2D', '2D_RGB', '3D_multi']: # No stack dim
                 self.viewer.layers[self.proba_prefix].data = probas
-            else: # 3D_single, 4D, 3D_RGB (stack dim is second, probas first)
+            elif data_dims in ['3D_single', '4D', '3D_RGB']: # (stack dim is second, probas first)
                 self.viewer.layers[self.proba_prefix].data[:, step] = probas
+            # Case `data_dims is None` and other invalid cases are already caught above, so we don't need an else statement here
             self.viewer.layers[self.proba_prefix].refresh()
 
     def _on_get_feature_image(self, event=None):
@@ -1413,7 +1421,13 @@ class ConvPaintWidget(QWidget):
             self.viewer.window._status_bar._toggle_activity_dock(True)
 
         with progress(total=0) as pbr:
-            pbr.set_description(f"Feature extraction") 
+            pbr.set_description(f"Feature extraction")
+
+            # Check dimensionality
+            data_dims = self._get_data_dims(self._get_selected_img())
+            if data_dims not in self.supported_data_dims:
+                warnings.warn(f'Non-supported image dimensions {data_dims}. Feature extraction not performed.')
+                return
 
             # Get the data
             image_plane = self._get_current_plane_norm()
@@ -1431,29 +1445,33 @@ class ConvPaintWidget(QWidget):
             warnings.simplefilter(action="ignore", category=FutureWarning)
             self.viewer.window._status_bar._toggle_activity_dock(False)
 
-        # Update features layer
         # Check if we need to create a new features layer
         num_features = feature_image.shape[0] if not kmeans else 0
         self._check_create_features_layer(num_features)
         # Set the flag to False, so we don't create a new layer every time
         self.new_features = False
 
-        data_dims = self._get_data_dims(self._get_selected_img())
+        # Update features layer
         if data_dims in ['2D', '2D_RGB', '3D_multi']: # No stack dim
             self.viewer.layers[self.features_prefix].data = feature_image
-        else: # 3D_single, 4D, 3D_RGB (stack dim is third last)
+        elif data_dims in ['3D_single', '4D', '3D_RGB']: # stack dim is third last
             step = self.viewer.dims.current_step[-3]
             self.viewer.layers[self.features_prefix].data[..., step, :, :] = feature_image
+        # Case `data_dims is None` and other invalid cases are already caught above, so we don't need an else statement here
         self.viewer.layers[self.features_prefix].refresh()
 
     def _on_predict_all(self):
         """Predict the segmentation of all frames based 
         on a classifier model trained with annotations."""
         
+        # Get the data
         img = self._get_selected_img(check=True)
+
+        # Check dimensionality
         data_dims = self._get_data_dims(img)
         if data_dims not in ['3D_single', '3D_RGB', '4D']:
-            raise Exception(f'Image stack has wrong dimensionality {data_dims}')
+            warnings.warn(f'Image stack has wrong dimensionality ({data_dims}) for predicting stacks. Prediction not performed.')
+            return
         
         # Create the segmentation layer if it is not already present
         # (NOTE: probabilities layer is created in the prediction loop, as we need to know the number of classes)
@@ -1509,10 +1527,13 @@ class ConvPaintWidget(QWidget):
 
         # Get the data
         img = self._get_selected_img(check=True)
+
+        # Check dimensionality
         data_dims = self._get_data_dims(img)
         if data_dims not in ['3D_single', '3D_RGB', '4D']:
-            raise Exception(f'Image stack has wrong dimensionality {data_dims}')
-
+            warnings.warn(f'Image stack has wrong dimensionality ({data_dims}) for processing stacks. Feature extraction not performed.')
+            return
+        
         # Start feature extraction
         with warnings.catch_warnings():
             warnings.simplefilter(action="ignore", category=FutureWarning)
@@ -1621,9 +1642,8 @@ class ConvPaintWidget(QWidget):
         new_model = ConvpaintModel(model_path=save_string)
         new_param = new_model.get_params()
         
-        # Check if the new multichannel setting is compatible with data
-        data = self._get_selected_img()
-        data_dims = self._get_data_dims(data)
+        # Check if the new multichannel setting is incompatible with data
+        data_dims = self._get_data_dims(self._get_selected_img())
         channel_mode = new_param.channel_mode
         if data_dims in ['2D'] and channel_mode in ['rgb', 'multi']:
             warnings.warn(f'The loaded model works with {channel_mode} data, but the data is {data_dims}. ' +
@@ -1781,6 +1801,7 @@ class ConvPaintWidget(QWidget):
         # self.update_layer_flag = True # Flag to prevent updating layers twice on one trigger
         # self.rgb_img = getattr(self, "rgb_img", None) or False # Tag to register if the image is RGB
         self.data_shape = None # Shape of the currently selected image data
+        self.supported_data_dims = ('2D', '2D_RGB', '3D_RGB', '3D_multi', '3D_single', '4D') # Supported data dimensionalities (for checks and warnings)
         self.current_model_path = 'not trained' # Path to the current model (if saved)
         self.auto_add_layers = True # Automatically add layers when a new image is selected
         self.keep_layers = False # Keep old layers when adding new ones
@@ -1873,8 +1894,7 @@ class ConvPaintWidget(QWidget):
         # Get default non-FE params from temp model and update the GUI (also setting the params)
         fe_defaults = self.temp_fe_model.get_default_params()
         adjusted_params = [] # List of adjusted parameters for raising a warning
-        data = self._get_selected_img()
-        data_dims = self._get_data_dims(data)
+        data_dims = self._get_data_dims(self._get_selected_img())
         # Multichannel
         if ((fe_defaults.channel_mode is not None) and
             (new_param.channel_mode != fe_defaults.channel_mode)):
@@ -1885,7 +1905,7 @@ class ConvPaintWidget(QWidget):
             elif data_dims in ['2D_RGB', '3D_RGB', '4D'] and fe_defaults.channel_mode == 'single':
                 warnings.warn(f'The feature extractor tried to set its default single-channel mode on {data_dims} data. ' +
                               'This is not supported and will be ignored.')
-            else: # If data is compatible, set the model's default multichannel setting
+            else: # If data is compatible, set the model's default multichannel setting; also assume this in case data_dims is None/invalid
                 adjusted_params.append('channel_mode')
                 new_param.channel_mode = fe_defaults.channel_mode
                 self._reset_radio_channel_mode_choices()
@@ -2254,8 +2274,10 @@ class ConvPaintWidget(QWidget):
             for x in self.norm_buttons: x.setEnabled(False)
             return
         
-        data = self._get_selected_img()
-        data_dims = self._get_data_dims(data)
+        data_dims = self._get_data_dims(self._get_selected_img())
+        if data_dims not in self.supported_data_dims:
+            warnings.warn(f'Non-supported image dimensions {data_dims}. Normalization buttons not updated.')
+            return
         norm_scope = self.cp_model.get_param("normalize")
         
         if data_dims in ['2D', '2D_RGB', '3D_multi']: # No z dim available -> no stack norm
@@ -2266,11 +2288,12 @@ class ConvPaintWidget(QWidget):
                 self.radio_normalize_by_image.setChecked(True)
             else: # Otherwise, keep the current setting
                 self.button_group_normalize.button(norm_scope).setChecked(True)
-        else: # 3D_single, 4D, 3D_RGB -> with z dim available -> all options
+        elif data_dims in ['3D_single', '3D_RGB', '4D']: # With z dim available -> all options
             self.radio_no_normalize.setEnabled(True)
             self.radio_normalize_over_stack.setEnabled(True)
             self.radio_normalize_by_image.setEnabled(True)
             self.button_group_normalize.button(norm_scope).setChecked(True)
+        # Case `data_dims is None` and other invalid cases are already caught above, so we don't need an else statement here
 
     def _reset_predict_buttons(self):
         """Enable or disable predict buttons based on the current state."""
@@ -2278,6 +2301,9 @@ class ConvPaintWidget(QWidget):
         if self.image_layer_selection_widget.value is not None:
             data = self._get_selected_img()
             data_dims = self._get_data_dims(data)
+            if data_dims not in self.supported_data_dims:
+                warnings.warn(f'Non-supported image dimensions {data_dims}. Predict buttons not updated.')
+                return
             is_stacked = data_dims in ['4D', '3D_single', '3D_RGB']
             # We need a trained model to enable segmentation
             if self.trained:
@@ -2409,8 +2435,11 @@ class ConvPaintWidget(QWidget):
             return img_shape[0:2]
         elif data_dims in ['3D_RGB', '3D_single']:
             return img_shape[0:3]
-        else: # 3D_multi, 4D (-> channels first)
+        elif data_dims in ['3D_multi', '4D']: # channels first
             return img_shape[1:]
+        else:
+            warnings.warn(f'Unsupported data dimensions {data_dims}. Annotation and segmentation layers might not be created with the correct shape.')
+            return img_shape
 
     def _check_large_image(self, img):
         """Check if the image is very large and should be tiled."""
@@ -2420,8 +2449,11 @@ class ConvPaintWidget(QWidget):
             xy_plane = img_shape[0] * img_shape[1]
         elif data_dims in ['3D_single', '3D_RGB', '3D_multi']:
             xy_plane = img_shape[1] * img_shape[2]
-        else: # 4D
+        elif data_dims == '4D':
             xy_plane = img_shape[2] * img_shape[3]
+        else:
+            warnings.warn(f'Unsupported data dimensions {data_dims}. Image size is not evaluated for tiling.')
+            xy_plane = 0
         return xy_plane > self.spatial_dim_info_thresh
 
     def _reset_clf(self):
@@ -2534,7 +2566,10 @@ class ConvPaintWidget(QWidget):
         if data_dims in ['2D_RGB', '3D_RGB']:
             data = img.data[..., :3]  # Strip alpha channel if RGBA
             img = np.moveaxis(data, -1, 0)
+        elif data_dims in ['2D', '3D_single', '3D_multi', '4D']:
+            img = img.data
         else:
+            warnings.warn(f'Unsupported data dimensions {data_dims}. Data is returned without moving channel axis to first position if needed.')
             img = img.data
         return img
 
@@ -2565,8 +2600,11 @@ class ConvPaintWidget(QWidget):
                 data_dims = self._get_data_dims(img)
                 if data_dims in ["4D", "3D_multi", "2D_RGB", "3D_RGB"]: # Channels dimension present
                     num_ignored_dims = 1 # ignore channels dimension, but norm over stack if present
-                else: # 2D or 3D_single -> no channels dimension present
+                elif data_dims in ["2D", "3D_single"]: # No channels dimension present
                     num_ignored_dims = 0 # norm over entire stack
+                else:
+                    warnings.warn(f'Unsupported data dimensions {data_dims}. Normalization over stack might not be applied correctly.')
+                    num_ignored_dims = 0
             elif norm_scope == 3: # normalize by image --> keep channels and plane dimensions
                 # also takes into account CXY case (3D multi-channel image) where first dim is dropped, and 2D where none is
                 num_ignored_dims = image_stack.ndim-2 # number of channels and/or Z dimension (i.e. "non-spatial" dimensions)
@@ -2582,7 +2620,7 @@ class ConvPaintWidget(QWidget):
         return normalize_image(image=image_stack,
                                image_mean=self.image_mean,
                                image_std=self.image_std)
-    
+
     def _get_current_plane_norm(self):
         """Get the current image plane to predict on, normalized according to the settings."""
         
@@ -2611,13 +2649,16 @@ class ConvPaintWidget(QWidget):
             # For percentile norm, we want already normalized data to avoid artifacts when normalizing only the current plane
             img = self._get_data_channel_first_norm(img)
 
-        if data_dims in ['2D', '2D_RGB', '3D_multi']: # No stack dim
+        if data_dims in ['2D', '2D_RGB', '3D_multi'] or data_dims not in self.supported_data_dims:
+            # No stack dim, so just take the image as is; use this also in case of invalid data_dims
+            if data_dims not in self.supported_data_dims:
+                warnings.warn(f'Unsupported data dimensions {data_dims}. Current plane is not selected correctly.')
+            # Use img as is
             image_plane = img
-            # Get stats for default norm
+            # Get stats for default norm if needed
             if norm_scope != 1 and use_default: # if we need to normalize and use default norm
                 image_mean = self.image_mean
                 image_std = self.image_std
-
         elif data_dims == '3D_single': # Stack dim is third last
             # NOTE: If we already have a layer with probas, the viewer has 4 dims; therefore take 3rd last not first
             step = self.viewer.dims.current_step[-3]
@@ -2630,7 +2671,7 @@ class ConvPaintWidget(QWidget):
                 image_mean = self.image_mean[step]
                 image_std = self.image_std[step]
 
-        else: # ['4D', '3D_RGB'] --> Stack dim is third last
+        elif data_dims in ['4D', '3D_RGB']: # Stack dim is third last
             step = self.viewer.dims.current_step[-3]
             image_plane = img[:, step]
             # Get stats for default norm
@@ -2640,7 +2681,7 @@ class ConvPaintWidget(QWidget):
             if norm_scope == 3 and use_default: # by image (use values for current step; C, N, 1, 1)
                 image_mean = self.image_mean[:,step]
                 image_std = self.image_std[:,step]
-        
+
         # Normalize image (for default: use the stats based on the radio buttons; for imagenet: stats are fixed)
         if norm_scope != 1:
             if use_default:
@@ -2667,25 +2708,29 @@ class ConvPaintWidget(QWidget):
 
         # Assure to have channels dimension first, get the data_dims and normalization mode
         data_dims = self._get_data_dims(img)
-        if data_dims is None:
+
+        # If image has unsupported dimensions, set stats to None and warn
+        if data_dims not in self.supported_data_dims:
+            warnings.warn(f'Unsupported image dimensions {data_dims}. Image stats for normalization are not computed.')
             self.image_mean, self.image_std = None, None
             return
-        data = self._get_data_channel_first(img)
-        norm_scope = self.cp_model.get_param("normalize")
 
         # Compute image stats depending on the normalization mode
 
+        data = self._get_data_channel_first(img)
+        norm_scope = self.cp_model.get_param("normalize")
         if norm_scope == 2: # normalize over stack --> only keep channels dimension
             if data_dims in ["4D", "3D_multi", "2D_RGB", "3D_RGB"]: # Channels dimension present
                 # 3D multi/2D_RGB or 4D/3D_RGB --> (C,1,1) or (C,1,1,1)
                 self.image_mean, self.image_std = compute_image_stats(
                     image=data,
                     ignore_n_first_dims=1) # ignore channels dimension, but norm over stack if present
-            else: # No channels dimension present
+            elif data_dims in ["2D", "3D_single"]: # No channels dimension present
                 # 2D or 3D_single --> (1,1) or (1,1,1)
                 self.image_mean, self.image_std = compute_image_stats(
                     image=data,
                     ignore_n_first_dims=None) # norm over entire stack
+            # Case `data_dims is None` and other invalid cases are already caught above, so we don't need an else statement here
 
         elif norm_scope == 3: # normalize by image --> keep channels and plane dimensions
             # also takes into account CXY case (3D multi-channel image) where first dim is dropped, and 2D where none is
@@ -2695,7 +2740,7 @@ class ConvPaintWidget(QWidget):
             # --> 2D (1,1) or 3D (single, multi -> Z/C,1,1) or 2D_RGB (C,1,1) or 4D/3D_RGB (C,Z,1,1)
 
     def _get_data_dims(self, img):
-        """Get data dimensions. Also perform checks on the data dimensions.
+        """Get data dimensionality. Also perform checks on the data dimensions.
         Returns '2D', '2D_RGB', '3D_RGB', '3D_multi', '3D_single' or '4D'."""
 
         if img is None:
