@@ -735,7 +735,9 @@ class ConvpaintModel:
         probas = self._predict(image, add_seg=False, in_channels=in_channels, skip_norm=skip_norm, use_dask=use_dask)
         return probas
     
-    def get_feature_image(self, data, in_channels=None, skip_norm=False, pca_components=0, kmeans_clusters=0):
+    def get_feature_image(self, data,
+                          in_channels=None, skip_norm=False,
+                          pca_components=0, kmeans_clusters=0):
         """
         Returns the feature images extracted by the feature extractor model.
         For details, see the `_extract_features` method.
@@ -744,16 +746,13 @@ class ConvpaintModel:
         ----------
         data : np.ndarray or list[np.ndarray]
             Image(s) to extract features from
-        memory_mode : bool, optional
-            Whether to use memory mode.
-            If True, the annotations are registered and updated, and only features for new pixels are extracted.
-        img_ids : str or list[str], optional
-            Image IDs to register the annotations with (when using memory_mode)
         in_channels : list[int], optional
             List of channels to use for feature extraction
         skip_norm : bool, optional
             Whether to skip normalization of the images before feature extraction.
             If True, the images are not normalized according to the parameter `normalize` in the model parameters.
+        pca_components : int, optional
+            Number of PCA components to reduce the features to (0 for no PCA)
 
         Returns
         ----------
@@ -823,6 +822,11 @@ class ConvpaintModel:
         skip_norm : bool, optional
             Whether to skip normalization of the images before feature extraction.
             If True, the images are not normalized according to the parameter `normalize` in the model parameters.
+        pca_components : int, optional
+            Number of PCA components to reduce the features to (0 for no PCA)
+        kmeans_clusters : int, optional
+            Number of KMeans clusters to reduce the features to (0 for no KMeans); applied after PCA reduction if both are used.
+            Only applied if input form is restored, intended as a sort of unsupervised segmentation.
 
         Returns
         ----------
@@ -837,7 +841,7 @@ class ConvpaintModel:
         # Check if we are processing any annotations
         use_annots   = annotations is not None
         # Check for single input
-        single_input = hasattr(data, 'ndim') and data.ndim >= 2 and not isinstance(data, list)
+        single_input = hasattr(data, 'ndim') and data.ndim >= 2 and not isinstance(data, (list, tuple))
         # Record original input shapes for reshaping and rescaling later
         input_shapes = [data.shape] if single_input else [d.shape for d in data]
         # Make sure img_ids are compatible and is made into a list
@@ -1762,7 +1766,7 @@ class ConvpaintModel:
             raise ValueError("in_channels must be a list of integers. Please provide a list of channel indices to use.")
 
         # Check that all in_channels are valid channel indices
-        channels_in_data = data[0].shape[0] if isinstance(data, list) else data.shape[0]
+        channels_in_data = data[0].shape[0] if isinstance(data, (list, tuple)) else data.shape[0]
         if not all(0 <= ch < channels_in_data for ch in in_channels):
             raise ValueError("All in_channels must be valid channel indices. Please adjust in_channels to be within the range of channels in the data.")
     
