@@ -313,6 +313,7 @@ class ConvPaintWidget(QWidget):
 
         # Create and add scalings selection to FE group
         self.fe_scaling_factors = QComboBox()
+        self.fe_scaling_factors.setEditable(True)
         self.fe_group.glayout.addWidget(QLabel('Pyramid downscaling factors'), 4, 0, 1, 1)
         self.fe_group.glayout.addWidget(self.fe_scaling_factors, 4, 1, 1, 1)
 
@@ -720,6 +721,7 @@ class ConvPaintWidget(QWidget):
         self.reset_default_fe_btn.clicked.connect(self._on_reset_default_fe)
         self.fe_layer_selection.itemSelectionChanged.connect(self._on_fe_layer_selection_changed)
         self.fe_scaling_factors.currentIndexChanged.connect(self._on_fe_scalings_changed)
+        self.fe_scaling_factors.lineEdit().textChanged.connect(self._on_fe_scalings_changed)
         # NOTE: Changing interpolation_order, use_min_features and use_gpu of FE
         # shall only be applied when the user clicks the button to set the FE
         
@@ -1886,10 +1888,15 @@ class ConvPaintWidget(QWidget):
         # Read FE parameters from the GUI
         new_param = self.cp_model.get_params()
         new_layers = self._get_selected_layer_names() # includes re-writing to keys
+        scalings = self._get_selected_scaling_factors()
+        if scalings is None:
+            warnings.warn('FE scalings could not be parsed. Setting to [1].')
+            scalings = [1]
+            self._update_gui_fe_scalings(scalings)
         new_param.set(fe_name = self.qcombo_fe_type.currentText(),
                       fe_layers = new_layers,
                       fe_use_gpu = self.check_use_gpu.isChecked(),
-                      fe_scalings = self.fe_scaling_factors.currentData(),
+                      fe_scalings = scalings,
                       fe_order = self.spin_interpolation_order.value(),
                       fe_use_min_features = self.check_use_min_features.isChecked())
 
@@ -2559,6 +2566,23 @@ class ConvPaintWidget(QWidget):
             return None
         layer_texts = [f'{i}: {layer}' for i, layer in enumerate(layer_keys)]
         return layer_texts
+    
+    def _get_selected_scaling_factors(self):
+        """Get the selected scaling factors for the FE."""
+        scaling_text = self.fe_scaling_factors.currentText()
+        # Try to convert the text to a tuple of ints (e.g. "[1,2,3]" -> (1,2,3))
+        try:
+            scalings = eval(scaling_text)
+            if isinstance(scalings, int):
+                scalings = [scalings]
+            elif isinstance(scalings, tuple):
+                scalings = list(scalings)
+            elif not isinstance(scalings, list):
+                raise ValueError
+        except (ValueError, SyntaxError):
+            warnings.warn(f"Could not parse scaling factors from text '{scaling_text}'")
+            return None
+        return scalings
 
     def _get_data_channel_first(self, img):
         """Get data from selected channel. If RGB/RGBA, move channel axis to first
