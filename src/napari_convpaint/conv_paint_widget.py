@@ -724,6 +724,10 @@ class ConvPaintWidget(QWidget):
         self.fe_scaling_factors.lineEdit().textChanged.connect(self._on_fe_scalings_changed)
         # NOTE: Changing interpolation_order, use_min_features and use_gpu of FE
         # shall only be applied when the user clicks the button to set the FE
+        # But we still want to flag the FE model as temporary when changing these parameters
+        self.spin_interpolation_order.valueChanged.connect(self.flag_fe_as_temp)
+        self.check_use_min_features.stateChanged.connect(self.flag_fe_as_temp)
+        self.check_use_gpu.stateChanged.connect(self.flag_fe_as_temp)
         
         # Classifier
         self.spin_iterations.valueChanged.connect(lambda:
@@ -1657,6 +1661,7 @@ class ConvPaintWidget(QWidget):
 
         # Update GUI with the new parameters
         self._update_gui_from_params(new_param)
+        # self._update_gui_fe_layers(layers=new_param.fe_layers)
 
         # Load the model (Note: done after updating GUI, since GUI updates might reset clf or change model)
         self.cp_model = new_model
@@ -1773,7 +1778,7 @@ class ConvPaintWidget(QWidget):
         self._reset_clf_params()
         self._reset_clf()
         self._reset_default_general_params()
-        # self._update_gui_fe_layers(self.cp_model.fe_model.get_layer_keys())
+        # self._update_gui_fe_layer_keys(self.cp_model.fe_model.get_layer_keys())
         # self._update_gui_fe_scalings(self.cp_model.get_fe_proposed_scalings()())
         self._update_gui_from_params()
         # Set radio buttons depending on selected image type
@@ -1832,6 +1837,25 @@ class ConvPaintWidget(QWidget):
 
 ### Model Tab
 
+    # FE selection and parameters
+
+    def flag_fe_as_temp(self):
+        """Whenever we change the temp FE, we want to flag that the changes are not yet applied.
+        We do this by writing the "Set feature extractor*" in red."""
+        self.set_fe_btn.setText('Set feature extractor*')
+        css_color ="rgb(200, 175, 175)" # Light red
+        self.set_fe_btn.setStyleSheet(f"color: {css_color}")
+        # self.model_description1.setStyleSheet(f"color: {css_color}")
+        self.model_description2.setStyleSheet(f"color: {css_color}")
+
+    def flag_fe_as_set(self):
+        """Whenever we set the FE, we want to flag that the changes are applied.
+        We do this by writing the "Set feature extractor" in black."""
+        self.set_fe_btn.setText('Set feature extractor')
+        self.set_fe_btn.setStyleSheet("color: black")
+        # self.model_description1.setStyleSheet("color: white")
+        self.model_description2.setStyleSheet("color: white")
+
     def _on_fe_selected(self, event=None):
         """Update GUI to show selectable layers of model chosen from drop-down."""
 
@@ -1865,6 +1889,8 @@ class ConvPaintWidget(QWidget):
                 setter(val)
         self.FE_description.setText(self.temp_fe_model.get_description())
 
+        self.flag_fe_as_temp() # Flag that the FE is not yet set (since we just changed the temp model)
+
     def _on_fe_layer_selection_changed(self):
         """Enable the set button based on the model type."""
         if self.temp_fe_model.get_layer_keys() is not None:
@@ -1876,9 +1902,11 @@ class ConvPaintWidget(QWidget):
         else:
             self.set_fe_btn.setEnabled(True)
 
+        self.flag_fe_as_temp() # Flag that the FE is not yet set (since we just changed the temp model)
+
     def _on_fe_scalings_changed(self):
-        """Update param object only when FE is set
-        (i.e., do nothing when changing scalings before FE is set)."""
+        """Update param object only when FE is set. But flag the changes."""
+        self.flag_fe_as_temp() # Flag that the FE is not yet set (since we just changed the temp model)
         return
 
     def _on_set_fe_model(self, event=None):
@@ -1963,12 +1991,16 @@ class ConvPaintWidget(QWidget):
         self._reset_clf() # Call to take all actions needed after resetting the clf
         # Reset the features for continuous training
         self._reset_train_features()
+        # Flag that the FE is now set (since we just set the model)
+        self.flag_fe_as_set() # Flag that the FE is now set (since we just set the model)
 
     def _on_reset_default_fe(self, event=None):
         """Reset the feature extraction model to the default model."""
         # self._update_gui_fe_layers(self.default_layer_keys)
         # self._update_gui_fe_scalings(self.default_proposed_scalings)
-        self._reset_fe_params()
+        self._reset_fe_params() # Note: this calls _on_set_fe_model() --> also flags the FE as set and resets the clf
+
+    # Classifier
 
     def _on_reset_clf_params(self):
         """Reset the classifier parameters to the default values
@@ -2427,7 +2459,7 @@ class ConvPaintWidget(QWidget):
                 setter(val)
 
         self._update_gui_fe_scalings(scalings=params.fe_scalings)
-        self._update_gui_fe_layers(layers=params.fe_layers)
+        # self._update_gui_fe_layers(layers=params.fe_layers)
     
     def _get_selected_img(self, check=False):
         """Get the image layer currently selected in Convpaint."""
@@ -2488,9 +2520,12 @@ class ConvPaintWidget(QWidget):
 
     def _reset_fe_params(self):
         """Reset feature extraction parameters to default values."""
-        # Reset the gui values for the FE, which will also trigger to adjust the param object
+        # Reset the gui values for the FE, which will also trigger to adjust the param object, unless the text (model) does not change)
+        fe_text_before = self.qcombo_fe_type.currentText()
         self.qcombo_fe_type.setCurrentText(self.default_cp_param.fe_name)
-        self._on_fe_selected() # To update the proposed layers and scalings based on the default FE
+        if self.qcombo_fe_type.currentText() == fe_text_before:
+            self.qcombo_fe_type.currentIndexChanged.emit(0) # Trigger the signal to update the FE parameters even if the text is the same
+        # self._on_fe_selected() # To update the proposed layers and scalings based on the default FE; NOT NECESSARY, as changing the text triggers _on_fe_selected
         # self.fe_layer_selection.clearSelection()
         # default_layers = self._layer_keys_to_texts(self.default_cp_param.fe_layers)
         # for layer in default_layers:
