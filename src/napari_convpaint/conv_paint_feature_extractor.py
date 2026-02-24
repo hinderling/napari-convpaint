@@ -28,6 +28,10 @@ class FeatureExtractor:
         self.num_input_channels = [1]
         self.norm_mode = "default"  # or "imagenet" or "percentile"
         self.rgb_input = False # Whether the model takes RGB input or not
+        self.proposed_scalings = [[1],
+                                  [1,2],
+                                  [1,2,4],
+                                  [1,2,4,8]] # The scalings that are proposed to the user for this FE. Can be adjusted by the user.
 
         # Make sure only one method of providing the model is used
         if model is not None and model_name is not None:
@@ -67,7 +71,7 @@ class FeatureExtractor:
         description : str
             A string describing the feature extractor.
         """
-        return "This is a generic feature extractor. Subclasses should override this method."
+        return "No specific description added for this Feature Extractor (subclasses should override the get_description method)."
 
     def get_default_params(self, param=None):
         """
@@ -111,6 +115,22 @@ class FeatureExtractor:
             The keys of the layers in the model.
         """
         return None
+    
+    def get_proposed_scalings(self):
+        """
+        Get the proposed scalings for this feature extractor. These are the scalings that are proposed to the user
+        when this feature extractor is chosen. The user can still adjust the scalings afterwards.
+
+        Returns:
+        ----------
+        proposed_scalings : list of list of int
+            The proposed scalings for this feature extractor. Each element is a list of scalings for one option.
+            Ex.: [[1], [1,2], [1,2,4], [1,2,4,8]]
+        """
+        # In case we have only one proposed scaling, we put it in a list to be consistent with the expected format
+        if isinstance(self.proposed_scalings[0], int):
+            return [self.proposed_scalings]
+        return self.proposed_scalings
     
     def get_enforced_params(self, param=None):
         """
@@ -230,6 +250,10 @@ class FeatureExtractor:
 
         features_all_scales = []
 
+        # Check if the given selection of scalings is in the proposed scalings, and if not, give a warning
+        if not param.fe_scalings in self.proposed_scalings:
+            warnings.warn(f"The selected scalings {param.fe_scalings} are not in the proposed scalings {self.proposed_scalings}. Please check if this is intentional.")
+
         # Iterate over the scales and extract features for each scale
         for s in param.fe_scalings:
 
@@ -290,8 +314,11 @@ class FeatureExtractor:
 
             # If use_min_features is True, shorten features
             if param.fe_use_min_features:
-                max_features = np.min(self.features_per_layer)
-                features = features[:max_features] # NOTE: This would probably be better with PCA
+                if self.features_per_layer is None:
+                    warnings.warn("Cannot use min_features because features_per_layer is not defined. Using all features instead.")
+                else:
+                    max_features = np.min(self.features_per_layer)
+                    features = features[:max_features] # NOTE: This would probably be better with PCA
 
             # Add the features to the list of features
             features_all_scales.append(features)

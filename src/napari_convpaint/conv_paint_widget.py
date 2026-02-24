@@ -47,6 +47,8 @@ class ConvPaintWidget(QWidget):
         self.cp_model = ConvpaintModel()
         # Get default parameters to set in widget
         self.default_cp_param = ConvpaintModel.get_default_params()
+        # self.default_layer_keys = self.cp_model.get_fe_layer_keys()
+        # self.default_proposed_scalings = self.cp_model.get_fe_proposed_scalings()()
         # Create a temporary FE model for display
         self.temp_fe_model = ConvpaintModel.create_fe(self.default_cp_param.fe_name,
                                                       self.default_cp_param.fe_use_gpu)
@@ -309,13 +311,8 @@ class ConvPaintWidget(QWidget):
         # self.fe_group.glayout.setRowStretch(2, 0)
         self.fe_group.glayout.addWidget(self.fe_layer_selection, 3, 0, 1, 2)
 
-        # Create and add scales selection to FE group
+        # Create and add scalings selection to FE group
         self.fe_scaling_factors = QComboBox()
-        self.fe_scaling_factors.addItem('[1]',[1])
-        self.fe_scaling_factors.addItem('[1,2]',[1,2])
-        self.fe_scaling_factors.addItem('[1,2,4]',[1,2,4])
-        self.fe_scaling_factors.addItem('[1,2,4,8]',[1,2,4,8])
-        self.fe_scaling_factors.setCurrentText('[1,2]')
         self.fe_group.glayout.addWidget(QLabel('Pyramid downscaling factors'), 4, 0, 1, 1)
         self.fe_group.glayout.addWidget(self.fe_scaling_factors, 4, 1, 1, 1)
 
@@ -1652,11 +1649,12 @@ class ConvPaintWidget(QWidget):
             warnings.warn(f'The loaded model normalizes over stack, but the data is {data_dims}. ' +
                             'This might cause problems.')
 
+        # Update GUI to show selectable layers and scalings of model chosen from drop-down
+        self._update_gui_fe_layer_keys(new_model.get_fe_layer_keys())
+        self._update_gui_fe_proposed_scalings(new_model.get_fe_proposed_scalings())
+
         # Update GUI with the new parameters
         self._update_gui_from_params(new_param)
-
-        # Update GUI to show selectable layers of model chosen from drop-down
-        self._update_gui_fe_layers_from_model(new_model)
 
         # Load the model (Note: done after updating GUI, since GUI updates might reset clf or change model)
         self.cp_model = new_model
@@ -1773,6 +1771,8 @@ class ConvPaintWidget(QWidget):
         self._reset_clf_params()
         self._reset_clf()
         self._reset_default_general_params()
+        # self._update_gui_fe_layers(self.cp_model.fe_model.get_layer_keys())
+        # self._update_gui_fe_scalings(self.cp_model.get_fe_proposed_scalings()())
         self._update_gui_from_params()
         # Set radio buttons depending on selected image type
         self._reset_radio_channel_mode_choices()
@@ -1830,7 +1830,7 @@ class ConvPaintWidget(QWidget):
 
 ### Model Tab
 
-    def _on_fe_selected(self, index):
+    def _on_fe_selected(self, event=None):
         """Update GUI to show selectable layers of model chosen from drop-down."""
 
         # Create a temporary model to get the layers (to display) and default parameters
@@ -1839,19 +1839,22 @@ class ConvPaintWidget(QWidget):
         self.temp_fe_model = ConvpaintModel.create_fe(new_fe_type,
                                                       current_gpu)
 
-        # Update the GUI to show the FE layers of the temp model
-        self._update_gui_fe_layer_choice_from_temp_model()
-
         # Get the default FE params for the temp model and update the GUI
         fe_defaults = self.temp_fe_model.get_default_params()
 
-        # NOTE: only FE params are adjusted here, since the FE is not set yet
+        # Update the GUI to show the FE layers of the temp model
+        self._update_gui_fe_layer_keys(self.temp_fe_model.get_layer_keys())
+        self._update_gui_fe_layers(fe_defaults.fe_layers)
+        # Same for scalings
+        self._update_gui_fe_proposed_scalings(self.temp_fe_model.get_proposed_scalings())
         self._update_gui_fe_scalings(fe_defaults.fe_scalings)
+
+        # NOTE: only FE params are adjusted here, since the FE is not set yet
         val_to_setter = {
             "fe_name": self.qcombo_fe_type.setCurrentText,
             "fe_order": self.spin_interpolation_order.setValue,
             "fe_use_min_features": self.check_use_min_features.setChecked,
-            "fe_use_gpu": self.check_use_gpu.setChecked
+            # "fe_use_gpu": self.check_use_gpu.setChecked # Removed, as we want to keep the current GPU setting when changing the FE (and not switch to the default of the new FE)
         }
         for attr, setter in val_to_setter.items():
             val = getattr(fe_defaults, attr, None)
@@ -1956,6 +1959,8 @@ class ConvPaintWidget(QWidget):
 
     def _on_reset_default_fe(self, event=None):
         """Reset the feature extraction model to the default model."""
+        # self._update_gui_fe_layers(self.default_layer_keys)
+        # self._update_gui_fe_scalings(self.default_proposed_scalings)
         self._reset_fe_params()
 
     def _on_reset_clf_params(self):
@@ -2315,63 +2320,60 @@ class ConvPaintWidget(QWidget):
             self.segment_all_btn.setEnabled(False)
             self.btn_add_features_stack.setEnabled(False)
 
-    def _update_gui_fe_layers_from_model(self, cp_model=None):
-        """Update GUI FE layer selection based on the current (e.g. loaded) model."""
-        if cp_model is None:
-            cp_model = self.cp_model
-        # Display layers based on the temp FE model
-        all_fe_layer_keys = cp_model.get_fe_layer_keys()
+    def _update_gui_fe_layer_keys(self, all_fe_layer_keys=None):
+        """Update GUI FE layer list and selected layers based on the input."""
         all_fe_layer_texts = self._layer_keys_to_texts(all_fe_layer_keys)
+        self.set_fe_btn.setEnabled(True)
+        # Adjust the list of selectable layers based on the input (e.g. from the temp model)
         if all_fe_layer_texts is not None:
             # Add layer index to layer names
             self.fe_layer_selection.clear()
             self.fe_layer_selection.addItems(all_fe_layer_texts)
             self.fe_layer_selection.setEnabled(len(all_fe_layer_texts) > 1) # Only need to enable if multiple layers available
-            # Select layers that are in the param object
-            layer_keys = cp_model.get_param("fe_layers")
-            layer_texts = self._layer_keys_to_texts(layer_keys)
-            for layer in layer_texts:
-                items = self.fe_layer_selection.findItems(layer, Qt.MatchExactly)
-                for item in items:
-                    item.setSelected(True)
         # For non-hookmodels, disable the selection
         else:
             self.fe_layer_selection.clear()
             self.fe_layer_selection.setEnabled(False)
-        self.set_fe_btn.setEnabled(True)
 
-    def _update_gui_fe_layer_choice_from_temp_model(self):
-        """Update GUI selectable FE layers based on the temporary FE model."""
-        # Get selectable layers from the temp model and update the GUI
-        temp_fe_layer_keys = self.temp_fe_model.get_layer_keys()
-        temp_fe_layer_texts = self._layer_keys_to_texts(temp_fe_layer_keys)
-        fe_default_layers = self.temp_fe_model.get_default_params().get("fe_layers")
-        fe_default_layers = self._layer_keys_to_texts(fe_default_layers)
-        if temp_fe_layer_texts is not None:
-            self.fe_layer_selection.clear()
-            self.fe_layer_selection.addItems(temp_fe_layer_texts)
-            self.fe_layer_selection.setEnabled(len(temp_fe_layer_texts) > 1) # Only need to enable if multiple layers available
-            for layer in fe_default_layers:
-                items = self.fe_layer_selection.findItems(layer, Qt.MatchExactly)
-                for item in items:
-                    item.setSelected(True)
-        else: # For non-hookmodels, disable the selection, and enable the set button
-            self.fe_layer_selection.clear()
-            self.fe_layer_selection.setEnabled(False)
-        self.set_fe_btn.setEnabled(True)
-
-    def _update_gui_fe_scalings(self, fe_scalings=None):
-        """Update GUI FE scalings (e.g. from the temporary model or param object)."""
-        if fe_scalings is None:
+    def _update_gui_fe_layers(self, layers=None):
+        """Update GUI FE layer list and selected layers based on the input."""
+        # Select the layers as given
+        # layer_texts = self._layer_keys_to_texts(layers)
+        # if layer_texts is not None:
+            # for layer in layer_texts:
+        print("Updating GUI FE layers to", layers)
+        if layers is None:
             return
-        # Find index of the input value (-1 if not found)
-        index = self.fe_scaling_factors.findData(fe_scalings)
-        if index != -1:
-            self.fe_scaling_factors.setCurrentIndex(index)
-        # If not in list yet, add and select it
-        else:
-            self.fe_scaling_factors.addItem(str(fe_scalings), fe_scalings)
-            self.fe_scaling_factors.setCurrentIndex(self.fe_scaling_factors.count()-1)
+        for layer in layers:
+            # items = self.fe_layer_selection.findItems(layer, Qt.MatchExactly)
+            items = self.fe_layer_selection.findItems(layer, Qt.MatchContains) # In case the layer names in the GUI have indices added, we use contains instead of exactly
+            if not items:
+                warnings.warn(f'Tried to set the layer "{layer}", but it was not in the list of available layers. ' +
+                                'This might indicate a problem with the feature extractor selection.')
+            for item in items:
+                item.setSelected(True)
+
+    def _update_gui_fe_proposed_scalings(self, all_fe_scalings=None):
+        """Update GUI FE scalings list and selection based on input."""
+        # Adjust the list of selectable scalings based on the input (e.g. from the temp model)
+        if all_fe_scalings is not None:
+            # Add layer index to layer names
+            self.fe_scaling_factors.clear()
+            for s in all_fe_scalings:
+                self.fe_scaling_factors.addItem(f'[{",".join(map(str, s))}]', s)
+
+    def _update_gui_fe_scalings(self, scalings=None):
+        """Update GUI FE scalings selection based on input."""
+        # Select the scalings as given
+        if scalings is not None:
+            # Find index of the input value (-1 if not found)
+            index = self.fe_scaling_factors.findData(scalings)
+            if index != -1:
+                self.fe_scaling_factors.setCurrentIndex(index)
+            # If not in list yet, add and select it
+            else:
+                self.fe_scaling_factors.addItem(str(scalings), scalings)
+                self.fe_scaling_factors.setCurrentIndex(self.fe_scaling_factors.count()-1)
 
     def _update_gui_from_params(self, params=None):
         """Update GUI from parameters. Use after parameters have been changed outside the GUI (e.g. loading)."""
@@ -2417,7 +2419,8 @@ class ConvPaintWidget(QWidget):
                 if isinstance(val, list): val = str(val)
                 setter(val)
 
-        self._update_gui_fe_scalings(params.fe_scalings)
+        self._update_gui_fe_scalings(scalings=params.fe_scalings)
+        self._update_gui_fe_layers(layers=params.fe_layers)
     
     def _get_selected_img(self, check=False):
         """Get the image layer currently selected in Convpaint."""
@@ -2480,16 +2483,17 @@ class ConvPaintWidget(QWidget):
         """Reset feature extraction parameters to default values."""
         # Reset the gui values for the FE, which will also trigger to adjust the param object
         self.qcombo_fe_type.setCurrentText(self.default_cp_param.fe_name)
-        self.fe_layer_selection.clearSelection()
-        default_layers = self._layer_keys_to_texts(self.default_cp_param.fe_layers)
-        for layer in default_layers:
-            items = self.fe_layer_selection.findItems(layer, Qt.MatchExactly)
-            for item in items:
-                item.setSelected(True)
-        self.fe_scaling_factors.setCurrentText(str(self.default_cp_param.fe_scalings))
-        self.spin_interpolation_order.setValue(self.default_cp_param.fe_order)
-        self.check_use_min_features.setChecked(self.default_cp_param.fe_use_min_features)
-        self.check_use_gpu.setChecked(self.default_cp_param.fe_use_gpu)
+        self._on_fe_selected() # To update the proposed layers and scalings based on the default FE
+        # self.fe_layer_selection.clearSelection()
+        # default_layers = self._layer_keys_to_texts(self.default_cp_param.fe_layers)
+        # for layer in default_layers:
+        #     items = self.fe_layer_selection.findItems(layer, Qt.MatchExactly)
+        #     for item in items:
+        #         item.setSelected(True)
+        # self.fe_scaling_factors.setCurrentText(str(self.default_cp_param.fe_scalings))
+        # self.spin_interpolation_order.setValue(self.default_cp_param.fe_order)
+        # self.check_use_min_features.setChecked(self.default_cp_param.fe_use_min_features)
+        # self.check_use_gpu.setChecked(self.default_cp_param.fe_use_gpu)
         # Set default values in param object (by mimicking a click on the "Set FE" button)
         self._on_set_fe_model()
 
