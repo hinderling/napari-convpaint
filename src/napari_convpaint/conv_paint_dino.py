@@ -16,6 +16,7 @@ class DinoFeatures(FeatureExtractor):
         self.num_input_channels = [3]
         self.norm_mode = "imagenet"  # DINOv2 expects ImageNet normalization
         self.rgb_input = True  # DINOv2 expects RGB input
+        self.proposed_scalings = [1]
 
         # Register the device of the created model
         self.device = get_device_from_torch_model(self.model)
