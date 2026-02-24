@@ -1,5 +1,6 @@
-
 import pickle
+import importlib
+import inspect
 from pyexpat import features
 from catboost import CatBoostClassifier
 from sklearn.ensemble import RandomForestClassifier
@@ -10,17 +11,18 @@ import torch
 import pandas as pd
 from typing import Tuple
 from math import lcm
+from napari_convpaint.conv_paint_feature_extractor import FeatureExtractor
 
-from napari_convpaint.conv_paint_nnlayers import AVAILABLE_MODELS as NN_MODELS
-from napari_convpaint.conv_paint_gaussian import AVAILABLE_MODELS as GAUSSIAN_MODELS
-from napari_convpaint.conv_paint_dino import AVAILABLE_MODELS as DINO_MODELS
-from napari_convpaint.conv_paint_dino_jafar import AVAILABLE_MODELS as DINO_JAFAR_MODELS
-from napari_convpaint.conv_paint_combo_fe import AVAILABLE_MODELS as COMBO_MODELS
-from napari_convpaint.conv_paint_nnlayers import Hookmodel
-from napari_convpaint.conv_paint_gaussian import GaussianFeatures
-from napari_convpaint.conv_paint_dino import DinoFeatures
-from napari_convpaint.conv_paint_dino_jafar import DinoJafarFeatures
-from napari_convpaint.conv_paint_combo_fe import ComboFeatures
+FE_SCRIPTS = [
+    "conv_paint_nnlayers",
+    "conv_paint_gaussian",
+    "conv_paint_dino",
+    "conv_paint_dino_jafar",
+    "conv_paint_combo_fe",
+    "conv_paint_cellpose",
+    "conv_paint_ilastik",
+]
+
 from napari_convpaint.conv_paint_param import Param
 from . import conv_paint_utils
 
@@ -79,7 +81,7 @@ class ConvpaintModel:
         'normalize': [1, 2, 3],
         'image_downsample': list(range(-20, 21)), # from -20 (upsampling by factor 20) to 20 (downsampling by factor 20)
         'seg_smoothening': list(range(0, 21)), # from 0 (no smoothening) to 20
-        'umpatch_order': list(range(0, 6)), # from 0 (nearest) to 5
+        'unpatch_order': list(range(0, 6)), # from 0 (nearest) to 5
         'fe_order': list(range(0, 6)), # from 0 (nearest) to 5
     }
 
@@ -208,33 +210,57 @@ class ConvpaintModel:
         """
         Initializes the dictionary of all available feature extractor models.
         """
-        # Initialize the MODELS TO TYPES dictionary with the models that are always available
-        ConvpaintModel.FE_MODELS_TYPES_DICT = {x: Hookmodel for x in NN_MODELS}
-        ConvpaintModel.FE_MODELS_TYPES_DICT.update({x: GaussianFeatures for x in GAUSSIAN_MODELS})
-        ConvpaintModel.FE_MODELS_TYPES_DICT.update({x: DinoFeatures for x in DINO_MODELS})
-        ConvpaintModel.FE_MODELS_TYPES_DICT.update({x: ComboFeatures for x in COMBO_MODELS})
-        ConvpaintModel.FE_MODELS_TYPES_DICT.update({x: DinoJafarFeatures for x in DINO_JAFAR_MODELS})
+        ConvpaintModel.FE_MODELS_TYPES_DICT = {}
+        for script_name in FE_SCRIPTS:
+            ConvpaintModel._register_fe_script(script_name)
 
-        # Try to import CellposeFeatures and update the MODELS TO TYPES  dictionary if successful
-        # Cellpose is only installed with pip install napari-convpaint[cellpose]
+    @staticmethod
+    def _register_fe_script(script_name):
+        """
+        Imports one FE script and registers all model names found in `AVAILABLE_MODELS`.
+        """
+        module_path = f"napari_convpaint.{script_name}"
         try:
-            from napari_convpaint.conv_paint_cellpose import AVAILABLE_MODELS as CELLPOSE_MODELS
-            from napari_convpaint.conv_paint_cellpose import CellposeFeatures
-            ConvpaintModel.FE_MODELS_TYPES_DICT.update({x: CellposeFeatures for x in CELLPOSE_MODELS})
-        except ImportError:
-            # Handle the case where CellposeFeatures or its dependencies are not available
-            print("Info: Cellpose is not installed and is not available as feature extractor.\n"
-                "Run 'pip install napari-convpaint[cellpose]' to install it.")
-        # Same for ilastik
-        try:
-            from napari_convpaint.conv_paint_ilastik import AVAILABLE_MODELS as ILASTIK_MODELS
-            from napari_convpaint.conv_paint_ilastik import IlastikFeatures
-            ConvpaintModel.FE_MODELS_TYPES_DICT.update({x: IlastikFeatures for x in ILASTIK_MODELS})
-        except ImportError:
-            # Handle the case where IlastikFeatures or its dependencies are not available
-            print("Info: Ilastik is not installed and is not available as feature extractor.\n"
-                "Run 'pip install napari-convpaint[ilastik]' to install it.\n"
-                "Make sure to also have fastfilters installed ('conda install -c ilastik-forge fastfilters').")
+            module = importlib.import_module(module_path)
+        except ImportError as e:
+            warnings.warn(f"Could not import feature extractor module '{module_path}': {e}")
+            return
+
+        model_names = getattr(module, "AVAILABLE_MODELS", None)
+        error_message = getattr(module, "IMPORT_ERROR_MESSAGE", None)
+        if not model_names:
+            if error_message:
+                warnings.warn(error_message)
+            else:
+                warnings.warn(f"No AVAILABLE_MODELS found in module '{module_path}'.")
+            return
+
+        fe_class_name = getattr(module, "FEATURE_EXTRACTOR_CLASS", None)
+        if fe_class_name is not None:
+            fe_class = getattr(module, fe_class_name, None)
+            if fe_class is None:
+                warnings.warn(
+                    f"Feature extractor class '{fe_class_name}' not found in module '{module_path}'."
+                )
+                return
+        else:
+            fe_classes = [
+                cls for _, cls in inspect.getmembers(module, inspect.isclass)
+                if issubclass(cls, FeatureExtractor)
+                and cls is not FeatureExtractor
+                and cls.__module__ == module.__name__
+            ]
+            if len(fe_classes) == 0:
+                warnings.warn(f"No FeatureExtractor subclass found in module '{module_path}'.")
+                return
+            if len(fe_classes) > 1:
+                warnings.warn(
+                    f"Multiple FeatureExtractor subclasses found in '{module_path}'. "
+                    f"Using '{fe_classes[0].__name__}'. Set FEATURE_EXTRACTOR_CLASS in the module to disambiguate."
+                )
+            fe_class = fe_classes[0]
+
+        ConvpaintModel.FE_MODELS_TYPES_DICT.update({model_name: fe_class for model_name in model_names})
 
     @staticmethod
     def get_fe_models_types():
@@ -456,7 +482,10 @@ class ConvpaintModel:
         self._set_fe(new_param.fe_name, new_param.fe_use_gpu, new_param.fe_layers)
         self._param = new_param.copy()
         self.classifier = data.get('classifier', None)
-        self.num_features = data.get('num_features', self.classifier.n_features_in_)
+        if self.classifier is None:
+            self.num_features = 0
+        else:
+            self.num_features = data.get('num_features', self.classifier.n_features_in_)
         self.num_trainings = data.get('num_trainings', 0)
         # If there is a features table and an annotations dictionary, load them
         if 'table' in data and 'annotations' in data:
@@ -553,22 +582,23 @@ class ConvpaintModel:
         fe_model_class = ConvpaintModel.FE_MODELS_TYPES_DICT.get(name)
         
         # Initialize the feature extractor model
-        if fe_model_class is Hookmodel:
-            fe_model = fe_model_class(
-                model_name=name,
-                use_gpu=use_gpu,
-                layers=layers
-        )
-        else:
-            fe_model = fe_model_class(
-                model_name=name,
-                use_gpu=use_gpu
-            )
+        fe_kwargs = {
+            'model_name': name,
+            'use_gpu': use_gpu,
+        }
+        init_signature = inspect.signature(fe_model_class.__init__)
+        if 'layers' in init_signature.parameters:
+            fe_kwargs['layers'] = layers
+
+        try:
+            fe_model = fe_model_class(**fe_kwargs)
+        except Exception as e:
+            raise ValueError(f'Error initializing feature extractor model {name} with parameters {fe_kwargs}: {e}')
 
         # Check if the model was created successfully
         if fe_model is None:
             raise ValueError(f'Feature extractor model {name} could not be created.')
-        
+
         # Perform checks and fixes for RGB input and imagenet_normalization
         fe_model = ConvpaintModel._check_fix_fe_channels(fe_model)
 
@@ -633,6 +663,18 @@ class ConvpaintModel:
         """
         keys = self.fe_model.get_layer_keys()
         return keys
+    
+    def get_fe_proposed_scalings(self):
+        """
+        Returns the proposed scalings for the feature extractor layers (None if the model uses no layers).
+
+        Returns
+        ---------
+        scalings : list[int] or None
+            List of proposed scalings for the feature extractor layers, or None if the model uses no layers
+        """
+        scalings = self.fe_model.get_proposed_scalings()
+        return scalings
 
 
 ### USER METHODS FOR TRAINING AND PREDICTION
