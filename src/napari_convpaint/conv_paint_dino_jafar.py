@@ -34,6 +34,10 @@ class DinoJafarFeatures(FeatureExtractor):
         self.num_input_channels = [3] # RGB
         self.norm_mode = "imagenet"  # DINOv2 expects ImageNet normalization
         self.rgb_input = True       # expects RGB input
+        self.proposed_scalings = [[1],
+                                  [1,8],
+                                  [1,8,14]
+                                  ]
 
         # Parent .create_model() saves tuple (hr_head, backbone) in self.model
         self.model, self.backbone = self.model
@@ -102,6 +106,7 @@ class DinoJafarFeatures(FeatureExtractor):
         return param
 
     def get_enforced_params(self, param=None):
+        # Use the given FE scalings internally as JAFAR upscales, but override the ConvpaintModel Pyramid FE scalings to [1]
         self.jafar_scalings = param.fe_scalings
         param = super().get_enforced_params(param)
         param.fe_scalings = [1]

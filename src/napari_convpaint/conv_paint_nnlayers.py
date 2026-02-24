@@ -5,7 +5,6 @@ from torchvision import models
 from .conv_paint_utils import get_device, get_device_from_torch_model, guided_model_download
 from .conv_paint_feature_extractor import FeatureExtractor
 
-
 AVAILABLE_MODELS = ['vgg16', 'efficient_netb0', 'convnext']
 
 class Hookmodel(FeatureExtractor):
@@ -46,7 +45,7 @@ class Hookmodel(FeatureExtractor):
         self.device = get_device_from_torch_model(self.model)
 
         # INITIALIZATION OF LAYER HOOKS
-        self.update_layer_dict()
+        self.init_layer_dict()
 
         self.outputs = []
         if layers is not None:
@@ -106,7 +105,7 @@ class Hookmodel(FeatureExtractor):
         
         param = super().get_default_params(param=param)
         
-        # self.update_layer_dict() # Is done at initialization (and should not change later)
+        # self.init_layer_dict() # Is done at initialization (and should not change later)
         
         if self.model_name == 'vgg16':
             param.fe_scalings = [1,2,4]
@@ -125,7 +124,7 @@ class Hookmodel(FeatureExtractor):
     def get_layer_keys(self):
         return self.selectable_layer_keys
 
-    def update_layer_dict(self):
+    def init_layer_dict(self):
         """Create a flat list of all modules as well as a dictionary of modules with 
         keys describing the layers."""
 
