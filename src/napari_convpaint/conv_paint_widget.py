@@ -1105,7 +1105,7 @@ class ConvPaintWidget(QWidget):
 
         # Check if the selected image has compatible dimensions
         data_dims = self._get_data_dims(self._get_selected_img())
-        if data_dims not in self.supported_dims:
+        if data_dims not in self.supported_data_dims:
             warnings.warn(
                 f'Non-supported image dimensions {data_dims}. Only '
                 f'2D-4D images are supported. Please select a compatible image.'
@@ -1166,7 +1166,6 @@ class ConvPaintWidget(QWidget):
 
     def _delayed_on_select_layer(self, event=None):
         """Delay the selection of the image layer to allow for napari operations to happen first."""
-        print("Doing delayed on select layer")
         self._block_layer_select = False
         QTimer.singleShot(100, lambda: self._on_select_layer())
         # Only set the block flag again after some time, so auto selection is triggered, but only once
