@@ -52,7 +52,7 @@ class DinoFeatures(FeatureExtractor):
         param = super().get_default_params(param=param)
         param.fe_name = self.model_name
         param.fe_use_gpu = self.use_gpu
-        param.fe_layers = []
+        param.fe_layers = None
         param.fe_scalings = [1]
         param.fe_order = 0
         # param.image_downsample = 1

@@ -8,7 +8,7 @@ from .conv_paint_gaussian import GaussianFeatures
 from math import lcm
 
 # AVAILABLE_MODELS = ['combo_dino_vgg', 'combo_dino_ilastik', 'combo_dino_gauss', 'combo_dino_cellpose', 'combo_vgg_ilastik']
-AVAILABLE_MODELS = ['combo_dino_vgg', 'combo_dino_gauss', 'combo_dino_ilastik']
+AVAILABLE_MODELS = ['combo_dino_vgg', 'combo_dino_gauss']
 
 COMBOS = {'combo_dino_vgg': {'constructors': [Hookmodel, DinoFeatures],
                              'model names': ['vgg16', 'dinov2_vits14_reg'],
@@ -29,11 +29,14 @@ COMBOS = {'combo_dino_vgg': {'constructors': [Hookmodel, DinoFeatures],
 
 # For models that are optional, we need to handle ImportError
 try:
-    from .conv_paint_ilastik import IlastikFeatures
-    COMBOS['combo_dino_ilastik'] = {'constructors': [IlastikFeatures, DinoFeatures],
-                             'model names': ['ilastik_2d', 'dinov2_vits14_reg'],
-                             'description': "Combining Ilastik with DINOv2."}
-except ImportError:
+    from .conv_paint_ilastik import AVAILABLE_MODELS as Ilastik_models, IlastikFeatures
+    if Ilastik_models:
+        COMBOS['combo_dino_ilastik'] = {'constructors': [IlastikFeatures, DinoFeatures],
+                                'model names': ['ilastik_2d', 'dinov2_vits14_reg'],
+                                'description': "Combining Ilastik with DINOv2."}
+        AVAILABLE_MODELS.append('combo_dino_ilastik')
+except Exception as e:
+    print(f"Error importing Ilastik for combo: {e}")
     pass
 
 class ComboFeatures(FeatureExtractor):
@@ -97,7 +100,7 @@ class ComboFeatures(FeatureExtractor):
         param = super().get_default_params(param=param)
         param.fe_name = self.model_name
         param.fe_use_gpu = self.use_gpu
-        param.fe_layers = [0]
+        param.fe_layers = None # Layers are not set by default, and should be chosen by the user among the proposed ones (which depend on the model)
         param.fe_scalings = [1]
         param.fe_order = 0
         param.tile_image = False

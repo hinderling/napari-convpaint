@@ -1,12 +1,21 @@
 import torch
 import numpy as np
-from .conv_paint_feature_extractor import FeatureExtractor
 import skimage
-from cellpose import models
-import warnings
 
-AVAILABLE_MODELS = ['cellpose_backbone']
+try:
+    from cellpose import models
+    CELLPOSE_AVAILABLE = True
+except ImportError:
+    models = None
+    CELLPOSE_AVAILABLE = False
 
+AVAILABLE_MODELS = ['cellpose_backbone'] if CELLPOSE_AVAILABLE else []
+IMPORT_ERROR_MESSAGE = (
+    "Cellpose is not installed and is not available as feature extractor.\n"
+    "Run 'pip install napari-convpaint[cellpose]' to install it."
+)
+
+from .conv_paint_feature_extractor import FeatureExtractor
 
 class CellposeFeatures(FeatureExtractor):
 
@@ -25,7 +34,7 @@ class CellposeFeatures(FeatureExtractor):
         model_cellpose = models.CellposeModel(model_type='tissuenet_cp3',
                                               gpu=use_gpu)
         return model_cellpose.net
-    
+
     def get_description(self):
         return "Model specialized in cell segmentation."
     
@@ -37,7 +46,7 @@ class CellposeFeatures(FeatureExtractor):
         param = super().get_default_params(param=param)
         param.fe_name = self.model_name
         param.fe_use_gpu = self.use_gpu
-        param.fe_layers = []
+        param.fe_layers = None
         param.fe_scalings = [1]
         param.fe_order = 0
         param.tile_annotations = False

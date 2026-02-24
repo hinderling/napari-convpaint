@@ -15,7 +15,7 @@ class GaussianFeatures(FeatureExtractor):
 
     def get_default_params(self, param=None):
         param = super().get_default_params(param=param)
-        param.fe_layers = []
+        param.fe_layers = None
         return param
 
     def get_features_from_plane(self, image):
