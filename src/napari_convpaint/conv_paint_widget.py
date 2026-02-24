@@ -1656,12 +1656,13 @@ class ConvPaintWidget(QWidget):
                             'This might cause problems.')
 
         # Update GUI to show selectable layers and scalings of model chosen from drop-down
-        self._update_gui_fe_layer_keys(new_model.get_fe_layer_keys())
-        self._update_gui_fe_proposed_scalings(new_model.get_fe_proposed_scalings())
+        # self._update_gui_fe_layer_keys(new_model.get_fe_layer_keys())
+        # self._update_gui_fe_proposed_scalings(new_model.get_fe_proposed_scalings())
 
         # Update GUI with the new parameters
-        self._update_gui_from_params(new_param)
-        # self._update_gui_fe_layers(layers=new_param.fe_layers)
+        self._update_gui_from_params(new_param) # This triggers _on_fe_selected()
+        self._update_gui_fe_layers(layers=new_param.fe_layers) # Override defaults with saved values
+        self._update_gui_fe_scalings(scalings=new_param.fe_scalings) # Override defaults with saved values
 
         # Load the model (Note: done after updating GUI, since GUI updates might reset clf or change model)
         self.cp_model = new_model
@@ -1676,6 +1677,9 @@ class ConvPaintWidget(QWidget):
         self.current_model_path = save_file.name
         self._set_model_description()
         self._update_training_counts()
+        self.flag_fe_as_set()
+        # Delay the flagging of the FE as set, so it is not reverted --> probably not even necessary
+        # QTimer.singleShot(100, lambda: self.flag_fe_as_set())
 
     # Image Processing
 
@@ -2380,7 +2384,6 @@ class ConvPaintWidget(QWidget):
         # layer_texts = self._layer_keys_to_texts(layers)
         # if layer_texts is not None:
             # for layer in layer_texts:
-        print("Updating GUI FE layers to", layers)
         if layers is None:
             return
         for layer in layers:
@@ -2439,12 +2442,12 @@ class ConvPaintWidget(QWidget):
 
         self.button_group_normalize.button(params.normalize).setChecked(True)
 
+        self.qcombo_fe_type.setCurrentText(params.fe_name) # It's important that this is the first FE param to be set, as it sets the other to default values
         val_to_setter = {
             "image_downsample": self.spin_downsample.setValue,
             "seg_smoothening": self.spin_smoothen.setValue,
             "tile_annotations": self.check_tile_annotations.setChecked,
             "tile_image": self.check_tile_image.setChecked,
-            "fe_name": self.qcombo_fe_type.setCurrentText,
             "fe_order": self.spin_interpolation_order.setValue,
             "fe_use_min_features": self.check_use_min_features.setChecked,
             "fe_use_gpu": self.check_use_gpu.setChecked,
@@ -2458,7 +2461,7 @@ class ConvPaintWidget(QWidget):
                 if isinstance(val, list): val = str(val)
                 setter(val)
 
-        self._update_gui_fe_scalings(scalings=params.fe_scalings)
+        # self._update_gui_fe_scalings(scalings=params.fe_scalings)
         # self._update_gui_fe_layers(layers=params.fe_layers)
     
     def _get_selected_img(self, check=False):
