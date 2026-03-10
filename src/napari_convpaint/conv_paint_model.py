@@ -538,6 +538,10 @@ class ConvpaintModel:
         fe_use_gpu_changed = fe_use_gpu is not None and fe_use_gpu != self._param.get("fe_use_gpu")
         fe_layers_changed = fe_layers is not None and fe_layers != self._param.get("fe_layers")
 
+        # If use_gpu is not provided, keep the current value
+        if fe_use_gpu is None:
+            fe_use_gpu = self._param.get("fe_use_gpu")
+
         # Create the feature extractor model
         if fe_name_changed or fe_use_gpu_changed or fe_layers_changed:
             self.fe_model = ConvpaintModel.create_fe(
@@ -1075,6 +1079,7 @@ class ConvpaintModel:
         When using CatBoost, the model is trained on the GPU if specified in the clf_use_gpu parameter.
         If this parameter is not specified, the model will infer GPU usage from the fe_use_gpu parameter.
         If this is not specified either, or RandomForest is used, the model will be trained on the CPU.
+        Note that Catboost needs Cuda installed to use the GPU, and that MPS is not supported as of now.
 
         Parameters
         ----------
