@@ -1847,18 +1847,18 @@ class ConvPaintWidget(QWidget):
         """Whenever we change the temp FE, we want to flag that the changes are not yet applied.
         We do this by writing the "Set feature extractor*" in red."""
         self.set_fe_btn.setText('Set feature extractor*')
-        css_color ="rgb(200, 175, 175)" # Light red
-        self.set_fe_btn.setStyleSheet(f"color: {css_color}")
+        temp_css_color ="rgb(185, 85, 75)" # Light red
+        self.set_fe_btn.setStyleSheet(f"color: {temp_css_color}")
         # self.model_description1.setStyleSheet(f"color: {css_color}")
-        self.model_description2.setStyleSheet(f"color: {css_color}")
+        self.model_description2.setStyleSheet(f"color: {temp_css_color}")
 
     def flag_fe_as_set(self):
         """Whenever we set the FE, we want to flag that the changes are applied.
-        We do this by writing the "Set feature extractor" in black."""
+        We do this by writing the "Set feature extractor" with the default theme color."""
         self.set_fe_btn.setText('Set feature extractor')
-        self.set_fe_btn.setStyleSheet("color: black")
-        # self.model_description1.setStyleSheet("color: white")
-        self.model_description2.setStyleSheet("color: white")
+        self.set_fe_btn.setStyleSheet("color: gray")
+        # self.model_description1.setStyleSheet("")
+        self.model_description2.setStyleSheet("")
 
     def _on_fe_selected(self, event=None):
         """Update GUI to show selectable layers of model chosen from drop-down."""
