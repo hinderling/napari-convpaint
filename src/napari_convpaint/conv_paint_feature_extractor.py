@@ -18,6 +18,9 @@ class FeatureExtractor:
         use_gpu : bool
             Whether to use GPU or not. If not provided, the default is False.
         """
+        # Make sure a modelname is provided
+        if model_name is None:
+            raise ValueError('Please provide a model_name.')
 
         self.model_name = model_name
         self.use_gpu = use_gpu
@@ -33,9 +36,6 @@ class FeatureExtractor:
                                   [1,2,4],
                                   [1,2,4,8]] # The scalings that are proposed to the user for this FE. Can be adjusted by the user.
 
-        # Make sure only one method of providing the model is used
-        if model is not None and model_name is not None:
-            raise ValueError('Please provide either a model or a model_name, not both.')
         
         # USE PROVIDED MODEL IF AVAILABLE
         if model is not None:
