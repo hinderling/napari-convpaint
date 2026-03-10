@@ -2349,13 +2349,18 @@ class ConvPaintWidget(QWidget):
             data = self._get_selected_img()
             data_dims = self._get_data_dims(data)
             if data_dims not in self.supported_data_dims:
-                warnings.warn(f'Non-supported image dimensions {data_dims}. Predict buttons not updated.')
+                warnings.warn(f'Non-supported image dimensions {data_dims}. Predict buttons disabled.')
+                self.segment_btn.setEnabled(False)
+                self.segment_all_btn.setEnabled(False)
                 return
             is_stacked = data_dims in ['4D', '3D_single', '3D_RGB']
             # We need a trained model to enable segmentation
             if self.trained:
                 self.segment_btn.setEnabled(True)
                 self.segment_all_btn.setEnabled(is_stacked)
+            else:
+                self.segment_btn.setEnabled(False)
+                self.segment_all_btn.setEnabled(False)
             # ... but not for getting features
             self.btn_add_features_stack.setEnabled(is_stacked)
         else: # No image selected
