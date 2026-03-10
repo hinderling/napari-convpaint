@@ -778,7 +778,8 @@ def get_device_from_torch_model(model):
 def get_catboost_device(use_gpu=None):
     """
     Get the device to use for CatBoost operations.
-    If CUDA is available, use the first available GPU. If MPS is available, use it.
+    If CUDA is available, use the first available GPU.
+    Otherwise, use CPU (even if MPS is available since CatBoost does not support MPS).
 
     Parameters:
     ----------

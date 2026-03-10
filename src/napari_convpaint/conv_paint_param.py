@@ -62,7 +62,8 @@ class Param:
         Depth of the classifier
     clf_use_gpu : bool
         Whether to use GPU for the classifier
-        (if None, fe_use_gpu is used)
+        (if None, fe_use_gpu is used);
+        Catboost classifier needs Cuda installed to use the GPU (MPS is not supported as of now)
     """
     classifier: str = None
 
