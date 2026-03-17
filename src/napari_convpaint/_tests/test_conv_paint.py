@@ -400,11 +400,7 @@ def test_custom_vgg16_layers(make_napari_viewer, capsys):
     assert my_widget.qcombo_fe_type.currentText() == 'vgg16'
 
 def test_3d_single_channel_prediction(make_napari_viewer, capsys):
-    """Test train and predict on a 3D stack of single-channel images (3D_single mode).
-
-    Reproduces a bug where segmentation assigned to a z-slice has wrong shape,
-    causing: ValueError: setting an array element with a sequence.
-    """
+    """Test train and predict on a 3D stack of single-channel images (3D_single mode)."""
 
     # Create a 3D stack of 3 single-channel images with a bright square
     im_dims = (100, 100)
@@ -433,7 +429,6 @@ def test_3d_single_channel_prediction(make_napari_viewer, capsys):
     # Train with numpy data
     my_widget._on_train()
 
-    # Predict on the current slice (should not raise ValueError)
     my_widget._on_predict()
 
     # Verify segmentation layer exists and has correct shape
@@ -445,13 +440,7 @@ def test_3d_single_channel_prediction(make_napari_viewer, capsys):
 
 
 def test_3d_single_channel_predict_returns_array():
-    """Test that _predict returns arrays (not lists) for single image input.
-
-    Reproduces the bug where _predict's single_input check used
-    isinstance(data, np.ndarray) which fails for dask and other array-like
-    inputs, causing _predict to return lists instead of single arrays.
-    This leads to: ValueError: setting an array element with a sequence.
-    """
+    """Test that _predict returns arrays (not lists) for single dask array input."""
     import dask.array as da
     from napari_convpaint.conv_paint_model import ConvpaintModel
 
@@ -470,7 +459,6 @@ def test_3d_single_channel_predict_returns_array():
     im_dask = da.from_array(im, chunks=im.shape)
     probas, seg = model._predict(im_dask, add_seg=True)
 
-    # The bug: _predict returns lists instead of arrays for non-numpy input
     assert isinstance(seg, np.ndarray), (
         f"_predict should return an array for single input, got {type(seg)}"
     )
