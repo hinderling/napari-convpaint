@@ -1325,7 +1325,7 @@ class ConvpaintModel:
             raise ValueError('No trained classifier found.')
 
         # Check if we have only a single image input
-        single_input = isinstance(data, np.ndarray) or isinstance(data, torch.Tensor)
+        single_input = hasattr(data, 'ndim') and data.ndim >= 2 and not isinstance(data, list)
         input_shapes = [data.shape] if single_input else [d.shape for d in data]
 
         # Make sure data is a list of images with [C, Z, H, W] shape
@@ -1413,7 +1413,7 @@ class ConvpaintModel:
         if not return_proba:
             pred_reshaped = [self._probas_to_classes(p) for p in pred_reshaped]
         # If input was a single image, return the first prediction
-        if isinstance(image, (np.ndarray, torch.Tensor)):
+        if hasattr(image, 'ndim') and not isinstance(image, list):
             return pred_reshaped[0]
         return pred_reshaped
 
