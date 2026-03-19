@@ -27,7 +27,7 @@ class CellposeFeatures(FeatureExtractor):
         self.num_input_channels = [2]
         self.norm_mode = "percentile"
 
-        self.device = get_device_from_torch_model(self.model) if self.model is not None else torch.device("cpu")
+        self.device = get_device_from_torch_model(self.model.net) if self.model is not None else torch.device("cpu")
 
     @staticmethod
     def create_model(model_name):
