@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torch import nn
 from torchvision import models
-from .conv_paint_utils import get_device, get_device_from_torch_model, guided_model_download
+from .conv_paint_utils import get_device_from_torch_model, guided_model_download
 from .conv_paint_feature_extractor import FeatureExtractor
 
 AVAILABLE_MODELS = ['vgg16', 'efficient_netb0', 'convnext']
@@ -17,8 +17,6 @@ class Hookmodel(FeatureExtractor):
         Name of model to use. Currently only 'vgg16' and 'efficient_netb0' are supported.
     model : torch model, optional
         Model to extract features from, by default None
-    use_gpu : bool, optional
-        Use gpu, by default False
     layers : list of str or int, optional
         List of layer keys (if string) or indices (int) to extract features from, by default None
 
@@ -34,9 +32,9 @@ class Hookmodel(FeatureExtractor):
         List of hooked layers, their names, and their indices in the model (if applicable)
     """
 
-    def __init__(self, model_name='vgg16', model=None, use_gpu=None, layers=None):
+    def __init__(self, model_name='vgg16', model=None, layers=None, **kwargs):
         
-        super().__init__(model_name=model_name, model=model, use_gpu=use_gpu)
+        super().__init__(model_name=model_name, model=model)
 
         self.norm_mode = "imagenet"  # All supported nn models expect ImageNet normalization
         self.rgb_input = True  # All supported nn models expect RGB input
@@ -54,7 +52,7 @@ class Hookmodel(FeatureExtractor):
             self.register_hooks(self.get_default_params().fe_layers)
 
     @staticmethod
-    def create_model(model_name, use_gpu=False):
+    def create_model(model_name):
 
         # CREATE VGG16 MODEL
         if model_name == 'vgg16':
@@ -84,9 +82,8 @@ class Hookmodel(FeatureExtractor):
         state_dict = torch.load(model_path, weights_only=True)
         model.load_state_dict(state_dict)
         
-        # Set model to evaluation mode and move it to the correct device
+        # Set model to evaluation mode. Device is selected at feature extraction time.
         model.eval()
-        model = model.to(get_device(use_gpu))
 
         return model
 
@@ -188,7 +185,9 @@ class Hookmodel(FeatureExtractor):
     def get_num_input_channels(self):
         return [self.named_modules[0][1].in_channels]
     
-    def get_features(self, image):
+    def get_features(self, image, use_device='auto'):
+        self.move_model_to_device(use_device)
+
         # Convert image to numpy array and ensure correct data type
         image = np.asarray(image, dtype=np.float32)
 

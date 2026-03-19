@@ -12,6 +12,7 @@ from napari_guitils.gui_structures import VHGroup, TabSet
 from pathlib import Path
 import numpy as np
 import warnings
+import torch
 
 from .conv_paint_utils import normalize_image, compute_image_stats, normalize_image_percentile, normalize_image_imagenet
 from .conv_paint_model import ConvpaintModel
@@ -50,8 +51,7 @@ class ConvPaintWidget(QWidget):
         # self.default_layer_keys = self.cp_model.get_fe_layer_keys()
         # self.default_proposed_scalings = self.cp_model.get_fe_proposed_scalings()()
         # Create a temporary FE model for display
-        self.temp_fe_model = ConvpaintModel.create_fe(self.default_cp_param.fe_name,
-                                                      self.default_cp_param.fe_use_gpu)
+        self.temp_fe_model = ConvpaintModel.create_fe(self.default_cp_param.fe_name)
         
         self.third_party = third_party
         self.selected_channel = None
@@ -243,23 +243,6 @@ class ConvPaintWidget(QWidget):
         self.train_group.glayout.addWidget(self.segment_all_btn, 1,1,1,1)
 
         # Add elements to "Acceleration" group
-        # "Downsample" spinbox
-        self.spin_downsample = QSpinBox()
-        self.spin_downsample.setMinimum(-10)
-        self.spin_downsample.setMaximum(10)
-        self.spin_downsample.setValue(1)
-        self.spin_downsample.setToolTip('Reduce image size, e.g. for faster computing (output is rescaled to original size). ' +
-                                        'Negative values will instead upscale the image by the absolute value.')
-        self.acceleration_group.glayout.addWidget(QLabel('Downsample input'), 1,0,1,1)
-        self.acceleration_group.glayout.addWidget(self.spin_downsample, 1,1,1,1)
-        # "Smoothen output" spinbox
-        self.spin_smoothen = QSpinBox()
-        self.spin_smoothen.setMinimum(1)
-        self.spin_smoothen.setMaximum(50)
-        self.spin_smoothen.setValue(1)
-        self.spin_smoothen.setToolTip('Smoothen output with a filter of this size.')
-        self.acceleration_group.glayout.addWidget(QLabel('Smoothen segmentation'), 2,0,1,1)
-        self.acceleration_group.glayout.addWidget(self.spin_smoothen, 2,1,1,1)
         # "Tile annotations" checkbox
         self.check_tile_annotations = QCheckBox('Tile annotations for training')
         self.check_tile_annotations.setChecked(False)
@@ -270,6 +253,30 @@ class ConvPaintWidget(QWidget):
         self.check_tile_image.setChecked(False)
         self.check_tile_image.setToolTip('Tile image to reduce memory usage.\nUse with care when using models that extract long range features (e.g. DINO).')
         self.acceleration_group.glayout.addWidget(self.check_tile_image, 0,1,1,1)
+        # Use Device/GPU dropdown
+        self.device_options = ['auto', 'gpu', 'cpu']
+        self.fe_device_dropdown = QComboBox()
+        self.fe_device_dropdown.addItems(self.device_options)
+        self.acceleration_group.glayout.addWidget(QLabel('Device (GPU/CPU)'), 1,0,1,1)
+        self.fe_device_dropdown.setToolTip('Select device for feature extraction. "Auto" will use GPU if available, otherwise CPU. "GPU" option is only available for compatible feature extractors and if a compatible GPU is available. If "GPU" is selected but not available, will fall back to CPU.')
+        self.acceleration_group.glayout.addWidget(self.fe_device_dropdown, 1,1,1,1)
+        # "Downsample" spinbox
+        self.spin_downsample = QSpinBox()
+        self.spin_downsample.setMinimum(-10)
+        self.spin_downsample.setMaximum(10)
+        self.spin_downsample.setValue(1)
+        self.spin_downsample.setToolTip('Reduce image size, e.g. for faster computing (output is rescaled to original size). ' +
+                                        'Negative values will instead upscale the image by the absolute value.')
+        self.acceleration_group.glayout.addWidget(QLabel('Downsample input'), 2,0,1,1)
+        self.acceleration_group.glayout.addWidget(self.spin_downsample, 2,1,1,1)
+        # "Smoothen output" spinbox
+        self.spin_smoothen = QSpinBox()
+        self.spin_smoothen.setMinimum(1)
+        self.spin_smoothen.setMaximum(50)
+        self.spin_smoothen.setValue(1)
+        self.spin_smoothen.setToolTip('Smoothen output with a filter of this size.')
+        self.acceleration_group.glayout.addWidget(QLabel('Smoothen segmentation'), 3,0,1,1)
+        self.acceleration_group.glayout.addWidget(self.spin_smoothen, 3,1,1,1)
 
         # === MODEL TAB ===
 
@@ -332,19 +339,20 @@ class ConvPaintWidget(QWidget):
         self.check_use_min_features.setToolTip('Use same number of features from each layer. Otherwise use all features from each layer.')
         self.fe_group.glayout.addWidget(self.check_use_min_features, 6, 0, 1, 1)
 
-        # Add use gpu checkbox to FE group
-        self.check_use_gpu = QCheckBox('Use GPU')
-        self.check_use_gpu.setChecked(False)
-        self.check_use_gpu.setToolTip('Use GPU for training and segmentation')
-        self.fe_group.glayout.addWidget(self.check_use_gpu, 6, 1, 1, 1)
+        # # Add use gpu checkbox to FE group
+        # self.check_use_gpu = QCheckBox('Use GPU')
+        # self.check_use_gpu.setChecked(False)
+        # self.check_use_gpu.setToolTip('Use GPU for training and segmentation')
+        # self.fe_group.glayout.addWidget(self.check_use_gpu, 6, 1, 1, 1)
 
         # Add "set" buttons to FE group
-        self.reset_default_fe_btn = QPushButton('Reset to default')
-        self.reset_default_fe_btn.setToolTip('Set the feature extractor back to the default model')
-        self.fe_group.glayout.addWidget(self.reset_default_fe_btn, 7, 0, 1, 1)
         self.set_fe_btn = QPushButton('Set feature extractor')
         self.set_fe_btn.setToolTip('Set the feature extraction model')
-        self.fe_group.glayout.addWidget(self.set_fe_btn, 7, 1, 1, 1)
+        self.fe_group.glayout.addWidget(self.set_fe_btn, 6, 1, 1, 1)
+        # And reset button
+        self.reset_default_fe_btn = QPushButton('Reset to default')
+        self.reset_default_fe_btn.setToolTip('Set the feature extractor back to the default model')
+        self.fe_group.glayout.addWidget(self.reset_default_fe_btn, 7, 0, 1, 2)
 
         # Add classifier parameters
         self.spin_iterations = QSpinBox()
@@ -708,6 +716,8 @@ class ConvPaintWidget(QWidget):
             self.cp_model.set_param('image_downsample', self.spin_downsample.value(), ignore_warnings=True))
         self.spin_smoothen.valueChanged.connect(lambda:
             self.cp_model.set_param('seg_smoothening', self.spin_smoothen.value(), ignore_warnings=True))
+        # set self.use_device according to the drop down value
+        self.fe_device_dropdown.currentIndexChanged.connect(self._on_change_device)
         self.check_tile_annotations.stateChanged.connect(lambda: 
             self.cp_model.set_param('tile_annotations', self.check_tile_annotations.isChecked(), ignore_warnings=True))
         self.check_tile_image.stateChanged.connect(lambda: 
@@ -727,7 +737,6 @@ class ConvPaintWidget(QWidget):
         # But we still want to flag the FE model as temporary when changing these parameters
         self.spin_interpolation_order.valueChanged.connect(self.flag_fe_as_temp)
         self.check_use_min_features.stateChanged.connect(self.flag_fe_as_temp)
-        self.check_use_gpu.stateChanged.connect(self.flag_fe_as_temp)
         
         # Classifier
         self.spin_iterations.valueChanged.connect(lambda:
@@ -763,12 +772,12 @@ class ConvPaintWidget(QWidget):
                 self, 'auto_select_annot', self.check_auto_select_annot.isChecked()))
 
             self.btn_train_on_selected.clicked.connect(self._on_train_on_selected)
-            self.radio_single_training.toggled.connect(lambda: setattr(
-                self, 'cont_training', 'off'))
-            self.radio_img_training.toggled.connect(lambda: setattr(
-                self, 'cont_training', "image"))
-            self.radio_global_training.toggled.connect(lambda: setattr(
-                self, 'cont_training', "global"))
+            self.radio_single_training.toggled.connect(lambda checked:
+                checked and setattr(self, 'cont_training', 'off'))
+            self.radio_img_training.toggled.connect(lambda checked:
+                checked and setattr(self, 'cont_training', "image"))
+            self.radio_global_training.toggled.connect(lambda checked:
+                checked and setattr(self, 'cont_training', "global"))
             # self.check_cont_training.stateChanged.connect(lambda: setattr(
             #     self, 'cont_training', self.check_cont_training.isChecked()))
             self.btn_class_distribution_trained.clicked.connect(lambda: self._on_show_class_distribution(trained_data=True))
@@ -1279,7 +1288,9 @@ class ConvPaintWidget(QWidget):
             img_name = self._get_selected_img().name
             in_channels = self._parse_in_channels(self.input_channels)
             # Train the model with the current image and annotations; skip normalization as it is done in the widget
-            _ = self.cp_model.train(image_stack_norm, annot, memory_mode=mem_mode, img_ids=img_name, in_channels=in_channels, skip_norm=True)
+            _ = self.cp_model.train(image_stack_norm, annot, memory_mode=mem_mode, img_ids=img_name,
+                                    in_channels=in_channels, skip_norm=False,
+                                    fe_use_device=self.fe_device, clf_use_device=self.clf_device)
             self._update_training_counts()
     
         with warnings.catch_warnings():
@@ -1327,8 +1338,8 @@ class ConvPaintWidget(QWidget):
                     # continue
                 # all_features.append(features)
                 # all_targets.append(targets)
-            
-            self.cp_model.train(all_imgs, all_annots, in_channels=in_channels, skip_norm=True)
+            self.cp_model.train(all_imgs, all_annots, in_channels=in_channels, skip_norm=True,
+                                fe_use_device=self.fe_device, clf_use_device=self.clf_device)
             # all_features = np.concatenate(all_features, axis=0)
             # all_targets = np.concatenate(all_targets, axis=0)
 
@@ -1372,9 +1383,10 @@ class ConvPaintWidget(QWidget):
             # Get the data
             image_plane = self._get_current_plane_norm()
             in_channels = self._parse_in_channels(self.input_channels)
-            
+
             # Predict image (use backend function which returns probabilities and segmentation); skip norm as it is done above
-            probas, segmentation = self.cp_model._predict(image_plane, add_seg=True, in_channels=in_channels, skip_norm=True, use_dask=self.use_dask)
+            probas, segmentation = self.cp_model._predict(image_plane, add_seg=True, in_channels=in_channels, skip_norm=True,
+                                                          use_dask=self.use_dask, fe_use_device=self.fe_device)
 
         with warnings.catch_warnings():
             warnings.simplefilter(action="ignore", category=FutureWarning)
@@ -1440,8 +1452,8 @@ class ConvPaintWidget(QWidget):
 
             # Get feature image; skip norm as it is done above
             feature_image = self.cp_model.get_feature_image(image_plane, in_channels=in_channels, skip_norm=True,
-                                                            pca_components=pca,
-                                                            kmeans_clusters=kmeans)
+                                                            pca_components=pca, kmeans_clusters=kmeans,
+                                                            use_device=self.fe_device)
 
         with warnings.catch_warnings():
             warnings.simplefilter(action="ignore", category=FutureWarning)
@@ -1500,7 +1512,8 @@ class ConvPaintWidget(QWidget):
             # Predict the current step; skip normalization as it is done above
             in_channels = self._parse_in_channels(self.input_channels)
             # Use the backend function which returns probabilities and segmentation
-            probas, seg = self.cp_model._predict(image, add_seg=True, in_channels=in_channels, skip_norm=True, use_dask=self.use_dask)
+            probas, seg = self.cp_model._predict(image, add_seg=True, in_channels=in_channels, skip_norm=True,
+                                                 use_dask=self.use_dask, fe_use_device=self.fe_device)
 
             # In the first iteration, check if we need to create a new probas layer
             # (we need the information about the number of classes)
@@ -1549,8 +1562,8 @@ class ConvPaintWidget(QWidget):
         if kmeans:
             # Get feature image for entire stack; skip norm as it is done above
             feature_image = self.cp_model.get_feature_image(image_stack_norm, in_channels=in_channels, skip_norm=True,
-                                                                pca_components=pca,
-                                                                kmeans_clusters=kmeans)
+                                                                pca_components=pca, kmeans_clusters=kmeans,
+                                                                use_device=self.fe_device)
 
             # Check if we need to create a new features layer
             # num_features = feature_image.shape[0] if not kmeans else 0
@@ -1572,8 +1585,8 @@ class ConvPaintWidget(QWidget):
                 # Predict the current step; skip normalization as it is done above
                 # Get feature image; skip norm as it is done above
                 feature_image = self.cp_model.get_feature_image(image, in_channels=in_channels, skip_norm=True,
-                                                                pca_components=pca,
-                                                                kmeans_clusters=kmeans)
+                                                                pca_components=pca, kmeans_clusters=kmeans,
+                                                                use_device=self.fe_device)
 
                 # In the first iteration, check if we need to create a new features layer
                 # (we need the information about the number of classes)
@@ -1667,8 +1680,7 @@ class ConvPaintWidget(QWidget):
         # Load the model (Note: done after updating GUI, since GUI updates might reset clf or change model)
         self.cp_model = new_model
         self.cp_model._param = new_param
-        self.temp_fe_model = ConvpaintModel.create_fe(new_param.fe_name,
-                                                      new_param.fe_use_gpu)
+        self.temp_fe_model = ConvpaintModel.create_fe(new_param.fe_name)
 
         # Adjust trained flag, save button, predict buttons etc., and update model description
         self.trained = save_file.suffix == '.pkl' and new_model.classifier is not None
@@ -1677,6 +1689,8 @@ class ConvPaintWidget(QWidget):
         self.current_model_path = save_file.name
         self._set_model_description()
         self._update_training_counts()
+        self._gpu_unsupported_warning_emitted = False
+        self._reset_device_options()
         self.flag_fe_as_set()
         # Delay the flagging of the FE as set, so it is not reverted --> probably not even necessary
         # QTimer.singleShot(100, lambda: self.flag_fe_as_set())
@@ -1772,6 +1786,9 @@ class ConvPaintWidget(QWidget):
             self.class_labels_layout.addWidget(self.reset_class_btn, len(self.class_labels)+2, 0, 1, 10)
             self.class_labels_layout.addWidget(self.btn_class_distribution_annot, len(self.class_labels)+3, 0, 1, 10)
 
+        # Re-apply device dropdown state after attributes reset potentially changed policies.
+        self._reset_device_options()
+
         # Turn on layer creation again
         self.add_layers_flag = True
 
@@ -1822,6 +1839,9 @@ class ConvPaintWidget(QWidget):
         self.features_prefix = 'features' # Prefix for the feature image layer name
         self.cont_training = "image" # Update features for subsequent training ("image" or "off" or "global")
         self.use_dask = False # Use Dask for parallel processing
+        self.fe_device = 'auto' # Device to use for the FE (if applicable); 'auto' will use GPU if available, otherwise CPU
+        self.clf_device = 'auto' # Device to use for the classifier (if applicable); 'auto' will use GPU if available, otherwise CPU
+        self._gpu_unsupported_warning_emitted = False # Warn once for unsupported explicit GPU until FE setup changes
         self.input_channels = "" # Input channels for the model (as txt, will be parsed)
         self.add_seg = True # Add a layer with segmentation
         self.add_probas = False # Add a layer with class probabilities
@@ -1865,9 +1885,7 @@ class ConvPaintWidget(QWidget):
 
         # Create a temporary model to get the layers (to display) and default parameters
         new_fe_type = self.qcombo_fe_type.currentText()
-        current_gpu = self.cp_model.get_param("fe_use_gpu")
-        self.temp_fe_model = ConvpaintModel.create_fe(new_fe_type,
-                                                      current_gpu)
+        self.temp_fe_model = ConvpaintModel.create_fe(new_fe_type)
 
         # Get the default FE params for the temp model and update the GUI
         fe_defaults = self.temp_fe_model.get_default_params()
@@ -1884,7 +1902,6 @@ class ConvPaintWidget(QWidget):
             "fe_name": self.qcombo_fe_type.setCurrentText,
             "fe_order": self.spin_interpolation_order.setValue,
             "fe_use_min_features": self.check_use_min_features.setChecked,
-            # "fe_use_gpu": self.check_use_gpu.setChecked # Removed, as we want to keep the current GPU setting when changing the FE (and not switch to the default of the new FE)
         }
         for attr, setter in val_to_setter.items():
             val = getattr(fe_defaults, attr, None)
@@ -1927,7 +1944,6 @@ class ConvPaintWidget(QWidget):
             self._update_gui_fe_scalings(scalings)
         new_param.set(fe_name = self.qcombo_fe_type.currentText(),
                       fe_layers = new_layers,
-                      fe_use_gpu = self.check_use_gpu.isChecked(),
                       fe_scalings = scalings,
                       fe_order = self.spin_interpolation_order.value(),
                       fe_use_min_features = self.check_use_min_features.isChecked())
@@ -1992,6 +2008,8 @@ class ConvPaintWidget(QWidget):
 
         # Create a new model with the new FE
         self.cp_model = ConvpaintModel(param=new_param)
+        self._gpu_unsupported_warning_emitted = False
+        self._reset_device_options()
         self._reset_clf() # Call to take all actions needed after resetting the clf
         # Reset the features for continuous training
         self._reset_train_features()
@@ -2368,6 +2386,68 @@ class ConvPaintWidget(QWidget):
             self.segment_all_btn.setEnabled(False)
             self.btn_add_features_stack.setEnabled(False)
 
+    def _on_change_device(self, event=None, raise_warning=True):
+        """Update FE/CLF device policies when the dropdown selection changes."""
+        selected_device = self.fe_device_dropdown.currentText()
+
+        # Classifier follows the dropdown directly.
+        self.clf_device = selected_device
+        # Feature extractor follows dropdown unless explicit GPU is unsupported.
+        self.fe_device = selected_device
+
+        fe_model = getattr(self.cp_model, "fe_model", None)
+        if fe_model is None:
+            return # If there is no FE model, we can just set the device policy without checks (will be checked again when setting FE)
+
+        fe_supports_gpu = True
+        if fe_model is not None and hasattr(fe_model, "supports_gpu"):
+            try:
+                fe_supports_gpu = fe_model.supports_gpu()
+            except Exception:
+                fe_supports_gpu = True
+
+        if selected_device == 'gpu' and not fe_supports_gpu:
+            if raise_warning and not self._gpu_unsupported_warning_emitted:
+                warnings.warn(
+                    "Current feature extractor does not support GPU. "
+                    "Feature extraction will use CPU while classifier keeps the selected device policy."
+                )
+                self._gpu_unsupported_warning_emitted = True
+            self.fe_device = 'cpu'
+
+    def _reset_device_options(self):
+        """Reset device dropdown availability and synchronize FE/CLF device policies."""
+        if not hasattr(self, "fe_device_dropdown"):
+            return
+
+        default_tooltip = (
+            'Select device for feature extraction. "Auto" will use GPU if available, otherwise CPU. '
+            '"GPU" option is only available if a compatible GPU is available, and only for compatible feature extractors. '
+            'If "GPU" is selected but not available, will fall back to CPU.'
+        )
+
+        mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+        gpu_available = torch.cuda.is_available() or mps_available
+
+        self.fe_device_dropdown.blockSignals(True)
+        try:
+            if not gpu_available:
+                self.fe_device = 'cpu'
+                self.clf_device = 'cpu'
+                self.fe_device_dropdown.setCurrentText('cpu')
+                self.fe_device_dropdown.setEnabled(False)
+                self.fe_device_dropdown.setToolTip('No CUDA/MPS backend available. Device is fixed to CPU.')
+            else:
+                self.fe_device_dropdown.setEnabled(True)
+                selected_policy = self.clf_device if self.clf_device in self.device_options else 'auto'
+                self.fe_device_dropdown.setCurrentText(selected_policy)
+                self.fe_device_dropdown.setToolTip(default_tooltip)
+        finally:
+            self.fe_device_dropdown.blockSignals(False)
+
+        # Re-apply policy resolution consistently through the dropdown handler.
+        self._on_change_device(raise_warning=False)
+
     def _update_gui_fe_layer_keys(self, all_fe_layer_keys=None):
         """Update GUI FE layer list and selected layers based on the input."""
         all_fe_layer_texts = self._layer_keys_to_texts(all_fe_layer_keys)
@@ -2455,7 +2535,6 @@ class ConvPaintWidget(QWidget):
             "tile_image": self.check_tile_image.setChecked,
             "fe_order": self.spin_interpolation_order.setValue,
             "fe_use_min_features": self.check_use_min_features.setChecked,
-            "fe_use_gpu": self.check_use_gpu.setChecked,
             "clf_iterations": self.spin_iterations.setValue,
             "clf_learning_rate": self.spin_learning_rate.setValue,
             "clf_depth": self.spin_depth.setValue
@@ -3050,14 +3129,17 @@ class ConvPaintWidget(QWidget):
         # Start training
         with warnings.catch_warnings():
             warnings.simplefilter(action="ignore", category=FutureWarning)
-            self.viewer.window._status_bar._toggle_activity_dock(True)        
+            self.viewer.window._status_bar._toggle_activity_dock(True)
 
         with progress(total=0) as pbr:
             pbr.set_description(f"Training")
             mem_mode = self.cont_training == "global"
             # Train; in this case, normalization is not skipped (but done in the ConvpaintModel)
             in_channels = self._parse_in_channels(self.in_channels.text())
-            _ = self.cp_model.train(img_list, annot_list, memory_mode=mem_mode, img_ids=id_list, in_channels=in_channels, skip_norm=False, progress=pbr)
+            _ = self.cp_model.train(img_list, annot_list, memory_mode=mem_mode, img_ids=id_list,
+                                    in_channels=in_channels, skip_norm=False,
+                                    fe_use_device=self.fe_device, clf_use_device=self.clf_device,
+                                    progress=pbr)
             self._update_training_counts()
     
         with warnings.catch_warnings():

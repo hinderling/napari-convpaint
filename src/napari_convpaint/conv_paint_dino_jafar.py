@@ -3,7 +3,7 @@ import warnings
 import numpy as np
 import torch
 import torch.nn.functional as F
-from .conv_paint_utils import get_device, get_device_from_torch_model, guided_model_download
+from .conv_paint_utils import get_device_from_torch_model, guided_model_download
 from .conv_paint_feature_extractor import FeatureExtractor
 from typing import List, Tuple
 import copy
@@ -26,8 +26,8 @@ class DinoJafarFeatures(FeatureExtractor):
     {github.com/PaulCouairon/JAFAR/}
     """
 
-    def __init__(self, model_name="dino_jafar_small", use_gpu=False):
-        super().__init__(model_name=model_name, use_gpu=use_gpu)
+    def __init__(self, model_name="dino_jafar_small", **kwargs):
+        super().__init__(model_name=model_name)
         
         self.patch_size = 14          # token size of ViT
         self.padding    = 0           # model-internal extra pad (none)
@@ -46,13 +46,13 @@ class DinoJafarFeatures(FeatureExtractor):
     # ------------------------------------------------------------------ #
     # Load JAFAR upscaler and DINOv2 backbone
     # ------------------------------------------------------------------ #
+    
     @staticmethod
-    def create_model(model_name="dino_jafar_small", use_gpu=False):
+    def create_model(model_name="dino_jafar_small"):
         """
         Load DINOv2 backbone and JAFAR model head from remote .pth checkpoints using guided download.
         """
-
-        device = get_device(use_gpu)
+        device = torch.device("cpu") # Will move device at feature extraction time based on use_device policy
 
         # Define filenames
         backbone_file = "dinov2_vits14_reg4_pretrain.pth"
@@ -89,6 +89,7 @@ class DinoJafarFeatures(FeatureExtractor):
     # ------------------------------------------------------------------ #
     # Metadata / enforced params
     # ------------------------------------------------------------------ #
+
     def gives_patched_features(self) -> bool:
         # JAFAR returns per-pixel (upsampled) features already.
         return False
@@ -117,11 +118,25 @@ class DinoJafarFeatures(FeatureExtractor):
     # ------------------------------------------------------------------ #
     # Public extraction entry points
     # ------------------------------------------------------------------ #
-    def get_features_from_plane(self, img: np.ndarray):
+
+    def move_model_to_device(self, use_device='auto'):
+        device = self.resolve_device(use_device)
+
+        current_device = get_device_from_torch_model(self.model)
+        if current_device != device:
+            self.model = self.model.to(device).eval()
+            self.backbone = self.backbone.to(device).eval()
+
+        self.device = device
+        return device
+
+    def get_features_from_plane(self, img: np.ndarray, use_device='auto'):
         """
         Extract features for a single Z plane (RGB). Shape: [3,H,W] -> [F,H,W].
         Dynamic patch size with single (implicit) scale = 1.
         """
+        self.move_model_to_device(use_device)
+
         assert img.ndim == 3 and img.shape[0] == 3, "Expected image [3,H,W]"
         H, W = img.shape[1:]
         self._assert_multiples(H, W)

@@ -40,7 +40,7 @@ class ConvpaintModel:
 
     Note that the `ConvpaintModel` and its **`FeatureExtractor` model** are closely linked to each other. The intended way to
     use them is to create a `ConvpaintModel` instance, which will in turn create the corresponding `FeatureExtractor` instance.
-    If a `ConvpaintModel` with another feature extractor is desired (including different configurations in layers or GPU usage),
+    If a `ConvpaintModel` with another feature extractor is desired (including different configurations in layers),
     a new `ConvpaintModel` instance should be created. Other parameters of the `ConvpaintModel`, though, can easily be changed later.
 
     Input **image dimensions** and channels (convention across all training, prediction and feature extraction methods):
@@ -100,7 +100,7 @@ class ConvpaintModel:
         2. By providing a **saved model path** (model_path) to load a model defined earlier.
         This can be a .pkl file (holding the FE model, classifier and Param object) or .yml file (only defining the model parameters).
         3. By providing a **Param object**, which contains model parameters.
-        4. By providing the **name of the feature extractor** and other parameters such as GPU usage, and feature extraction layers,
+        4. By providing the **name of the feature extractor** and other parameters such as the feature extraction layers,
         in which case these kwargs will override the defaults of the feature extractor model.
         
         Parameters
@@ -127,6 +127,8 @@ class ConvpaintModel:
         self.reset_training()
         self.num_trainings = 0
         self.num_features = 0
+        self._fe_locked_device = None
+        self._clf_locked_device = None
         self._params_to_reset_training = ['channel_mode',
                                           'normalize',
                                         #   'image_downsample',
@@ -136,7 +138,6 @@ class ConvpaintModel:
                                         #   'use_dask',
                                         #   'unpatch_order',
                                           'fe_name',
-                                        #   'fe_use_gpu',
                                           'fe_layers',
                                           'fe_scalings',
                                           'fe_order',
@@ -144,8 +145,7 @@ class ConvpaintModel:
                                         #   'clf_iterations',
                                         #   'clf_learning_rate',
                                         #   'clf_depth',
-                                        #   'clf_use_gpu'
-                                          ]
+                                        ]
         self._params_to_reset_clf = ['channel_mode',
                                      'normalize',
                                     #  'image_downsample',
@@ -155,7 +155,6 @@ class ConvpaintModel:
                                     #  'use_dask',
                                     # 'unpatch_order',
                                      'fe_name',
-                                    #  'fe_use_gpu',
                                      'fe_layers',
                                      'fe_scalings',
                                      'fe_order',
@@ -163,8 +162,7 @@ class ConvpaintModel:
                                     #  'clf_iterations',
                                     #  'clf_learning_rate',
                                     #  'clf_depth',
-                                    #  'clf_use_gpu'
-                                     ]
+                                    ]
 
         # Initialize the dictionary of all available models
         if not ConvpaintModel.FE_MODELS_TYPES_DICT:
@@ -193,13 +191,11 @@ class ConvpaintModel:
         elif param is not None:
             self._load_param(param)
         elif fe_name is not None:
-            fe_use_gpu = kwargs.pop('fe_use_gpu', None)
             fe_layers = kwargs.pop('fe_layers', None)
-            self._set_fe(fe_name, fe_use_gpu, fe_layers)
+            self._set_fe(fe_name, fe_layers)
             self._param = self.get_fe_defaults()
             self.set_params(ignore_warnings=True, # Here at initiation, it is intended to set FE parameters...
                             fe_layers = fe_layers, # Overwrite the layers with the given layers
-                            fe_use_gpu = fe_use_gpu, # Overwrite the gpu usage with the given gpu usage
                             **kwargs) # Overwrite the parameters with the given parameters
         else:
             cpm_defaults = ConvpaintModel.get_default_params()
@@ -305,7 +301,6 @@ class ConvpaintModel:
         def_param.fe_layers = ['features.0 Conv2d(3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))']
         # def_param.fe_name = "convnext"
         # def_param.fe_layers = [0,1]
-        def_param.fe_use_gpu = False
         def_param.fe_scalings = [1, 2, 4]
         def_param.fe_order = 0
         def_param.fe_use_min_features = False
@@ -382,8 +377,8 @@ class ConvpaintModel:
                 "The parameter was not changed. To do so, either first reset the classifier by calling the reset_classifier() method.\n"
                 "Or, if you are aware of the consequences, you can also change the parameter without resetting by setting ignore_warnings to True.")
             return
-        if key in ['fe_name', 'fe_use_gpu', 'fe_layers'] and not ignore_warnings:
-            warnings.warn("Setting the parameters fe_name, fe_use_gpu, or fe_layers is not intended. " +
+        if key in ['fe_name', 'fe_layers'] and not ignore_warnings:
+            warnings.warn("Setting the parameters fe_name or fe_layers is not intended. " +
                 "You should create a new ConvpaintModel instead.\n" +
                 "If you are aware of the consequences, you can set ignore_warnings to True to change the parameter anyway.")
             return
@@ -395,7 +390,7 @@ class ConvpaintModel:
         Sets the parameters, given either as a Param object or as keyword arguments.
 
         Note that the model is not reset and no new FE model is created.
-        If fe_name, fe_use_gpu, and fe_layers change, you should create a new ConvpaintModel.
+        If fe_name and fe_layers change, you should create a new ConvpaintModel.
 
         Parameters
         ----------
@@ -479,7 +474,13 @@ class ConvpaintModel:
         with open(pkl_path, 'rb') as f:
             data = pickle.load(f)
         new_param = data.get('param', None)
-        self._set_fe(new_param.fe_name, new_param.fe_use_gpu, new_param.fe_layers)
+        # If there is the old use_gpu parameter saved, use lock_device to set the device policy for the feature extractor accordingly
+        if hasattr(new_param, 'use_gpu'):
+            device = 'gpu' if new_param.use_gpu else 'cpu'
+            self.lock_device(device, part='both')
+            del new_param.use_gpu
+        #Create FE, Param and clf objects
+        self._set_fe(new_param.fe_name, new_param.fe_layers)
         self._param = new_param.copy()
         self.classifier = data.get('classifier', None)
         if self.classifier is None:
@@ -506,8 +507,13 @@ class ConvpaintModel:
         if loaded_param is not None:
             # Only set the parameters that are not None in the loaded_param
             params_to_set = {key: value for key, value in loaded_param.__dict__.items() if value is not None}
+            # If there is the old use_gpu parameter saved, use lock_device to set the device policy for the feature extractor accordingly
+            if 'use_gpu' in params_to_set:
+                device = 'gpu' if params_to_set['use_gpu'] else 'cpu'
+                self.lock_device(device, part='both')
+                del params_to_set['use_gpu']
             new_param.set(**params_to_set)
-        self._set_fe(new_param.fe_name, new_param.fe_use_gpu, new_param.fe_layers)
+        self._set_fe(new_param.fe_name, new_param.fe_layers)
         self._param = new_param
 
     def _load_param(self, param: Param):
@@ -515,14 +521,51 @@ class ConvpaintModel:
         Loads the given param object into the model and sets the model accordingly.
         Only intended for internal use at model initiation.
         """
-        self._set_fe(param.fe_name, param.fe_use_gpu, param.fe_layers)
+        self._set_fe(param.fe_name, param.fe_layers)
         self._param = self.get_fe_defaults()
         self.set_params(ignore_warnings=True, **param.__dict__) # Overwrite the parameters with the given parameters
 
+    def lock_device(self, device, part='both'):
+        """
+        Locks the device for the feature extractor or classifier.
+
+        Parameters
+        ----------
+        device : str
+            Device to lock: "cpu", "gpu", or "auto"; "off" can be used to unlock the device (i.e., set it to None)
+        part : str, optional
+            Part of the model to lock the device for ("fe" for feature extractor, "clf" for classifier, "both" for both), default is "both"
+        """
+        if device not in ['cpu', 'gpu', 'auto', 'off']:
+            raise ValueError('Device must be "cpu", "gpu", "auto", or "off".')
+        if part not in ['fe', 'clf', 'both']:
+            raise ValueError('Part must be either "fe", "clf", or "both".')
+        
+        device = None if device == 'off' else device
+        if part in ['fe', 'both']:
+            self._fe_locked_device = device
+        if part in ['clf', 'both']:
+            self._clf_locked_device = device
+        
+    def check_device(self, device, part='fe'):
+        if part == 'fe':
+            if self._fe_locked_device is not None:
+                if device is not None:
+                    warnings.warn(f"Device policy for feature extractor is locked to {self._fe_locked_device}. " +
+                                f"Overriding the given device policy {device} with the locked policy.")
+                device = self._fe_locked_device
+        elif part == 'clf':
+            if self._clf_locked_device is not None:
+                if device is not None:
+                    warnings.warn(f"Device policy for classifier is locked to {self._clf_locked_device}. " +
+                                f"Overriding the given device policy {device} with the locked policy.")
+                device = self._clf_locked_device
+        device = conv_paint_utils.normalize_use_device(device)
+        return device
+
 
 ### FE METHODS
-
-    def _set_fe(self, fe_name=None, fe_use_gpu=None, fe_layers=None):
+    def _set_fe(self, fe_name=None, fe_layers=None):
         """
         Sets the FE model based on the given FE parameters.
         Creates new feature extractor, and resets the classifier.
@@ -534,27 +577,21 @@ class ConvpaintModel:
         self.reset_training()
 
         # Check if we need to create a new FE model
-        fe_name_changed = fe_name is not None and fe_name != self._param.get("fe_name")
-        fe_use_gpu_changed = fe_use_gpu is not None and fe_use_gpu != self._param.get("fe_use_gpu")
-        fe_layers_changed = fe_layers is not None and fe_layers != self._param.get("fe_layers")
-
-        # If use_gpu is not provided, keep the current value
-        if fe_use_gpu is None:
-            fe_use_gpu = self._param.get("fe_use_gpu")
+        fe_name_changed = fe_name != self._param.get("fe_name")
+        fe_layers_changed = fe_layers != self._param.get("fe_layers")
 
         # Create the feature extractor model
-        if fe_name_changed or fe_use_gpu_changed or fe_layers_changed:
+        if fe_name_changed or fe_layers_changed:
             self.fe_model = ConvpaintModel.create_fe(
                 name=fe_name,
-                use_gpu=fe_use_gpu,
                 layers=fe_layers
             )
         
         # Set the parameters
-        self._param.set(fe_name=fe_name, fe_use_gpu=fe_use_gpu, fe_layers=fe_layers)
+        self._param.set(fe_name=fe_name, fe_layers=fe_layers)
 
     @staticmethod
-    def create_fe(name, use_gpu=None, layers=None):
+    def create_fe(name, layers=None):
         """
         Creates a feature extractor model based on the given parameters.
         
@@ -569,8 +606,6 @@ class ConvpaintModel:
         ----------
         name : str
             Name of the feature extractor model
-        use_gpu : bool, optional
-            Whether to use GPU for the feature extractor
         layers : list[str], optional
             List of layer names to extract features from
 
@@ -588,7 +623,6 @@ class ConvpaintModel:
         # Initialize the feature extractor model
         fe_kwargs = {
             'model_name': name,
-            'use_gpu': use_gpu,
         }
         init_signature = inspect.signature(fe_model_class.__init__)
         if 'layers' in init_signature.parameters:
@@ -683,7 +717,9 @@ class ConvpaintModel:
 
 ### USER METHODS FOR TRAINING AND PREDICTION
     
-    def train(self, image, annotations, memory_mode=False, img_ids=None, use_rf=False, allow_writing_files=False, in_channels=None, skip_norm=False):
+    def train(self, image, annotations, memory_mode=False, img_ids=None, use_rf=False,
+              allow_writing_files=False, in_channels=None, skip_norm=False,
+              fe_use_device=None, clf_use_device=None):
         """
         Trains the Convpaint model's classifier given images and annotations.
 
@@ -714,6 +750,10 @@ class ConvpaintModel:
         skip_norm : bool, optional
             Whether to skip normalization of the images before training.
             If True, the images are not normalized according to the parameter `normalize` in the model parameters.
+        fe_use_device : str, optional
+            Device policy for feature extractor ("auto", "gpu", "cpu").
+        clf_use_device : str, optional
+            Device policy for classifier training ("auto", "gpu", "cpu").
 
         Returns
         ----------
@@ -721,10 +761,11 @@ class ConvpaintModel:
                 Trained classifier (also saved inside the model instance)
         """
         clf, _, _ = self._train(image, annotations, memory_mode=memory_mode, img_ids=img_ids, use_rf=use_rf,
-                          allow_writing_files=allow_writing_files, in_channels=in_channels, skip_norm=skip_norm)
+                          allow_writing_files=allow_writing_files, in_channels=in_channels, skip_norm=skip_norm,
+                          fe_use_device=fe_use_device, clf_use_device=clf_use_device)
         return clf
 
-    def segment(self, image, in_channels=None, skip_norm=False, use_dask=False):
+    def segment(self, image, in_channels=None, skip_norm=False, use_dask=False, fe_use_device=None):
         """
         Segments images by predicting the most probable class of each pixel using the trained classifier.
 
@@ -742,6 +783,8 @@ class ConvpaintModel:
             If True, the images are not normalized according to the parameter `normalize` in the model parameters.
         use_dask : bool, optional
             Whether to use dask for parallel processing
+        fe_use_device : str, optional
+            Device policy for feature extractor ("auto", "gpu", "cpu").
 
         Returns
         ----------
@@ -749,10 +792,11 @@ class ConvpaintModel:
             Segmented image or list of segmented images (according to the input)
             Dimensions are equal to the input image(s) without the channel dimension
         """
-        _, seg = self._predict(image, add_seg=True, in_channels=in_channels, skip_norm=skip_norm, use_dask=use_dask)
+        _, seg = self._predict(image, add_seg=True, in_channels=in_channels, skip_norm=skip_norm,
+                               use_dask=use_dask, fe_use_device=fe_use_device)
         return seg
 
-    def predict_probas(self, image, in_channels=None, skip_norm=False, use_dask=False):
+    def predict_probas(self, image, in_channels=None, skip_norm=False, use_dask=False, fe_use_device=None):
         """
         Predicts the probabilities of the classes of the pixels in an image using the trained classifier.
 
@@ -770,6 +814,8 @@ class ConvpaintModel:
             If True, the images are not normalized according to the parameter `normalize` in the model parameters.
         use_dask : bool, optional
             Whether to use dask for parallel processing
+        fe_use_device : str, optional
+            Device policy for feature extractor ("auto", "gpu", "cpu").
 
         Returns
         ----------
@@ -778,12 +824,14 @@ class ConvpaintModel:
             Dimensions are equal to the input image(s) without the channel dimension,
             with the class dimension added first
         """
-        probas = self._predict(image, add_seg=False, in_channels=in_channels, skip_norm=skip_norm, use_dask=use_dask)
+        probas = self._predict(image, add_seg=False, in_channels=in_channels,
+                       skip_norm=skip_norm, use_dask=use_dask, fe_use_device=fe_use_device)
         return probas
     
     def get_feature_image(self, data,
                           in_channels=None, skip_norm=False,
-                          pca_components=0, kmeans_clusters=0):
+                          pca_components=0, kmeans_clusters=0,
+                          use_device=None):
         """
         Returns the feature images extracted by the feature extractor model.
         For details, see the `_extract_features` method.
@@ -815,6 +863,7 @@ class ConvpaintModel:
                 img_ids=None, # Only needed when using memory_mode
                 in_channels=in_channels,
                 skip_norm=skip_norm,
+                use_device=use_device,
                 pca_components=pca_components,
                 kmeans_clusters=kmeans_clusters
             )
@@ -823,7 +872,7 @@ class ConvpaintModel:
 
     def _extract_features(self, data, annotations=None, restore_input_form=True,
                           memory_mode=False, img_ids=None,
-                          in_channels=None, skip_norm=False,
+                          in_channels=None, skip_norm=False, use_device=None,
                           pca_components=0, kmeans_clusters=0):
         """
         Returns the features of images extracted by the feature extractor model.
@@ -868,6 +917,8 @@ class ConvpaintModel:
         skip_norm : bool, optional
             Whether to skip normalization of the images before feature extraction.
             If True, the images are not normalized according to the parameter `normalize` in the model parameters.
+        use_device : str, optional
+            Device policy for feature extraction ("auto", "gpu", "cpu").
         pca_components : int, optional
             Number of PCA components to reduce the features to (0 for no PCA)
         kmeans_clusters : int, optional
@@ -882,6 +933,7 @@ class ConvpaintModel:
         annotations : np.ndarray or list[np.ndarray], optional
             Processed annotations of the image(s) or list of images, if annotations are given.
         """
+        use_device = self.check_device(use_device, part='fe')
 
         # --- Basic bookkeeping ---------------------------------------------------
         # Check if we are processing any annotations
@@ -1012,7 +1064,11 @@ class ConvpaintModel:
         # Note: For training, we want to "unpatch" the features to match the annotations
         # Note: For prediction, we want to keep the features patched if the model supports it
         keep_patched = (not use_annots) and self.fe_model.gives_patched_features()
-        features = [self.fe_model.get_feature_pyramid(d, params_for_extract, patched=keep_patched)
+        features = [self.fe_model.get_feature_pyramid(
+                d,
+                params_for_extract,
+                patched=keep_patched,
+                use_device=use_device)
                     for d in data]
         
         if pca_components:
@@ -1069,17 +1125,17 @@ class ConvpaintModel:
 
 ### CLASSIFIER METHODS
 
-    def _clf_train(self, features, targets, use_rf=False, allow_writing_files=False):
+    def _clf_train(self, features, targets, use_rf=False, allow_writing_files=False, use_device=None):
         """
         Trains a classifier given a set of features and targets.
 
         If use_rf is False, a CatBoostClassifier is trained, otherwise a RandomForestClassifier.
         The trained classifier is saved in the model, but also returned.
 
-        When using CatBoost, the model is trained on the GPU if specified in the clf_use_gpu parameter.
-        If this parameter is not specified, the model will infer GPU usage from the fe_use_gpu parameter.
-        If this is not specified either, or RandomForest is used, the model will be trained on the CPU.
-        Note that Catboost needs Cuda installed to use the GPU, and that MPS is not supported as of now.
+        When using CatBoost, the compute device is chosen by `use_device`.
+        Supported values are "auto", "gpu", and "cpu".
+        Note that CatBoost needs CUDA to use GPU, and MPS is not supported.
+        If use_rf is True, the RandomForestClassifier is used, which does not support GPU training.
 
         Parameters
         ----------
@@ -1091,6 +1147,8 @@ class ConvpaintModel:
             Whether to use a RandomForestClassifier instead of a CatBoostClassifier
         allow_writing_files : bool, optional
             Allow writing files for the CatBoostClassifier
+        use_device : str, optional
+            Device policy for classifier training ("auto", "gpu", "cpu").
 
         Returns
         ----------
@@ -1098,9 +1156,8 @@ class ConvpaintModel:
             Trained classifier (also saved in the model instance)
         """
         if not use_rf:
-            # NOTE: THIS, FOR NOW, ASSUMES THAT GPU SHALL BE USED FOR CLF IF CHOSEN FOR FE
-            use_gpu = self._param.clf_use_gpu if self._param.clf_use_gpu is not None else self._param.fe_use_gpu
-            task_type = conv_paint_utils.get_catboost_device(use_gpu)
+            use_device = self.check_device(use_device, part='clf')
+            task_type = conv_paint_utils.get_catboost_device(use_device)
             self.classifier = CatBoostClassifier(iterations=self._param.clf_iterations,
                                                  learning_rate=self._param.clf_learning_rate,
                                                  depth=self._param.clf_depth,
@@ -1109,8 +1166,7 @@ class ConvpaintModel:
                                                  )
             self.classifier.fit(features, targets)
             self._param.classifier = 'CatBoost'
-        else:
-                # train a random forest classififer (does not support GPU)
+        else: # train a random forest classififer (does not support GPU)
                 self.classifier = RandomForestClassifier(n_estimators=100, n_jobs=-1)
                 self.classifier.fit(features, targets)
                 self._param.classifier = 'RandomForest'
@@ -1169,7 +1225,9 @@ class ConvpaintModel:
 
 ### BACKEND TRAINING AND PREDICTION METHODS
 
-    def _train(self, data, annotations, memory_mode=False, img_ids=None, use_rf=False, allow_writing_files=False, in_channels=None, skip_norm=False):
+    def _train(self, data, annotations, memory_mode=False, img_ids=None, use_rf=False,
+               allow_writing_files=False, in_channels=None, skip_norm=False,
+               fe_use_device=None, clf_use_device=None):
         """
         Backend training method for the Convpaint model.
         """
@@ -1181,7 +1239,9 @@ class ConvpaintModel:
 
         if not memory_mode:
             # Use _extract_features to extract features and the suiting annotation parts (returns lists if restore_input_form=False)
-            feature_parts, annot_parts = self._extract_features(data, annotations, restore_input_form=False, memory_mode=memory_mode, in_channels=in_channels, skip_norm=skip_norm)
+            feature_parts, annot_parts = self._extract_features(
+                data, annotations, restore_input_form=False, memory_mode=memory_mode,
+                in_channels=in_channels, skip_norm=skip_norm, use_device=fe_use_device)
             # Get the annotated pixels and targets, and concatenate each
             f_t_tuples = [conv_paint_utils.get_features_targets(f, a)
                         for f, a in zip(feature_parts, annot_parts)] # f and t are linearized
@@ -1192,7 +1252,9 @@ class ConvpaintModel:
 
         else: # memory mode
             # Use _extract_features to extract features and the suiting annotation parts (returns lists if restore_input_form=False)
-            feature_parts, annot_parts, coords, img_ids, scale = self._extract_features(data, annotations, restore_input_form=False, memory_mode=memory_mode, img_ids=img_ids, in_channels=in_channels, skip_norm=skip_norm)
+            feature_parts, annot_parts, coords, img_ids, scale = self._extract_features(
+                data, annotations, restore_input_form=False, memory_mode=memory_mode,
+                img_ids=img_ids, in_channels=in_channels, skip_norm=skip_norm, use_device=fe_use_device)
             # Get all annotations and features from the table
             features, targets = self._register_and_get_all_features_annots(feature_parts, annot_parts, coords, img_ids, scale)
 
@@ -1204,7 +1266,9 @@ class ConvpaintModel:
             raise ValueError('Not enough classes found in the targets. At least two classes are required for training.')
 
         # Train the classifier
-        self._clf_train(features, targets, use_rf=use_rf, allow_writing_files=allow_writing_files)
+        self._clf_train(features, targets, use_rf=use_rf,
+                allow_writing_files=allow_writing_files,
+                use_device=clf_use_device)
 
         return self.classifier, feature_parts, annot_parts
 
@@ -1360,7 +1424,7 @@ class ConvpaintModel:
 
         return features, annotations
 
-    def _predict(self, data, add_seg=False, in_channels=None, skip_norm=False, use_dask=False):
+    def _predict(self, data, add_seg=False, in_channels=None, skip_norm=False, use_dask=False, fe_use_device=None):
         """
         Backend method to predict images as a whole or tiling and parallelizing the prediction.
 
@@ -1393,10 +1457,10 @@ class ConvpaintModel:
 
         # Get class probabilities, using tiling if enabled
         if self._param.tile_image:
-            probas = [self._parallel_predict_image(d, return_proba=True, use_dask=use_dask)
+            probas = [self._parallel_predict_image(d, return_proba=True, use_dask=use_dask, fe_use_device=fe_use_device)
                       for d in data]
         else:
-            probas = self._predict_image(data, return_proba=True) # Can handle lists directly
+            probas = self._predict_image(data, return_proba=True, fe_use_device=fe_use_device) # Can handle lists directly
 
         # Restore input dimensionality (especially see if we want to remove z dimension)
         probas = [self._restore_dims(probas[i], input_shapes[i])
@@ -1415,7 +1479,7 @@ class ConvpaintModel:
             else:
                 return probas
 
-    def _predict_image(self, image, return_proba=True, feature_img=None):
+    def _predict_image(self, image, return_proba=True, feature_img=None, fe_use_device=None):
         """
         Backend method to predict images without tiling and parallelization.
         Returns the class probabilities and optionally the segmentation of the images.
@@ -1435,7 +1499,8 @@ class ConvpaintModel:
             feature_img = self._extract_features(image,
                                             restore_input_form=False,
                                             in_channels=None, # already extracted outside
-                                            skip_norm=True)  # already normalized outside
+                                            skip_norm=True, # already normalized outside
+                                            use_device=fe_use_device)
 
         num_f = feature_img[0].shape[0] if isinstance(feature_img, list) else feature_img.shape[0]
         num_f_clf = self.num_features
@@ -1468,7 +1533,7 @@ class ConvpaintModel:
             return pred_reshaped[0]
         return pred_reshaped
 
-    def _parallel_predict_image(self, image, return_proba=True, use_dask=False):
+    def _parallel_predict_image(self, image, return_proba=True, use_dask=False, fe_use_device=None):
         """
         Backend method to predict an image using tiling and parallelization.
         Returns the class probabilities and optionally the segmentation of the images.
@@ -1547,7 +1612,7 @@ class ConvpaintModel:
                 # Predict the block using dask or directly (with no normalization, as it is done outside)
                 if use_dask:
                     processes.append(client.submit(
-                        self._predict_image, image=image_block, return_proba=return_proba))
+                        self._predict_image, image=image_block, return_proba=return_proba, fe_use_device=fe_use_device))
                     
                     min_row_ind_collection.append(min_row_ind)
                     min_col_ind_collection.append(min_col_ind)
@@ -1559,7 +1624,7 @@ class ConvpaintModel:
                     new_min_row_ind_collection.append(new_min_row_ind)
 
                 else:
-                    predicted_image = self._predict_image(image_block, return_proba=return_proba)
+                    predicted_image = self._predict_image(image_block, return_proba=return_proba, fe_use_device=fe_use_device)
                     crop_pred = predicted_image[...,
                         new_min_row_ind: new_max_row_ind,
                         new_min_col_ind: new_max_col_ind]
@@ -1589,7 +1654,9 @@ class ConvpaintModel:
         
         return predicted_image_complete
 
-    def _train_predict_image(self, image, annotations, use_rf=False, allow_writing_files=False, in_channels=None, skip_norm=False, add_seg=False):
+    def _train_predict_image(self, image, annotations, use_rf=False, allow_writing_files=False,
+                             in_channels=None, skip_norm=False, add_seg=False,
+                             fe_use_device=None, clf_use_device=None):
         """
         Extracts features from the image and uses them to both train and predict the image.
 
@@ -1618,7 +1685,8 @@ class ConvpaintModel:
         # Note: This is a hack to use the training method for prediction, but it works
         _, feature_parts, _ = self._train( # feature_parts corresponds to the annotated feature image slices (since no tiling)
             data=annot_img, annotations=annot_annot, memory_mode=False,
-            use_rf=use_rf, allow_writing_files=allow_writing_files, in_channels=in_channels, skip_norm=skip_norm
+            use_rf=use_rf, allow_writing_files=allow_writing_files, in_channels=in_channels, skip_norm=skip_norm,
+            fe_use_device=fe_use_device, clf_use_device=clf_use_device
         )
         feature_img = np.concatenate(feature_parts, axis=1)
 
@@ -1629,7 +1697,7 @@ class ConvpaintModel:
         # Predict the image using the features extracted
         # Note: This is a hack to use the prediction method for prediction, but it works
         probas = self._predict_image(
-            image, return_proba=True, feature_img=feature_img)
+            image, return_proba=True, feature_img=feature_img, fe_use_device=fe_use_device)
         
         # Create a probability image with the original shape of the image and the results in the annotated slices
         if annotations.ndim > 2:

@@ -45,8 +45,6 @@ class Param:
         Name of the feature extractor model
     fe_layers : list[str]
         List of layers (names or indices among available layers) to extract features from
-    fe_use_gpu : bool
-        Whether to use GPU for feature extraction
     fe_scalings : list[int]
         List of scaling factors for the feature extractor, creating a pyramid of features
         (features are rescaled accordingly before input to classifier)
@@ -60,10 +58,6 @@ class Param:
         Learning rate for the classifier
     clf_depth : int
         Depth of the classifier
-    clf_use_gpu : bool
-        Whether to use GPU for the classifier
-        (if None, fe_use_gpu is used);
-        Catboost classifier needs Cuda installed to use the GPU (MPS is not supported as of now)
     """
     classifier: str = None
 
@@ -81,17 +75,17 @@ class Param:
 
     # Feature Extractor parameters
     fe_name: str = None
-    fe_use_gpu: bool = None
     fe_layers: list[str] = None
     fe_scalings: list[int] = None
     fe_order: int = None
     fe_use_min_features: bool = None
+    fe_use_gpu: bool = None # LEAVE THIS FOR NOW, FOR BACKWARDS COMPATIBILITY, BUT THIS SHOULD BE DEPRECATED EVENTUALLY
     
     # Classifier parameters
     clf_iterations: int = None
     clf_learning_rate: float = None
     clf_depth: int = None
-    clf_use_gpu: bool = None # NOTE: If this is None, fe_use_gpu is used...
+    clf_use_gpu: bool = None # LEAVE THIS FOR NOW, FOR BACKWARDS COMPATIBILITY, BUT THIS SHOULD BE DEPRECATED EVENTUALLY
     
     def get(self, key):
         """
