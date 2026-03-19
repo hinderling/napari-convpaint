@@ -47,8 +47,8 @@ else:
 from .conv_paint_feature_extractor import FeatureExtractor
 
 class IlastikFeatures(FeatureExtractor):
-    def __init__(self, model_name='ilastik_2d', use_gpu=False, **kwargs):
-        super().__init__(model_name=model_name, use_gpu=use_gpu)
+    def __init__(self, model_name='ilastik_2d', **kwargs):
+        super().__init__(model_name=model_name)
         self.padding = FILTER_SET.kernel_size // 2
 
     def get_description(self):
@@ -59,7 +59,7 @@ class IlastikFeatures(FeatureExtractor):
         param.fe_layers = None
         return param
 
-    def get_features_from_plane(self, image, filter_set=None):
+    def get_features_from_plane(self, image, use_device='auto', filter_set=None):
         if filter_set is None:
             filter_set = FILTER_SET
         

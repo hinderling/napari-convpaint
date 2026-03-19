@@ -729,29 +729,15 @@ def get_features_targets(features, annot):
 
 ### DEVICE & NORMALIZATION
 
-def get_device(use_gpu=None):
-    """
-    Get the device to use for PyTorch operations.
-    If CUDA is available, use the first available GPU. If MPS is available, use it.
-
-    Parameters:
-    ----------
-    use_gpu : bool, optional
-        If True, use GPU if available. If False, use CPU. Default is None.
-
-    Returns:
-    ----------
-    device : torch.device
-        The device to use for PyTorch operations.
-    """
-    if use_gpu:
-        if torch.cuda.is_available():
-            return torch.device('cuda:0')  # use first available GPU
-        elif torch.backends.mps.is_available(): #check if mps is available
-            return torch.device('mps')
-        else:
-            warnings.warn('CUDA or MPS is not available. Setting device to CPU.')
-    return torch.device('cpu')
+def normalize_use_device(use_device):
+    if use_device is None:
+        use_device = 'auto'
+    if not isinstance(use_device, str):
+        raise ValueError('Device policy must be a string: "auto", "gpu", or "cpu".')
+    valid = {'auto', 'gpu', 'cpu'}
+    if use_device not in valid:
+        raise ValueError(f"Invalid fe_use_device '{use_device}'. Expected one of {sorted(valid)}.")
+    return use_device
 
 def get_device_from_torch_model(model):
     """
@@ -775,7 +761,7 @@ def get_device_from_torch_model(model):
         except StopIteration:
             return torch.device("unknown")
 
-def get_catboost_device(use_gpu=None):
+def get_catboost_device(use_device="auto"):
     """
     Get the device to use for CatBoost operations.
     If CUDA is available, use the first available GPU.
@@ -783,19 +769,36 @@ def get_catboost_device(use_gpu=None):
 
     Parameters:
     ----------
-    use_gpu : bool, optional
-        If True, use CUDA if available. If False, use CPU. Default is None.
+    use_device : str or bool, optional
+        Device policy. Supported values are "gpu", "cpu", and "auto" (default).
+        Legacy booleans are accepted for compatibility: True -> "gpu", False -> "cpu".
 
     Returns:
     ----------
     device : str
         The device to use for CatBoost operations.
     """
-    if use_gpu:
-        if torch.cuda.is_available():
-            return 'GPU'
-        else:
-            warnings.warn('CUDA is not available. Using CPU for CatBoost.')
+    
+    # Handle legacy boolean values for backward compatibility
+    if isinstance(use_device, bool):
+        use_device = 'gpu' if use_device else 'cpu'
+    if use_device is None:
+        use_device = 'auto'
+
+    # Validate the use_device argument
+    valid = {'auto', 'gpu', 'cpu'}
+    if use_device not in valid:
+        raise ValueError(f"Invalid use_device '{use_device}'. Expected one of {sorted(valid)}.")
+
+    if use_device == 'cpu':
+        return 'CPU'
+
+    if torch.cuda.is_available():
+        return 'GPU'
+
+    if use_device == 'gpu':
+        warnings.warn('CUDA is not available. Falling back to CPU for CatBoost.')
+
     return 'CPU'
 
 def normalize_image(image, image_mean, image_std):
