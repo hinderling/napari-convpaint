@@ -547,7 +547,8 @@ class ConvpaintModel:
         if part in ['clf', 'both']:
             self._clf_locked_device = device
         
-    def check_device(self, device, part='fe'):
+    def check_locked_device(self, device, part='fe'):
+        """Checks the locked device for the given part of the model and returns the device to use, prioritizing the locked device if there is one."""
         if part == 'fe':
             if self._fe_locked_device is not None:
                 if device is not None:
@@ -560,7 +561,6 @@ class ConvpaintModel:
                     warnings.warn(f"Device policy for classifier is locked to {self._clf_locked_device}. " +
                                 f"Overriding the given device policy {device} with the locked policy.")
                 device = self._clf_locked_device
-        device = conv_paint_utils.normalize_use_device(device)
         return device
 
 
@@ -933,8 +933,6 @@ class ConvpaintModel:
         annotations : np.ndarray or list[np.ndarray], optional
             Processed annotations of the image(s) or list of images, if annotations are given.
         """
-        use_device = self.check_device(use_device, part='fe')
-
         # --- Basic bookkeeping ---------------------------------------------------
         # Check if we are processing any annotations
         use_annots   = annotations is not None
@@ -1064,11 +1062,17 @@ class ConvpaintModel:
         # Note: For training, we want to "unpatch" the features to match the annotations
         # Note: For prediction, we want to keep the features patched if the model supports it
         keep_patched = (not use_annots) and self.fe_model.gives_patched_features()
+        use_device = self.check_locked_device(use_device, part='fe')
+        fe_runtime_device = conv_paint_utils.get_fe_device(
+            use_device=use_device,
+            supported_devices=self.fe_model.supported_devices(),
+            warn=True,
+        )
         features = [self.fe_model.get_feature_pyramid(
                 d,
                 params_for_extract,
                 patched=keep_patched,
-                use_device=use_device)
+                device=fe_runtime_device)
                     for d in data]
         
         if pca_components:
@@ -1156,8 +1160,8 @@ class ConvpaintModel:
             Trained classifier (also saved in the model instance)
         """
         if not use_rf:
-            use_device = self.check_device(use_device, part='clf')
-            task_type = conv_paint_utils.get_catboost_device(use_device)
+            use_device = self.check_locked_device(use_device, part='clf')
+            task_type = conv_paint_utils.get_catboost_device(use_device, warn=True)
             self.classifier = CatBoostClassifier(iterations=self._param.clf_iterations,
                                                  learning_rate=self._param.clf_learning_rate,
                                                  depth=self._param.clf_depth,

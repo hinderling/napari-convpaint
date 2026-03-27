@@ -52,7 +52,7 @@ class DinoJafarFeatures(FeatureExtractor):
         """
         Load DINOv2 backbone and JAFAR model head from remote .pth checkpoints using guided download.
         """
-        device = torch.device("cpu") # Will move device at feature extraction time based on use_device policy
+        device = torch.device("cpu") # Will move device at feature extraction time
 
         # Define filenames
         backbone_file = "dinov2_vits14_reg4_pretrain.pth"
@@ -119,8 +119,27 @@ class DinoJafarFeatures(FeatureExtractor):
     # Public extraction entry points
     # ------------------------------------------------------------------ #
 
-    def move_model_to_device(self, use_device='auto'):
-        device = self.resolve_device(use_device)
+    def move_model_to_device(self, device=torch.device("cpu")):
+        """
+        Move jafar feature extractor model to the runtime device.
+        """
+        if isinstance(device, torch.device):
+            device = device
+        elif device is None:
+            device = torch.device("cpu")
+        elif isinstance(device, str):
+            warnings.warn(f"Resolving device from string '{device}' is deprecated. Please provide a torch.device object instead.")
+            # Legacy fallback for direct FE usage outside ConvpaintModel.
+            if device == "cpu":
+                device = torch.device("cpu")
+            elif torch.cuda.is_available():
+                device = torch.device("cuda:0")
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                device = torch.device("mps")
+            else:
+                device = torch.device("cpu")
+        else:
+            raise ValueError(f"Invalid device: {device}. Please provide a torch.device object or a string ('cpu', 'cuda', 'mps').")
 
         current_device = get_device_from_torch_model(self.model)
         if current_device != device:
@@ -130,12 +149,12 @@ class DinoJafarFeatures(FeatureExtractor):
         self.device = device
         return device
 
-    def get_features_from_plane(self, img: np.ndarray, use_device='auto'):
+    def get_features_from_plane(self, img: np.ndarray, device=torch.device("cpu")):
         """
         Extract features for a single Z plane (RGB). Shape: [3,H,W] -> [F,H,W].
         Dynamic patch size with single (implicit) scale = 1.
         """
-        self.move_model_to_device(use_device)
+        self.move_model_to_device(device)
 
         assert img.ndim == 3 and img.shape[0] == 3, "Expected image [3,H,W]"
         H, W = img.shape[1:]

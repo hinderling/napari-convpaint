@@ -216,35 +216,30 @@ class FeatureExtractor:
         patched = self.get_patch_size() > 1
         return patched
 
-    def resolve_device(self, use_device="auto"):
+    def move_model_to_device(self, device=torch.device("cpu")):
         """
-        Resolve the concrete torch device based on the device policy.
-        """
-
-        if use_device == "cpu":
-            return torch.device("cpu")
-
-        if torch.cuda.is_available():
-            return torch.device("cuda:0")
-
-        mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-        if mps_available:
-            return torch.device("mps")
-
-        if use_device == "gpu" and not self._warned_gpu_unavailable:
-            warnings.warn("CUDA or MPS is not available. Falling back to CPU for feature extractor.")
-            self._warned_gpu_unavailable = True
-
-        return torch.device("cpu")
-
-    def move_model_to_device(self, use_device="auto"):
-        """
-        Move torch-based feature extractor model to the resolved runtime device.
+        Move torch-based feature extractor model to the runtime device.
 
         For non-torch feature extractors (or models without a .to method), only stores
-        the resolved device on the extractor.
+        the device on the extractor.
         """
-        device = self.resolve_device(use_device)
+        if isinstance(device, torch.device):
+            device = device
+        elif device is None:
+            device = torch.device("cpu")
+        elif isinstance(device, str):
+            warnings.warn(f"Resolving device from string '{device}' is deprecated. Please provide a torch.device object instead.")
+            # Legacy fallback for direct FE usage outside ConvpaintModel.
+            if device == "cpu":
+                device = torch.device("cpu")
+            elif torch.cuda.is_available():
+                device = torch.device("cuda:0")
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                device = torch.device("mps")
+            else:
+                device = torch.device("cpu")
+        else:
+            raise ValueError(f"Invalid device: {device}. Please provide a torch.device object or a string ('cpu', 'cuda', 'mps').")
 
         if self.model is None or not hasattr(self.model, "to"):
             self.device = device
@@ -259,21 +254,25 @@ class FeatureExtractor:
         self.device = device
         return device
     
-    def supports_gpu(self):
+    def supported_devices(self):
         """
-        Whether the feature extractor supports GPU or not. This is determined by whether the model is a torch model or not.
+        Get the list of devices that the feature extractor supports. This is by default determined by whether the model is a torch model or not.
 
         Returns:
         ----------
-        supports_gpu : bool
-            Whether the feature extractor supports GPU or not.
+        supported_devices : list of torch.device
+            The list of devices that the feature extractor supports.
         """
-        return self.model is not None and hasattr(self.model, "to")
+        if self.model is not None and hasattr(self.model, "to"):
+            return [torch.device("cuda"), torch.device("mps")]
+        else:
+            return []
+
 
 
 ### FEATURE EXTRACTION METHODS
 
-    def get_feature_pyramid(self, data, param, patched=True, use_device="auto"):
+    def get_feature_pyramid(self, data, param, patched=True, device=torch.device("cpu")):
         """
         Gets the feature pyramid of an image with an arbitrary number of channels.
         Assumes that the image is a 4D array with dimensions [C, Z, H, W].
@@ -293,11 +292,8 @@ class FeatureExtractor:
         rgb_data : bool
             Whether the input data is RGB or not. If True, the input data must also have 3 channels.
             Relevant only if the model can take RGB input, to distinguish between 3-channel non-RGB and RGB input.
-        use_device : str, optional
-            Device selection policy for feature extraction.
-            Can be "gpu", "cpu" or "auto" (default).
-            "auto": use GPU if available, else CPU with no warning.
-            "gpu": warn if GPU is unavailable, then fall back to CPU.
+        device : torch.device, optional
+            The device on which to perform feature extraction.
 
         Returns:
         ----------
@@ -326,7 +322,7 @@ class FeatureExtractor:
             # Extract features as list for different channel_series (and layers if applicable)
             # Each element is [nb_features, z, w, h]
             rgb_data = param.channel_mode == 'rgb'
-            features = self.get_features_from_channels(image_scaled, rgb_data=rgb_data, use_device=use_device)
+            features = self.get_features_from_channels(image_scaled, rgb_data=rgb_data, device=device)
             # In case the features are not a list, but a single array, make it a list
             if not isinstance(features, list):
                 features = [features]
@@ -385,7 +381,7 @@ class FeatureExtractor:
 
         return features_all_scales
 
-    def get_features_from_channels(self, image, rgb_data=False, use_device="auto"):
+    def get_features_from_channels(self, image, rgb_data=False, device=torch.device("cpu")):
         """
         Gets the features of an image with an arbitrary number of channels.
         Assumes that the image is a 4D array with dimensions [C, Z, H, W],
@@ -401,11 +397,8 @@ class FeatureExtractor:
         rgb_data : bool
             Whether the input data is RGB or not. If True, the input data must also have 3 channels.
             Relevant only if the model can take RGB input, to distinguish between 3-channel non-RGB and RGB input.
-        use_device : str, optional
-            Device selection policy for feature extraction.
-            Can be "gpu", "cpu" or "auto" (default).
-            "auto": use GPU if available, else CPU with no warning.
-            "gpu": warn if GPU is unavailable, then fall back to CPU.
+        device : torch.device, optional
+            The device on which to perform feature extraction.
 
         Returns:
         ----------
@@ -431,7 +424,7 @@ class FeatureExtractor:
         non_rgb_triple_with_rgb_fe = not rgb_data and img_channels == 3 and fe_rgb_input
         if img_channels in fe_input_channels and not non_rgb_triple_with_rgb_fe:
             # return [self.get_features(image)]
-            return self.get_features(image, use_device=use_device)
+            return self.get_features(image, device=device)
 
         # For each channel, create a replicate with the needed number of input channels
         fe_input_channels = min(fe_input_channels)
@@ -442,7 +435,7 @@ class FeatureExtractor:
         for channel in channel_series:
             # Output is either a single array or a list of features,
             # possibly from different layers (and thus with different sizes)
-            output = self.get_features(channel, use_device=use_device)
+            output = self.get_features(channel, device=device)
             # Make one list of all outputs (aligning different channel_series and layers)
             if isinstance(output, list):
                 # If the output is a list of features, add the elements to the list
@@ -453,7 +446,7 @@ class FeatureExtractor:
 
         return all_outputs
 
-    def get_features(self, image, use_device="auto"):
+    def get_features(self, image, device=torch.device("cpu")):
         """
         Gets the features of an image given as a stack of planes.
         Assumes that the image is a 4D array with dimensions [C, Z, H, W],
@@ -464,11 +457,8 @@ class FeatureExtractor:
         ----------
         image : np.ndarray [C, Z, H, W]
             The input image. Dimensions are [C, Z, H, W].
-        use_device : str, optional
-            Device selection policy for feature extraction.
-            Can be "gpu", "cpu" or "auto" (default).
-            "auto": use GPU if available, else CPU with no warning.
-            "gpu": warn if GPU is unavailable, then fall back to CPU.
+        device : torch.device, optional
+            The device on which to perform feature extraction.
 
         Returns:
         ----------
@@ -479,7 +469,7 @@ class FeatureExtractor:
         all_features = []
         # Go through the stack, and get features for each plane
         for z in range(image.shape[1]):
-            features = self.get_features_from_plane(image[:,z], use_device=use_device)
+            features = self.get_features_from_plane(image[:,z], device=device)
             all_features.append(features)
 
         # If the features are a list of arrays, stack them separately along z-axis
@@ -492,7 +482,7 @@ class FeatureExtractor:
 
         return all_features
 
-    def get_features_from_plane(self, image, use_device="auto"):
+    def get_features_from_plane(self, image, device=torch.device("cpu")):
         """
         Gets the features of a single plane of the image with [C, H, W].
         Assumes that the image is a 3D array with dimensions [C, H, W],
@@ -505,11 +495,8 @@ class FeatureExtractor:
         ----------
         image : np.ndarray [C, H, W]
             The input image. Dimensions are [C, H, W].
-        use_device : str, optional
-            Device selection policy for feature extraction.
-            Can be "gpu", "cpu" or "auto" (default).
-            "auto": use GPU if available, else CPU with no warning.
-            "gpu": warn if GPU is unavailable, then fall back to CPU.
+        device : torch.device, optional
+            The device on which to perform feature extraction.
 
         Returns:
         ----------
