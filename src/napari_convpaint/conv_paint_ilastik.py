@@ -59,7 +59,7 @@ class IlastikFeatures(FeatureExtractor):
         param.fe_layers = None
         return param
 
-    def get_features_from_plane(self, image, use_device='auto', filter_set=None):
+    def get_features_from_plane(self, image, device=None, filter_set=None):
         if filter_set is None:
             filter_set = FILTER_SET
         

@@ -1,3 +1,4 @@
+import warnings
 import torch
 import numpy as np
 import skimage
@@ -52,11 +53,27 @@ class CellposeFeatures(FeatureExtractor):
         param.tile_annotations = False
         return param
     
-    def move_model_to_device(self, use_device="auto"):
+    def move_model_to_device(self, device=torch.device("cpu")):
         """
-        Move cellpose feature extractor model to the resolved runtime device.
+        Move cellpose feature extractor model to the runtime device.
         """
-        device = self.resolve_device(use_device)
+        if isinstance(device, torch.device):
+            device = device
+        elif device is None:
+            device = torch.device("cpu")
+        elif isinstance(device, str):
+            warnings.warn(f"Resolving device from string '{device}' is deprecated. Please provide a torch.device object instead.")
+            # Legacy fallback for direct FE usage outside ConvpaintModel.
+            if device == "cpu":
+                device = torch.device("cpu")
+            elif torch.cuda.is_available():
+                device = torch.device("cuda:0")
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                device = torch.device("mps")
+            else:
+                device = torch.device("cpu")
+        else:
+            raise ValueError(f"Invalid device: {device}. Please provide a torch.device object or a string ('cpu', 'cuda', 'mps').")
 
         if self.model is None:
             self.device = device
@@ -73,14 +90,18 @@ class CellposeFeatures(FeatureExtractor):
         self.device = device
         return device
     
-    def supports_gpu(self):
-        return (self.model is not None and
+    def supported_devices(self):
+        
+        if (self.model is not None and
                 hasattr(self.model, "net")
-        )
+        ):
+            return [torch.device("cuda"), torch.device("mps")]
+        else:
+            return []
 
-    def get_features_from_plane(self, image, use_device='auto'):
+    def get_features_from_plane(self, image, device=torch.device("cpu")):
 
-        self.move_model_to_device(use_device)
+        self.move_model_to_device(device)
         net = getattr(self.model, "net", self.model)
         image_expanded = np.expand_dims(image, axis=0)
         tensor = torch.from_numpy(image_expanded).float()
