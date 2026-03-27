@@ -337,7 +337,7 @@ class ConvPaintWidget(QWidget):
         self.check_use_min_features = QCheckBox('Use min features')
         self.check_use_min_features.setChecked(False)
         self.check_use_min_features.setToolTip('Use same number of features from each layer. Otherwise use all features from each layer.')
-        self.fe_group.glayout.addWidget(self.check_use_min_features, 6, 0, 1, 1)
+        # self.fe_group.glayout.addWidget(self.check_use_min_features, 6, 0, 1, 1)
 
         # # Add use gpu checkbox to FE group
         # self.check_use_gpu = QCheckBox('Use GPU')
@@ -348,7 +348,7 @@ class ConvPaintWidget(QWidget):
         # Add "set" buttons to FE group
         self.set_fe_btn = QPushButton('Set feature extractor')
         self.set_fe_btn.setToolTip('Set the feature extraction model')
-        self.fe_group.glayout.addWidget(self.set_fe_btn, 6, 1, 1, 1)
+        self.fe_group.glayout.addWidget(self.set_fe_btn, 6, 0, 1, 2)
         # And reset button
         self.reset_default_fe_btn = QPushButton('Reset to default')
         self.reset_default_fe_btn.setToolTip('Set the feature extractor back to the default model')
@@ -380,9 +380,13 @@ class ConvPaintWidget(QWidget):
         self.classifier_params_group.glayout.addWidget(QLabel('Depth'), 2, 0, 1, 1)
         self.classifier_params_group.glayout.addWidget(self.spin_depth, 2, 1, 1, 1)
 
+        self.set_clf_btn = QPushButton('Set classifier parameters')
+        self.set_clf_btn.setToolTip('Apply classifier parameters to the current model')
+        self.classifier_params_group.glayout.addWidget(self.set_clf_btn, 3, 0, 1, 2)
+
         self.set_default_clf_btn = QPushButton('Reset to defaults')
         self.set_default_clf_btn.setEnabled(True)
-        self.classifier_params_group.glayout.addWidget(self.set_default_clf_btn, 3, 0, 1, 2)
+        self.classifier_params_group.glayout.addWidget(self.set_default_clf_btn, 4, 0, 1, 2)
 
         # === CLASS LABELS TAB ===
 
@@ -730,8 +734,8 @@ class ConvPaintWidget(QWidget):
         self.set_fe_btn.clicked.connect(self._on_set_fe_model)
         self.reset_default_fe_btn.clicked.connect(self._on_reset_default_fe)
         self.fe_layer_selection.itemSelectionChanged.connect(self._on_fe_layer_selection_changed)
-        self.fe_scaling_factors.currentIndexChanged.connect(self._on_fe_scalings_changed)
-        self.fe_scaling_factors.lineEdit().textChanged.connect(self._on_fe_scalings_changed)
+        self.fe_scaling_factors.currentIndexChanged.connect(self.flag_fe_as_temp)
+        self.fe_scaling_factors.lineEdit().textChanged.connect(self.flag_fe_as_temp)
         # NOTE: Changing interpolation_order, use_min_features and use_gpu of FE
         # shall only be applied when the user clicks the button to set the FE
         # But we still want to flag the FE model as temporary when changing these parameters
@@ -739,12 +743,16 @@ class ConvPaintWidget(QWidget):
         self.check_use_min_features.stateChanged.connect(self.flag_fe_as_temp)
         
         # Classifier
-        self.spin_iterations.valueChanged.connect(lambda:
-            self.cp_model.set_param('clf_iterations', self.spin_iterations.value(), ignore_warnings=True))
-        self.spin_learning_rate.valueChanged.connect(lambda:
-            self.cp_model.set_param('clf_learning_rate', self.spin_learning_rate.value(), ignore_warnings=True))
-        self.spin_depth.valueChanged.connect(lambda:
-            self.cp_model.set_param('clf_depth', self.spin_depth.value(), ignore_warnings=True))
+        # self.spin_iterations.valueChanged.connect(lambda:
+        #     self.cp_model.set_param('clf_iterations', self.spin_iterations.value(), ignore_warnings=True))
+        # self.spin_learning_rate.valueChanged.connect(lambda:
+        #     self.cp_model.set_param('clf_learning_rate', self.spin_learning_rate.value(), ignore_warnings=True))
+        # self.spin_depth.valueChanged.connect(lambda:
+        #     self.cp_model.set_param('clf_depth', self.spin_depth.value(), ignore_warnings=True))
+        self.spin_iterations.valueChanged.connect(self.flag_clf_as_temp)
+        self.spin_learning_rate.valueChanged.connect(self.flag_clf_as_temp)
+        self.spin_depth.valueChanged.connect(self.flag_clf_as_temp)
+        self.set_clf_btn.clicked.connect(self._on_set_clf_params)
         self.set_default_clf_btn.clicked.connect(self._on_reset_clf_params)
 
         # === CLASS LABELS TAB ===
@@ -1692,6 +1700,7 @@ class ConvPaintWidget(QWidget):
         self._gpu_unsupported_warning_emitted = False
         self._reset_device_options()
         self.flag_fe_as_set()
+        self.flag_clf_as_set()
         # Delay the flagging of the FE as set, so it is not reverted --> probably not even necessary
         # QTimer.singleShot(100, lambda: self.flag_fe_as_set())
 
@@ -1866,11 +1875,13 @@ class ConvPaintWidget(QWidget):
     def flag_fe_as_temp(self):
         """Whenever we change the temp FE, we want to flag that the changes are not yet applied.
         We do this by writing the "Set feature extractor*" in red."""
-        self.set_fe_btn.setText('Set feature extractor*')
-        temp_css_color ="rgb(185, 85, 75)" # Light red
-        self.set_fe_btn.setStyleSheet(f"color: {temp_css_color}")
+        self.set_fe_btn.setText('Set feature extractor *')
+        # temp_css_color ="rgb(185, 85, 75)" # Light red
+        # temp_css_weight = "bold" # Bold...
+        self.set_fe_btn.setStyleSheet("color: black; font-weight: bold")
         # self.model_description1.setStyleSheet(f"color: {css_color}")
-        self.model_description2.setStyleSheet(f"color: {temp_css_color}")
+        # self.model_description2.setStyleSheet(f"color: {temp_css_color}")
+        self.fe_group.gbox.setTitle("Feature extractor (unsaved changes) *")
 
     def flag_fe_as_set(self):
         """Whenever we set the FE, we want to flag that the changes are applied.
@@ -1878,7 +1889,8 @@ class ConvPaintWidget(QWidget):
         self.set_fe_btn.setText('Set feature extractor')
         self.set_fe_btn.setStyleSheet("color: gray")
         # self.model_description1.setStyleSheet("")
-        self.model_description2.setStyleSheet("")
+        # self.model_description2.setStyleSheet("")
+        self.fe_group.gbox.setTitle("Feature extractor")
 
     def _on_fe_selected(self, event=None):
         """Update GUI to show selectable layers of model chosen from drop-down."""
@@ -1924,11 +1936,6 @@ class ConvPaintWidget(QWidget):
             self.set_fe_btn.setEnabled(True)
 
         self.flag_fe_as_temp() # Flag that the FE is not yet set (since we just changed the temp model)
-
-    def _on_fe_scalings_changed(self):
-        """Update param object only when FE is set. But flag the changes."""
-        self.flag_fe_as_temp() # Flag that the FE is not yet set (since we just changed the temp model)
-        return
 
     def _on_set_fe_model(self, event=None):
         """Create a neural network model that will be used for feature extraction and
@@ -2015,6 +2022,7 @@ class ConvPaintWidget(QWidget):
         self._reset_train_features()
         # Flag that the FE is now set (since we just set the model)
         self.flag_fe_as_set() # Flag that the FE is now set (since we just set the model)
+        self.flag_clf_as_set()
 
     def _on_reset_default_fe(self, event=None):
         """Reset the feature extraction model to the default model."""
@@ -2024,11 +2032,31 @@ class ConvPaintWidget(QWidget):
 
     # Classifier
 
+    def flag_clf_as_temp(self):
+        """Flag classifier settings as changed but not yet applied."""
+        self.set_clf_btn.setText('Set classifier parameters *')
+        self.set_clf_btn.setStyleSheet("color: black; font-weight: bold")
+        self.classifier_params_group.gbox.setTitle("Classifier (CatBoost) (unsaved changes) *")
+
+    def flag_clf_as_set(self):
+        """Flag classifier settings as applied."""
+        self.set_clf_btn.setText('Set classifier parameters')
+        self.set_clf_btn.setStyleSheet("color: gray")
+        self.classifier_params_group.gbox.setTitle("Classifier (CatBoost)")
+
+    def _on_set_clf_params(self, event=None):
+        """Apply classifier parameters from the GUI and discard any trained classifier."""
+        self.cp_model.set_param("clf_iterations", self.spin_iterations.value(), ignore_warnings=True)
+        self.cp_model.set_param("clf_learning_rate", self.spin_learning_rate.value(), ignore_warnings=True)
+        self.cp_model.set_param("clf_depth", self.spin_depth.value(), ignore_warnings=True)
+        self._reset_clf()
+        self._reset_train_features()
+        self.flag_clf_as_set()
+
     def _on_reset_clf_params(self):
         """Reset the classifier parameters to the default values
         and discard the trained model."""
         self._reset_clf_params()
-        self._reset_clf()
     
 ### Helper functions
 
@@ -2399,14 +2427,14 @@ class ConvPaintWidget(QWidget):
         if fe_model is None:
             return # If there is no FE model, we can just set the device policy without checks (will be checked again when setting FE)
 
-        fe_supports_gpu = True
-        if fe_model is not None and hasattr(fe_model, "supports_gpu"):
+        fe_supported_devices = []
+        if fe_model is not None and hasattr(fe_model, "supported_devices"):
             try:
-                fe_supports_gpu = fe_model.supports_gpu()
+                fe_supported_devices = fe_model.supported_devices()
             except Exception:
-                fe_supports_gpu = True
+                fe_supported_devices = [torch.device("cpu")]
 
-        if selected_device == 'gpu' and not fe_supports_gpu:
+        if selected_device == 'gpu' and not any(device.type == 'cuda' or device.type == 'mps' for device in fe_supported_devices):
             if raise_warning and not self._gpu_unsupported_warning_emitted:
                 warnings.warn(
                     "Current feature extractor does not support GPU. "
@@ -2595,15 +2623,11 @@ class ConvPaintWidget(QWidget):
 
     def _reset_clf_params(self):
         """Reset classifier parameters to default values."""
-        # In the widget, which will also trigger to adjust the param object
         self.spin_iterations.setValue(self.default_cp_param.clf_iterations)
         self.spin_learning_rate.setValue(self.default_cp_param.clf_learning_rate)
         self.spin_depth.setValue(self.default_cp_param.clf_depth)
-        # In the param object (not done through bindings if values in the widget are not changed)
-        self.cp_model.set_params(clf_iterations = self.default_cp_param.clf_iterations,
-                                 clf_learning_rate = self.default_cp_param.clf_learning_rate,
-                                 clf_depth = self.default_cp_param.clf_depth,
-                                 ignore_warnings=True)
+        # Mimic pressing "Set classifier parameters".
+        self._on_set_clf_params()
 
     def _reset_fe_params(self):
         """Reset feature extraction parameters to default values."""
