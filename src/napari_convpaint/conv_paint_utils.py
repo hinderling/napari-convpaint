@@ -770,36 +770,38 @@ def get_fe_device(use_device="auto", supported_devices=None, warn=True):
     """
     use_device = _normalize_device_policy(use_device)
 
+    # Explicit CPU request short-circuits all GPU checks, even if available and supported, and prevents warnings.
+    if use_device == 'cpu': 
+        return torch.device('cpu')
+
+    # Check devices supported by the FE
     if supported_devices is None:
         supported_devices = []
-
     supported_types = set()
     for dev in supported_devices:
         if isinstance(dev, torch.device):
             supported_types.add(dev.type)
         elif isinstance(dev, str):
             supported_types.add(torch.device(dev).type)
-
-    if use_device == 'cpu':
-        return torch.device('cpu')
-
-    cuda_available = torch.cuda.is_available()
-    mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
     supports_cuda = 'cuda' in supported_types
     supports_mps = 'mps' in supported_types
 
+    # Check GPU backends available in the runtime environment
+    cuda_available = torch.cuda.is_available()
+    mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+
+    # If a device/backend is supported by FE and available by the system, use it 
     if cuda_available and supports_cuda:
         return torch.device('cuda:0')
-
     if mps_available and supports_mps:
         return torch.device('mps')
 
+    # If a GPU was explicitly requested but not available or supported, warn and fall back to CPU
     if use_device == 'gpu' and warn:
         if not cuda_available and not mps_available:
             warnings.warn('Neither CUDA nor MPS is available. Falling back to CPU for feature extractor.')
         else:
-            warnings.warn('Requested GPU for feature extractor, but no available GPU backend is supported by this feature extractor. Falling back to CPU.')
-
+            warnings.warn(f'Requested GPU for feature extractor, but the available GPU backend is not supported by this feature extractor. Falling back to CPU.')
     return torch.device('cpu')
 
 def get_device_from_torch_model(model):
@@ -859,7 +861,6 @@ def get_catboost_device(use_device="auto", warn=True):
         warnings.warn('CUDA is not available. Falling back to CPU for CatBoost.')
         if torch.backends.mps.is_available():
             warnings.warn('Note for MPS users: MPS is available on this device but not supported by CatBoost.')
-
     return 'CPU'
 
 def normalize_image(image, image_mean, image_std):
