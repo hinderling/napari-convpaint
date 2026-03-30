@@ -2057,6 +2057,33 @@ class ConvPaintWidget(QWidget):
     
 ### Helper functions
 
+    def _get_layer_transform_kwargs(self, img_layer):
+        """Return kwargs with transform info (scale/translate) from an image layer.
+
+        Keeps the change minimal by only copying attributes commonly used by
+        napari's add_image/add_labels (`scale` and `translate`) when present.
+        """
+        kwargs = {}
+        if img_layer is None:
+            return kwargs
+        # copy scale
+        if hasattr(img_layer, 'scale'):
+            sc = img_layer.scale
+            if sc is not None:
+                try:
+                    kwargs['scale'] = tuple(sc)
+                except Exception:
+                    kwargs['scale'] = sc
+        # copy translate
+        if hasattr(img_layer, 'translate'):
+            tr = img_layer.translate
+            if tr is not None:
+                try:
+                    kwargs['translate'] = tuple(tr)
+                except Exception:
+                    kwargs['translate'] = tr
+        return kwargs
+
     def _add_empty_annot(self, event=None, force_add=True):
         """Add annotation layer to viewer. If the layer already exists,
         remove it (or rename and keep it if specified in self.keep_layers) and add a new one.
@@ -2069,6 +2096,9 @@ class ConvPaintWidget(QWidget):
             return
         layer_shape = self._get_annot_shape(img)
 
+        # Get transform kwargs (scale/translate) from the image layer to apply to new layers
+        transform_kwargs = self._get_layer_transform_kwargs(img)
+
         # Create a new annotation layer if it doesn't exist yet
         annotation_exists = self.annot_prefix in self.viewer.layers
 
@@ -2078,7 +2108,8 @@ class ConvPaintWidget(QWidget):
             temp_name = self._get_unique_layer_name("temp_annotations")
             self.viewer.add_labels(
                 data=np.zeros((layer_shape), dtype=np.uint8),
-                name=temp_name
+                name=temp_name,
+                **transform_kwargs
                 )
 
             # Select the temp layer in the dropdown
@@ -2098,7 +2129,8 @@ class ConvPaintWidget(QWidget):
             # Create a copy of the temp layer with the original name (so we can select it)
             self.viewer.add_labels(
                 data=self.viewer.layers[temp_name].data,
-                name=self.annot_prefix
+                name=self.annot_prefix,
+                **transform_kwargs
                 )
             # Select the new annotation layer in the dropdown
             if self.viewer.layers[self.annot_prefix] in self.annotation_layer_selection_widget.choices:
@@ -2133,6 +2165,7 @@ class ConvPaintWidget(QWidget):
             warnings.warn('No image selected. No layers added.')
             return
         layer_shape = self._get_annot_shape(img)
+        transform_kwargs = self._get_layer_transform_kwargs(img)
     
         # Create a new segmentation layer if it doesn't exist yet or we need a new one
         seg_exists = self.seg_prefix in self.viewer.layers
@@ -2150,7 +2183,8 @@ class ConvPaintWidget(QWidget):
         if (not seg_exists) or self.new_seg:
             self.viewer.add_labels(
                 data=np.zeros((layer_shape), dtype=np.uint8),
-                name=self.seg_prefix
+                name=self.seg_prefix,
+                **transform_kwargs
                 )
             # Save information about the segmentation layer to be able to rename it later
             self._set_old_seg_tag()
@@ -2190,7 +2224,8 @@ class ConvPaintWidget(QWidget):
             # Create a new probabilities layer
             self.viewer.add_image(
                 data=np.zeros(num_classes+spatial_dims, dtype=np.float32),
-                name=self.proba_prefix
+                name=self.proba_prefix,
+                **self._get_layer_transform_kwargs(img)
                 )
             # Change the colormap to one suited for probabilities
             self.viewer.layers[self.proba_prefix].colormap = "turbo"
@@ -2229,14 +2264,16 @@ class ConvPaintWidget(QWidget):
             if not num_features == 0:
                 self.viewer.add_image(
                     data=np.zeros((num_features,)+spatial_dims, dtype=np.float32),
-                    name=self.features_prefix
+                    name=self.features_prefix,
+                    **self._get_layer_transform_kwargs(img)
                     )
                 # Change the colormap to one suited for features
                 self.viewer.layers[self.features_prefix].colormap = "viridis"
             else: # Kmeans feature image (2D or 3D)
                 self.viewer.add_labels(
                     data=np.zeros(spatial_dims, dtype=np.uint8),
-                    name=self.features_prefix
+                    name=self.features_prefix,
+                    **self._get_layer_transform_kwargs(img)
                     )
             # Save information about the features layer to be able to rename it later
             self._set_old_features_tag()
@@ -3109,8 +3146,8 @@ class ConvPaintWidget(QWidget):
             layer_name = f'{self.annot_prefix}_{img.name}_{channel_mode_str}'
             layer_name = self._get_unique_layer_name(layer_name)
             data = np.zeros((layer_shape), dtype=np.uint8)
-            # Create a new annotation layer with the unique name
-            self.viewer.add_labels(data=data, name=layer_name)
+            # Create a new annotation layer with the unique name (copy image transforms)
+            self.viewer.add_labels(data=data, name=layer_name, **self._get_layer_transform_kwargs(img))
             labels_layer = self.viewer.layers[layer_name]
             # Set the annotation layer to paint mode
             labels_layer.mode = 'paint'
