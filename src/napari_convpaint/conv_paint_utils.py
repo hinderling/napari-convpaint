@@ -798,9 +798,16 @@ def get_fe_device(use_device="auto", supported_devices=None, warn=True):
 
     # If a GPU was explicitly requested but not available or supported, warn and fall back to CPU
     if use_device == 'gpu' and warn:
-        if not cuda_available and not mps_available:
+        if not supports_cuda and not supports_mps:
+            warnings.warn('The selected Feature Extractor does not support any available GPU backend. Falling back to CPU.')
+        elif not cuda_available and not mps_available:
             warnings.warn('Neither CUDA nor MPS is available. Falling back to CPU for feature extractor.')
-        else:
+        # From above, we know that at least one, but not a matching GPU backend is supported, so we can be specific in the warning:
+        elif all([supports_cuda, not supports_mps, mps_available, not cuda_available]):
+            warnings.warn('Only CUDA is supported by the Feature Extractor, but only MPS is available. Falling back to CPU for feature extractor.')
+        elif all([supports_mps, not supports_cuda, cuda_available, not mps_available]):
+            warnings.warn('Only MPS is supported by the Feature Extractor, but only CUDA is available. Falling back to CPU for feature extractor.')
+        else: # This case should not be possible, but we cover it just in case
             warnings.warn(f'Requested GPU for feature extractor, but the available GPU backend is not supported by this feature extractor. Falling back to CPU.')
     return torch.device('cpu')
 
