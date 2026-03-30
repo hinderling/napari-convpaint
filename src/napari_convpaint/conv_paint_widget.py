@@ -2500,7 +2500,7 @@ class ConvPaintWidget(QWidget):
         self.fe_device_dropdown.blockSignals(True)
         try:
             if not gpu_available:
-                downgrade_from_gpu = self.clf_device = 'gpu'
+                downgrade_from_gpu = self.clf_device == 'gpu'
                 self.fe_device = 'cpu'
                 self.clf_device = 'cpu'
                 self.fe_device_dropdown.setCurrentText('cpu')
@@ -2739,10 +2739,14 @@ class ConvPaintWidget(QWidget):
         fe_name = name if name is not None else 'None'
         num_layers = len(layers) if layers is not None else 0
         num_scalings = len(scalings) if scalings is not None else 0
+        supported_devices = self.cp_model.fe_model.supported_devices() if hasattr(self.cp_model.fe_model, 'supported_devices') else []
+        device_string =  ' | supports: ' + ', '.join(str(d) for d in supported_devices) if supported_devices else 'cpu only'
         descr = (fe_name +
         f': {num_layers} layer' + ('' if num_layers == 1 else 's') +
         f', {num_scalings} scaling' + ('' if num_scalings == 1 else 's') + 
-        f' ({self.current_model_path})')
+        f' ({self.current_model_path})' +
+        f'{device_string}'
+        )
         self.model_description1.setText(descr)
         self.model_description2.setText(descr)
 
