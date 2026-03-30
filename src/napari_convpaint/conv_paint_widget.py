@@ -1626,6 +1626,8 @@ class ConvPaintWidget(QWidget):
         # Get file path
         if save_file is None:
             dialog = QFileDialog()
+            # DontUseNativeDialog: ensures extension is appended on all platforms
+            dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
             save_file, _ = dialog.getSaveFileName(self, "Save model", None, "PICKLE (*.pkl);;YAML (*.yml)")
         
         # If file selection is aborted, raise a warning (instead of an error)
@@ -1633,9 +1635,21 @@ class ConvPaintWidget(QWidget):
             warnings.warn('No file selected')
             return
 
-        # Save model
+        # Determine path/name and suffix
         save_file = Path(save_file)
         suff = save_file.suffix
+
+        # Ensure we have a valid extension
+        # Note: this is originally a fix for Ubuntu/GTK where native dialog does not auto-append the extension
+        # (together with switching off the native dialog), but we keep it for all platforms to ensure the correct extension is always appended
+        if suff not in ('.pkl', '.yml') and selected_filter is not None:
+            if 'pkl' in selected_filter:
+                save_file = save_file.with_suffix('.pkl')
+            else:
+                save_file = save_file.with_suffix('.yml')
+            suff = save_file.suffix
+
+        # Save model
         pkl = suff == '.pkl'
         yml = suff == '.yml'
         save_string = str(save_file)
