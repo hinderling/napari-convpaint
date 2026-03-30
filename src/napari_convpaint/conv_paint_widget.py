@@ -2744,14 +2744,14 @@ class ConvPaintWidget(QWidget):
         supported_devices = self.cp_model.fe_model.supported_devices() if hasattr(self.cp_model.fe_model, 'supported_devices') else []
         # device_string =  ' | ' + (', '.join(str(d) for d in supported_devices) + ", cpu" if devices else 'cpu only')
         device = get_fe_device(use_device=self.fe_device, supported_devices=supported_devices, warn=False)
-        device_string = 'cuda, cpu' if 'cuda' in str(device) else ('mps, cpu' if 'mps' in str(device) else 'cpu only')
-        device_string = ' | options: ' + device_string
+        device_string = 'options: cuda, cpu' if 'cuda' in str(device) else(
+                        'options: mps, cpu' if 'mps' in str(device) else 'uses cpu only')
         # Put together and post
         descr = (fe_name +
         f': {num_layers} layer' + ('' if num_layers == 1 else 's') +
         f', {num_scalings} scaling' + ('' if num_scalings == 1 else 's') + 
         f' ({self.current_model_path})' +
-        f'{device_string}'
+        f' | {device_string}'
         )
         self.model_description1.setText(descr)
         self.model_description2.setText(descr)
