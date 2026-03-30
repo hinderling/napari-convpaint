@@ -2500,16 +2500,22 @@ class ConvPaintWidget(QWidget):
         self.fe_device_dropdown.blockSignals(True)
         try:
             if not gpu_available:
+                downgrade_from_gpu = self.clf_device = 'gpu'
                 self.fe_device = 'cpu'
                 self.clf_device = 'cpu'
                 self.fe_device_dropdown.setCurrentText('cpu')
                 self.fe_device_dropdown.setEnabled(False)
                 if mps_available and not cuda_available: # FE supports only cuda or neither, but only MPS is available
                     self.fe_device_dropdown.setToolTip(mps_none_tooltip)
-                else: # No GPU available
+                    if downgrade_from_gpu: # Warn actively in case the policy was 'gpu' and downgrading to CPU was necessary
+                        show_info(mps_none_tooltip)
+                else: # No GPU available (this should usually only happen at startup, not when changing FE)
                     self.fe_device_dropdown.setToolTip(no_gpu_tooltip)
+                    if downgrade_from_gpu: # Warn actively in case the policy was 'gpu' and downgrading to CPU was necessary
+                        show_info(no_gpu_tooltip)
             else: # Some combination of availability and FE support that allows GPU usage
                 self.fe_device_dropdown.setEnabled(True)
+                # Use previous policy (note that clf and fe policies are currently always identical, but clf is used here as proxy)
                 selected_policy = self.clf_device if self.clf_device in self.device_options else 'auto'
                 self.fe_device_dropdown.setCurrentText(selected_policy)
                 if cuda_available and fe_supports_cuda:
