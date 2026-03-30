@@ -2742,8 +2742,9 @@ class ConvPaintWidget(QWidget):
         num_scalings = len(scalings) if scalings is not None else 0
         # Get device support information for the FE model and system
         supported_devices = self.cp_model.fe_model.supported_devices() if hasattr(self.cp_model.fe_model, 'supported_devices') else []
-        devices = get_fe_device(use_device=self.fe_device, supported_devices=supported_devices, warn=False)
-        device_string =  ' | ' + (', '.join(str(d) for d in devices) + ", cpu" if devices else 'cpu only')
+        # device_string =  ' | ' + (', '.join(str(d) for d in supported_devices) + ", cpu" if devices else 'cpu only')
+        device = get_fe_device(use_device=self.fe_device, supported_devices=supported_devices, warn=False)
+        device_string = ' | options: ' + (device + ', cpu' if device != 'cpu' else 'cpu only')
         # Put together and post
         descr = (fe_name +
         f': {num_layers} layer' + ('' if num_layers == 1 else 's') +
