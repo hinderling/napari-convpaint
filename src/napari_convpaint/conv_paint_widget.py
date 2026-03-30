@@ -2744,7 +2744,7 @@ class ConvPaintWidget(QWidget):
         supported_devices = self.cp_model.fe_model.supported_devices() if hasattr(self.cp_model.fe_model, 'supported_devices') else []
         # device_string =  ' | ' + (', '.join(str(d) for d in supported_devices) + ", cpu" if devices else 'cpu only')
         device = get_fe_device(use_device=self.fe_device, supported_devices=supported_devices, warn=False)
-        device_string = 'cuda' if device.type == 'cuda, cpu' else ('mps, cpu' if device.type == 'mps' else 'cpu only')
+        device_string = 'cuda, cpu' if 'cuda' in str(device) else ('mps, cpu' if 'mps' in str(device) else 'cpu only')
         device_string = ' | options: ' + device_string
         # Put together and post
         descr = (fe_name +
