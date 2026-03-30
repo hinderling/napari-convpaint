@@ -14,7 +14,7 @@ import numpy as np
 import warnings
 import torch
 
-from .conv_paint_utils import normalize_image, compute_image_stats, normalize_image_percentile, normalize_image_imagenet
+from .conv_paint_utils import normalize_image, compute_image_stats, normalize_image_percentile, normalize_image_imagenet, get_fe_device
 from .conv_paint_model import ConvpaintModel
 
 class ConvPaintWidget(QWidget):
@@ -1628,7 +1628,7 @@ class ConvPaintWidget(QWidget):
             dialog = QFileDialog()
             # DontUseNativeDialog: ensures extension is appended on all platforms
             dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
-            save_file, _ = dialog.getSaveFileName(self, "Save model", None, "PICKLE (*.pkl);;YAML (*.yml)")
+            save_file, selected_filter = dialog.getSaveFileName(self, "Save model", None, "PICKLE (*.pkl);;YAML (*.yml)")
         
         # If file selection is aborted, raise a warning (instead of an error)
         if save_file == '':
@@ -2731,6 +2731,7 @@ class ConvPaintWidget(QWidget):
 
     def _set_model_description(self):
         """Set the model description text."""
+        # Get general model attributes
         if self.cp_model.fe_model is None:
             descr = 'No model set'
             return
@@ -2739,8 +2740,11 @@ class ConvPaintWidget(QWidget):
         fe_name = name if name is not None else 'None'
         num_layers = len(layers) if layers is not None else 0
         num_scalings = len(scalings) if scalings is not None else 0
+        # Get device support information for the FE model and system
         supported_devices = self.cp_model.fe_model.supported_devices() if hasattr(self.cp_model.fe_model, 'supported_devices') else []
-        device_string =  ' | supports: ' + ', '.join(str(d) for d in supported_devices) if supported_devices else 'cpu only'
+        devices = get_fe_device(use_device=self.fe_device, fe_supported_devices=supported_devices, warn=False)
+        device_string =  ' | ' + (', '.join(str(d) for d in devices) + ", cpu" if devices else 'cpu only')
+        # Put together and post
         descr = (fe_name +
         f': {num_layers} layer' + ('' if num_layers == 1 else 's') +
         f', {num_scalings} scaling' + ('' if num_scalings == 1 else 's') + 
