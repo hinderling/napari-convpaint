@@ -1890,7 +1890,7 @@ class ConvPaintWidget(QWidget):
         self.set_fe_btn.setText('Set feature extractor *')
         # temp_css_color ="rgb(185, 85, 75)" # Light red
         # temp_css_weight = "bold" # Bold...
-        self.set_fe_btn.setStyleSheet("color: black; font-weight: bold")
+        self.set_fe_btn.setStyleSheet("font-weight: bold")
         # self.model_description1.setStyleSheet(f"color: {css_color}")
         # self.model_description2.setStyleSheet(f"color: {temp_css_color}")
         self.fe_group.gbox.setTitle("Feature extractor (unsaved changes) *")
