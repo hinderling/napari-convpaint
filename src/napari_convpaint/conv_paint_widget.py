@@ -2580,6 +2580,7 @@ class ConvPaintWidget(QWidget):
             # for layer in layer_texts:
         if layers is None:
             return
+        self.fe_layer_selection.clearSelection()
         for layer in layers:
             # items = self.fe_layer_selection.findItems(layer, Qt.MatchExactly)
             items = self.fe_layer_selection.findItems(layer, Qt.MatchContains) # In case the layer names in the GUI have indices added, we use contains instead of exactly

@@ -84,8 +84,7 @@ class CellposeFeatures(FeatureExtractor):
             self.model.net = self.model.net.to(device)
             self.model.device = device
             self.model.gpu = device.type in ("cuda", "mps")
-            if hasattr(self.model, "eval"):
-                self.model.eval()
+            self.model.net.eval()
 
         self.device = device
         return device
