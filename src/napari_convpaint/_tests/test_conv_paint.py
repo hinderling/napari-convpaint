@@ -396,5 +396,72 @@ def test_custom_vgg16_layers(make_napari_viewer, capsys):
         precision, recall = compute_precision_recall(ground_truth, recovered)
         assert precision > 0.7, f"Precision: {precision}, too low"
         assert recall > 0.7, f"Recall: {recall}, too low"
-    
+
     assert my_widget.qcombo_fe_type.currentText() == 'vgg16'
+
+def test_3d_single_channel_prediction(make_napari_viewer, capsys):
+    """Test train and predict on a 3D stack of single-channel images (3D_single mode)."""
+
+    # Create a 3D stack of 3 single-channel images with a bright square
+    im_dims = (100, 100)
+    square_dims = (30, 30)
+    num_slices = 3
+
+    ims = []
+    for i in range(num_slices):
+        im, _ = generate_synthetic_square(im_dims=im_dims, square_dims=square_dims, rgb=False)
+        ims.append(im)
+    im_stack = np.stack(ims, axis=0)  # shape: (3, 100, 100)
+    assert im_stack.shape == (num_slices, im_dims[0], im_dims[1])
+
+    # Annotations: label two circles on the first slice
+    im_annot_2d = generate_synthetic_circle_annotation(im_dims=im_dims, circle1_xy=(50, 30), circle2_xy=(50, 50))
+    im_annot = np.zeros_like(im_stack, dtype=np.uint8)
+    im_annot[0] = im_annot_2d
+
+    viewer = make_napari_viewer()
+    my_widget = ConvPaintWidget(viewer)
+    viewer.add_image(im_stack)
+    my_widget.cp_model.set_params(channel_mode='single')
+    my_widget._on_add_annot_layer()
+    viewer.layers['annotations'].data[...] = im_annot
+
+    # Train with numpy data
+    my_widget._on_train()
+
+    my_widget._on_predict()
+
+    # Verify segmentation layer exists and has correct shape
+    assert 'segmentation' in viewer.layers, "Segmentation layer not created"
+    seg_data = viewer.layers['segmentation'].data
+    assert seg_data.shape == im_stack.shape, (
+        f"Segmentation shape {seg_data.shape} doesn't match image shape {im_stack.shape}"
+    )
+
+
+def test_3d_single_channel_predict_returns_array():
+    """Test that _predict returns arrays (not lists) for single dask array input."""
+    import dask.array as da
+    from napari_convpaint.conv_paint_model import ConvpaintModel
+
+    # Create synthetic data: a single 2D plane (as would come from _get_current_plane_norm)
+    im_dims = (100, 100)
+    square_dims = (30, 30)
+    im, _ = generate_synthetic_square(im_dims=im_dims, square_dims=square_dims, rgb=False)
+    im_annot = generate_synthetic_circle_annotation(im_dims=im_dims, circle1_xy=(50, 30), circle2_xy=(50, 50))
+
+    # Train the model with numpy data
+    model = ConvpaintModel()
+    model.set_params(channel_mode='single')
+    model.train(im, im_annot)
+
+    # Predict with a dask array (simulates dask-backed image layer)
+    im_dask = da.from_array(im, chunks=im.shape)
+    probas, seg = model._predict(im_dask, add_seg=True)
+
+    assert isinstance(seg, np.ndarray), (
+        f"_predict should return an array for single input, got {type(seg)}"
+    )
+    assert seg.shape == im_dims, (
+        f"Segmentation shape {seg.shape} should be {im_dims}"
+    )
