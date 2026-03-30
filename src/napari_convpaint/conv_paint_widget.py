@@ -1697,7 +1697,6 @@ class ConvPaintWidget(QWidget):
         self.current_model_path = save_file.name
         self._set_model_description()
         self._update_training_counts()
-        self._gpu_unsupported_warning_emitted = False
         self._reset_device_options()
         self.flag_fe_as_set()
         self.flag_clf_as_set()
@@ -1850,7 +1849,6 @@ class ConvPaintWidget(QWidget):
         self.use_dask = False # Use Dask for parallel processing
         self.fe_device = 'auto' # Device to use for the FE (if applicable); 'auto' will use GPU if available, otherwise CPU
         self.clf_device = 'auto' # Device to use for the classifier (if applicable); 'auto' will use GPU if available, otherwise CPU
-        self._gpu_unsupported_warning_emitted = False # Warn once for unsupported explicit GPU until FE setup changes
         self.input_channels = "" # Input channels for the model (as txt, will be parsed)
         self.add_seg = True # Add a layer with segmentation
         self.add_probas = False # Add a layer with class probabilities
@@ -2015,7 +2013,6 @@ class ConvPaintWidget(QWidget):
 
         # Create a new model with the new FE
         self.cp_model = ConvpaintModel(param=new_param)
-        self._gpu_unsupported_warning_emitted = False
         self._reset_device_options()
         self._reset_clf() # Call to take all actions needed after resetting the clf
         # Reset the features for continuous training
@@ -2414,48 +2411,40 @@ class ConvPaintWidget(QWidget):
             self.segment_all_btn.setEnabled(False)
             self.btn_add_features_stack.setEnabled(False)
 
-    def _on_change_device(self, event=None, raise_warning=True):
+    def _on_change_device(self, event=None):
         """Update FE/CLF device policies when the dropdown selection changes."""
         selected_device = self.fe_device_dropdown.currentText()
-
-        # Classifier follows the dropdown directly.
-        self.clf_device = selected_device
-        # Feature extractor follows dropdown unless explicit GPU is unsupported.
+        # Pass selected policy through; runtime fallback/warnings are handled by ConvpaintModel.
         self.fe_device = selected_device
-
-        fe_model = getattr(self.cp_model, "fe_model", None)
-        if fe_model is None:
-            return # If there is no FE model, we can just set the device policy without checks (will be checked again when setting FE)
-
-        fe_supported_devices = []
-        if fe_model is not None and hasattr(fe_model, "supported_devices"):
-            try:
-                fe_supported_devices = fe_model.supported_devices()
-            except Exception:
-                fe_supported_devices = [torch.device("cpu")]
-
-        if selected_device == 'gpu' and not any(device.type == 'cuda' or device.type == 'mps' for device in fe_supported_devices):
-            if raise_warning and not self._gpu_unsupported_warning_emitted:
-                warnings.warn(
-                    "Current feature extractor does not support GPU. "
-                    "Feature extraction will use CPU while classifier keeps the selected device policy."
-                )
-                self._gpu_unsupported_warning_emitted = True
-            self.fe_device = 'cpu'
+        self.clf_device = selected_device
 
     def _reset_device_options(self):
         """Reset device dropdown availability and synchronize FE/CLF device policies."""
         if not hasattr(self, "fe_device_dropdown"):
             return
 
-        default_tooltip = (
-            'Select device for feature extraction. "Auto" will use GPU if available, otherwise CPU. '
-            '"GPU" option is only available if a compatible GPU is available, and only for compatible feature extractors. '
-            'If "GPU" is selected but not available, will fall back to CPU.'
-        )
+        default_tooltip = 'Select device policy for feature extraction and classifier.'
+        no_gpu_tooltip = 'No CUDA/MPS backend available. Device is fixed to CPU.'
+        cuda_both_tooltip = 'CUDA is available and supported by this feature extractor. GPU can be used for both feature extraction and classifier.'
+        cuda_clf_only_tooltip = 'CUDA is available, but this feature extractor does not support CUDA. GPU can still be used for the classifier; feature extraction will run on CPU.'
+        mps_fe_only_tooltip = 'MPS is available and supported by this feature extractor, but CatBoost does not support MPS. Classifier will use CPU in all cases.'
+        mps_none_tooltip = 'MPS is available, but neither this feature extractor nor CatBoost supports MPS. Device is fixed to CPU.'
 
         mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-        gpu_available = torch.cuda.is_available() or mps_available
+        cuda_available = torch.cuda.is_available()
+
+        fe_model = getattr(self.cp_model, "fe_model", None)
+        fe_supported_devices = []
+        if fe_model is not None and hasattr(fe_model, "supported_devices"):
+            try:
+                fe_supported_devices = fe_model.supported_devices()
+            except Exception:
+                fe_supported_devices = [torch.device("cpu")]
+        supported_types = {device.type for device in fe_supported_devices if isinstance(device, torch.device)}
+
+        fe_supports_cuda = "cuda" in supported_types
+        fe_supports_mps = "mps" in supported_types
+        gpu_available = cuda_available or (mps_available and fe_supports_mps)
 
         self.fe_device_dropdown.blockSignals(True)
         try:
@@ -2464,17 +2453,27 @@ class ConvPaintWidget(QWidget):
                 self.clf_device = 'cpu'
                 self.fe_device_dropdown.setCurrentText('cpu')
                 self.fe_device_dropdown.setEnabled(False)
-                self.fe_device_dropdown.setToolTip('No CUDA/MPS backend available. Device is fixed to CPU.')
-            else:
+                if mps_available and not cuda_available: # FE supports only cuda or neither, but only MPS is available
+                    self.fe_device_dropdown.setToolTip(mps_none_tooltip)
+                else: # No GPU available
+                    self.fe_device_dropdown.setToolTip(no_gpu_tooltip)
+            else: # Some combination of availability and FE support that allows GPU usage
                 self.fe_device_dropdown.setEnabled(True)
                 selected_policy = self.clf_device if self.clf_device in self.device_options else 'auto'
                 self.fe_device_dropdown.setCurrentText(selected_policy)
-                self.fe_device_dropdown.setToolTip(default_tooltip)
+                if cuda_available and fe_supports_cuda:
+                    self.fe_device_dropdown.setToolTip(cuda_both_tooltip)
+                elif cuda_available and not fe_supports_cuda:
+                    self.fe_device_dropdown.setToolTip(cuda_clf_only_tooltip)
+                elif mps_available and fe_supports_mps:
+                    self.fe_device_dropdown.setToolTip(mps_fe_only_tooltip)
+                else: # This case should not happen, but we catch it just in case
+                    self.fe_device_dropdown.setToolTip(default_tooltip)
         finally:
             self.fe_device_dropdown.blockSignals(False)
 
-        # Re-apply policy resolution consistently through the dropdown handler.
-        self._on_change_device(raise_warning=False)
+        # Re-apply policy through the dropdown handler.
+        self._on_change_device()
 
     def _update_gui_fe_layer_keys(self, all_fe_layer_keys=None):
         """Update GUI FE layer list and selected layers based on the input."""
