@@ -1162,16 +1162,20 @@ class ConvpaintModel:
         if not use_rf:
             use_device = self.check_locked_device(use_device, part='clf')
             task_type = conv_paint_utils.get_catboost_device(use_device, warn=True)
-            self.classifier = CatBoostClassifier(iterations=self._param.clf_iterations,
-                                                 learning_rate=self._param.clf_learning_rate,
-                                                 depth=self._param.clf_depth,
-                                                 allow_writing_files=allow_writing_files,
-                                                 task_type=task_type
-                                                 )
+            # Fixed seed for reproducibility; can be set to None for random seed
+            self.classifier = CatBoostClassifier(
+                iterations=self._param.clf_iterations,
+                learning_rate=self._param.clf_learning_rate,
+                depth=self._param.clf_depth,
+                allow_writing_files=allow_writing_files,
+                task_type=task_type,
+                random_seed=0,
+            )
             self.classifier.fit(features, targets)
             self._param.classifier = 'CatBoost'
         else: # train a random forest classififer (does not support GPU)
-                self.classifier = RandomForestClassifier(n_estimators=100, n_jobs=-1)
+                # Fix random_state for reproducibility; can be set to None for random seed
+                self.classifier = RandomForestClassifier(n_estimators=100, n_jobs=-1, random_state=0)
                 self.classifier.fit(features, targets)
                 self._param.classifier = 'RandomForest'
 
