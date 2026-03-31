@@ -210,7 +210,7 @@ def test_save_model_dino(make_napari_viewer, capsys):
     cp_model._param.fe_scalings = [1]
     cp_model._param.fe_order = 0  # Set interpolation order to 0
     cp_model._param.fe_name = 'dinov2_vits14_reg'
-    cp_model._param.fe_use_gpu = False
+    # cp_model._param.fe_use_gpu = False
     cp_model._param.fe_use_min_features = False
     cp_model._param.tile_annotations = False
     cp_model._param.image_downsample = 1
@@ -293,7 +293,8 @@ def test_dino_jafar_small_mps_rgb(make_napari_viewer, capsys):
     cp_model._param.fe_scalings = [1]
     cp_model._param.fe_order = 0
     cp_model._param.fe_name = 'dino_jafar_small'
-    cp_model._param.fe_use_gpu = True  # Force MPS
+    # cp_model._param.fe_use_gpu = True  # Force MPS
+    cp_model.lock_device("gpu", "fe") # New way to force GPU constantly...
     cp_model._param.fe_use_min_features = False
     cp_model._param.tile_annotations = False
     cp_model._param.image_downsample = 1
