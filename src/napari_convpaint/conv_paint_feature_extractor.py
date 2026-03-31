@@ -264,9 +264,9 @@ class FeatureExtractor:
             The list of devices that the feature extractor supports.
         """
         if self.model is not None and hasattr(self.model, "to"):
-            return [torch.device("cuda"), torch.device("mps")]
+            return [torch.device("cuda"), torch.device("mps"), [torch.device("cpu")]]
         else:
-            return []
+            return [torch.device("cpu")]
 
 
 

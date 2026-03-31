@@ -94,9 +94,9 @@ class CellposeFeatures(FeatureExtractor):
         if (self.model is not None and
                 hasattr(self.model, "net")
         ):
-            return [torch.device("cuda"), torch.device("mps")]
+            return [torch.device("cuda"), torch.device("mps"), torch.device("cpu")]
         else:
-            return []
+            return [torch.device("cpu")]
 
     def get_features_from_plane(self, image, device=torch.device("cpu")):
 
