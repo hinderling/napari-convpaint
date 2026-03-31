@@ -254,12 +254,13 @@ class ConvPaintWidget(QWidget):
         self.check_tile_image.setToolTip('Tile image to reduce memory usage.\nUse with care when using models that extract long range features (e.g. DINO).')
         self.acceleration_group.glayout.addWidget(self.check_tile_image, 0,1,1,1)
         # Use Device/GPU dropdown
-        self.device_options = ['auto', 'gpu', 'cpu']
-        self.fe_device_dropdown = QComboBox()
-        self.fe_device_dropdown.addItems(self.device_options)
+        self.device_options_default = ['auto', 'gpu', 'cpu']
+        self.device_options_gpu_only_clf = ['auto', 'gpu (only classifier)', 'cpu']
+        self.device_dropdown = QComboBox()
+        self.device_dropdown.addItems(self.device_options_default)
         self.acceleration_group.glayout.addWidget(QLabel('Device (GPU/CPU)'), 1,0,1,1)
-        self.fe_device_dropdown.setToolTip('Select device for feature extraction. "Auto" will use GPU if available, otherwise CPU. "GPU" option is only available for compatible feature extractors and if a compatible GPU is available. If "GPU" is selected but not available, will fall back to CPU.')
-        self.acceleration_group.glayout.addWidget(self.fe_device_dropdown, 1,1,1,1)
+        self.device_dropdown.setToolTip('Select device policy for feature extraction and classifier.')
+        self.acceleration_group.glayout.addWidget(self.device_dropdown, 1,1,1,1)
         # "Downsample" spinbox
         self.spin_downsample = QSpinBox()
         self.spin_downsample.setMinimum(-10)
@@ -721,7 +722,7 @@ class ConvPaintWidget(QWidget):
         self.spin_smoothen.valueChanged.connect(lambda:
             self.cp_model.set_param('seg_smoothening', self.spin_smoothen.value(), ignore_warnings=True))
         # set self.use_device according to the drop down value
-        self.fe_device_dropdown.currentIndexChanged.connect(self._on_change_device)
+        self.device_dropdown.currentIndexChanged.connect(self._on_change_device)
         self.check_tile_annotations.stateChanged.connect(lambda: 
             self.cp_model.set_param('tile_annotations', self.check_tile_annotations.isChecked(), ignore_warnings=True))
         self.check_tile_image.stateChanged.connect(lambda: 
@@ -2481,14 +2482,16 @@ class ConvPaintWidget(QWidget):
 
     def _on_change_device(self, event=None):
         """Update FE/CLF device policies when the dropdown selection changes."""
-        selected_device = self.fe_device_dropdown.currentText()
+        selected_device = self.device_dropdown.currentText()
         # Pass selected policy through; runtime fallback/warnings are handled by ConvpaintModel.
-        self.fe_device = selected_device
-        self.clf_device = selected_device
+        self.fe_device = "gpu" if "gpu" in selected_device else (
+                         "mps" if "mps" in selected_device else
+                         "cpu")
+        self.clf_device = self.fe_device # Currently, the FE and CLF device policies are always the same, so we use the FE dropdown as proxy for both.
 
     def _reset_device_options(self):
         """Reset device dropdown availability and synchronize FE/CLF device policies."""
-        if not hasattr(self, "fe_device_dropdown"):
+        if not hasattr(self, "device_dropdown"):
             return
 
         default_tooltip = 'Select device policy for feature extraction and classifier.'
@@ -2502,49 +2505,55 @@ class ConvPaintWidget(QWidget):
         cuda_available = torch.cuda.is_available()
 
         fe_model = getattr(self.cp_model, "fe_model", None)
-        fe_supported_devices = []
-        if fe_model is not None and hasattr(fe_model, "supported_devices"):
-            try:
-                fe_supported_devices = fe_model.supported_devices()
-            except Exception:
-                fe_supported_devices = [torch.device("cpu")]
+        fe_supported_devices = fe_model.supported_devices()
         supported_types = {device.type for device in fe_supported_devices if isinstance(device, torch.device)}
-
         fe_supports_cuda = "cuda" in supported_types
         fe_supports_mps = "mps" in supported_types
         gpu_available = cuda_available or (mps_available and fe_supports_mps)
 
-        self.fe_device_dropdown.blockSignals(True)
+        self.device_dropdown.blockSignals(True)
+        # First, adjust the available options in the dropdown based on FE support and GPU availability
+        self.device_dropdown.clear()
+        new_options = self.device_options_gpu_only_clf if cuda_available and not fe_supports_cuda else self.device_options_default
+        self.device_dropdown.addItems(new_options)
+        # Then, adjust the selected option and tooltip based on the FE support and GPU availability
         try:
             if not gpu_available:
+                self.device_dropdown.setEnabled(False)
                 downgrade_from_gpu = self.clf_device == 'gpu'
                 self.fe_device = 'cpu'
                 self.clf_device = 'cpu'
-                self.fe_device_dropdown.setCurrentText('cpu')
-                self.fe_device_dropdown.setEnabled(False)
+                self.device_dropdown.setCurrentText('cpu')
                 if mps_available and not cuda_available: # FE supports only cuda or neither, but only MPS is available
-                    self.fe_device_dropdown.setToolTip(mps_none_tooltip)
+                    self.device_dropdown.setToolTip(mps_none_tooltip)
                     if downgrade_from_gpu: # Warn actively in case the policy was 'gpu' and downgrading to CPU was necessary
                         show_info(mps_none_tooltip)
                 else: # No GPU available (this should usually only happen at startup, not when changing FE)
-                    self.fe_device_dropdown.setToolTip(no_gpu_tooltip)
+                    self.device_dropdown.setToolTip(no_gpu_tooltip)
                     if downgrade_from_gpu: # Warn actively in case the policy was 'gpu' and downgrading to CPU was necessary
                         show_info(no_gpu_tooltip)
             else: # Some combination of availability and FE support that allows GPU usage
-                self.fe_device_dropdown.setEnabled(True)
-                # Use previous policy (note that clf and fe policies are currently always identical, but clf is used here as proxy)
-                selected_policy = self.clf_device if self.clf_device in self.device_options else 'auto'
-                self.fe_device_dropdown.setCurrentText(selected_policy)
+                self.device_dropdown.setEnabled(True)
+                # Change the currently selected policy
+                if cuda_available and not fe_supports_cuda:
+                    gpu_option = [opt for opt in self.device_options_gpu_only_clf if 'gpu' in opt][0]
+                    selected_policy = gpu_option if self.clf_device == 'gpu' else (
+                                      self.clf_device if self.clf_device in self.device_options_default else
+                                      'auto')
+                else:
+                    selected_policy = self.clf_device if self.clf_device in self.device_options_default else 'auto'
+                self.device_dropdown.setCurrentText(selected_policy)
+                # Change the tooltip
                 if cuda_available and fe_supports_cuda:
-                    self.fe_device_dropdown.setToolTip(cuda_both_tooltip)
+                    self.device_dropdown.setToolTip(cuda_both_tooltip)
                 elif cuda_available and not fe_supports_cuda:
-                    self.fe_device_dropdown.setToolTip(cuda_clf_only_tooltip)
+                    self.device_dropdown.setToolTip(cuda_clf_only_tooltip)
                 elif mps_available and fe_supports_mps:
-                    self.fe_device_dropdown.setToolTip(mps_fe_only_tooltip)
+                    self.device_dropdown.setToolTip(mps_fe_only_tooltip)
                 else: # This case should not happen, but we catch it just in case
-                    self.fe_device_dropdown.setToolTip(default_tooltip)
+                    self.device_dropdown.setToolTip(default_tooltip)
         finally:
-            self.fe_device_dropdown.blockSignals(False)
+            self.device_dropdown.blockSignals(False)
 
         # Re-apply policy through the dropdown handler.
         self._on_change_device()
@@ -2765,7 +2774,8 @@ class ConvPaintWidget(QWidget):
         # device_string =  ' | ' + (', '.join(str(d) for d in supported_devices) + ", cpu" if devices else 'cpu only')
         gpu_device = get_fe_device(use_device="gpu", supported_devices=supported_devices, warn=False) # See if there's a gpu option
         device_string = 'options: cuda, cpu' if 'cuda' in str(gpu_device) else(
-                        'options: mps, cpu' if 'mps' in str(gpu_device) else 'uses cpu only')
+                        'options: mps, cpu' if 'mps' in str(gpu_device) else
+                        'uses cpu only')
         # Put together and post
         descr = (fe_name +
         f': {num_layers} layer' + ('' if num_layers == 1 else 's') +
