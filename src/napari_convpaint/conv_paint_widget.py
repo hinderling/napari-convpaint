@@ -2071,54 +2071,38 @@ class ConvPaintWidget(QWidget):
     
 ### Helper functions
 
-    def _get_layer_transform_kwargs(self, img_layer, target_ndim=None):
-        """Return kwargs with transform info (scale/translate) from an image layer.
+    def _get_layer_transform_kwargs(self, img_layer, num_spatial_dims, num_leading_dims=0):
+        """Get transform kwargs from image layer for creating a derived layer.
 
-        If `target_ndim` is provided, trim the scale/translate tuples to have
-        length <= target_ndim by taking the trailing elements (drop leading
-        channel-like axes). This prevents napari errors when creating a layer
-        whose ndim is smaller than the source image's transform length.
+        - Take the trailing `num_spatial_dims` entries from the image layer's
+          `scale`/`translate` (if present).
+        - Prepend `num_leading_dims` neutral entries (1.0 for scale, 0.0 for
+          translate) for layers that add a leading axis (e.g. features/probas).
         """
-        kwargs = {}
         if img_layer is None:
-            return kwargs
+            return {}
 
-        # determine target ndim if not provided
-        if target_ndim is None:
-            try:
-                target_ndim = img_layer.data.ndim
-            except Exception:
-                target_ndim = None
+        # Use numpy to coerce array-like transforms into tuples and avoid
+        # ambiguous truth-value checks (e.g. empty lists, or None)
+        raw_scale = getattr(img_layer, "scale", None)
+        raw_translate = getattr(img_layer, "translate", None)
 
-        def _trim_tuple(tup):
-            try:
-                if tup is None:
-                    return None
-                t = tuple(tup)
-                if target_ndim is None:
-                    return t
-                if len(t) > target_ndim:
-                    # keep trailing elements (drop leading/channel axis)
-                    return tuple(t[-target_ndim:])
-                return t
-            except Exception:
-                return tup
+        if raw_scale is None:
+            scale = (1.0,) * num_spatial_dims
+        else:
+            scale = tuple(np.asarray(raw_scale).tolist())
 
-        # copy scale
-        if hasattr(img_layer, 'scale'):
-            sc = getattr(img_layer, 'scale')
-            sc_t = _trim_tuple(sc)
-            if sc_t is not None:
-                kwargs['scale'] = sc_t
+        if raw_translate is None:
+            translate = (0.0,) * num_spatial_dims
+        else:
+            translate = tuple(np.asarray(raw_translate).tolist())
 
-        # copy translate
-        if hasattr(img_layer, 'translate'):
-            tr = getattr(img_layer, 'translate')
-            tr_t = _trim_tuple(tr)
-            if tr_t is not None:
-                kwargs['translate'] = tr_t
+        tail_scale = tuple(scale[-num_spatial_dims:]) if num_spatial_dims else ()
+        tail_translate = tuple(translate[-num_spatial_dims:]) if num_spatial_dims else ()
+        leading_scale = (1.0,) * num_leading_dims
+        leading_translate = (0.0,) * num_leading_dims
 
-        return kwargs
+        return {"scale": leading_scale + tail_scale, "translate": leading_translate + tail_translate}
 
     def _add_empty_annot(self, event=None, force_add=True):
         """Add annotation layer to viewer. If the layer already exists,
@@ -2133,7 +2117,8 @@ class ConvPaintWidget(QWidget):
         layer_shape = self._get_annot_shape(img)
 
         # Get transform kwargs (scale/translate) from the image layer to apply to new layers
-        transform_kwargs = self._get_layer_transform_kwargs(img, target_ndim=len(layer_shape))
+        num_spatial = len(layer_shape)
+        transform_kwargs = self._get_layer_transform_kwargs(img, num_spatial_dims=num_spatial, num_leading_dims=0)
 
         # Create a new annotation layer if it doesn't exist yet
         annotation_exists = self.annot_prefix in self.viewer.layers
@@ -2201,7 +2186,8 @@ class ConvPaintWidget(QWidget):
             warnings.warn('No image selected. No layers added.')
             return
         layer_shape = self._get_annot_shape(img)
-        transform_kwargs = self._get_layer_transform_kwargs(img, target_ndim=len(layer_shape))
+        num_spatial = len(layer_shape)
+        transform_kwargs = self._get_layer_transform_kwargs(img, num_spatial_dims=num_spatial, num_leading_dims=0)
     
         # Create a new segmentation layer if it doesn't exist yet or we need a new one
         seg_exists = self.seg_prefix in self.viewer.layers
@@ -2258,11 +2244,13 @@ class ConvPaintWidget(QWidget):
         # If there was no probabilities layer, or we need a new one, create it
         if (not proba_exists) or (proba_exists and not same_num_classes) or self.new_proba:
             # Create a new probabilities layer
-            target_ndim = 1 + len(spatial_dims)
+            # probabilities have a leading class dimension then spatial dims
+            num_spatial = len(spatial_dims)
+            kwargs = self._get_layer_transform_kwargs(img, num_spatial_dims=num_spatial, num_leading_dims=1)
             self.viewer.add_image(
                 data=np.zeros(num_classes+spatial_dims, dtype=np.float32),
                 name=self.proba_prefix,
-                **self._get_layer_transform_kwargs(img, target_ndim=target_ndim)
+                **kwargs
                 )
             # Change the colormap to one suited for probabilities
             self.viewer.layers[self.proba_prefix].colormap = "turbo"
@@ -2299,20 +2287,24 @@ class ConvPaintWidget(QWidget):
         if (not features_exists) or (features_exists and not same_dim) or self.new_features:
             # Create a new features layer
             if not num_features == 0:
-                target_ndim = 1 + len(spatial_dims)
+                # features have a leading features dimension then spatial dims
+                num_spatial = len(spatial_dims)
+                kwargs = self._get_layer_transform_kwargs(img, num_spatial_dims=num_spatial, num_leading_dims=1)
                 self.viewer.add_image(
                     data=np.zeros((num_features,)+spatial_dims, dtype=np.float32),
                     name=self.features_prefix,
-                    **self._get_layer_transform_kwargs(img, target_ndim=target_ndim)
+                    **kwargs
                     )
                 # Change the colormap to one suited for features
                 self.viewer.layers[self.features_prefix].colormap = "viridis"
             else: # Kmeans feature image (2D or 3D)
-                target_ndim = len(spatial_dims)
+                # kmeans features are labels with same spatial dims
+                num_spatial = len(spatial_dims)
+                kwargs = self._get_layer_transform_kwargs(img, num_spatial_dims=num_spatial, num_leading_dims=0)
                 self.viewer.add_labels(
                     data=np.zeros(spatial_dims, dtype=np.uint8),
                     name=self.features_prefix,
-                    **self._get_layer_transform_kwargs(img, target_ndim=target_ndim)
+                    **kwargs
                     )
             # Save information about the features layer to be able to rename it later
             self._set_old_features_tag()
@@ -2678,6 +2670,8 @@ class ConvPaintWidget(QWidget):
         else:
             warnings.warn(f'Unsupported data dimensions {data_dims}. Annotation and segmentation layers might not be created with the correct shape.')
             return img_shape
+
+        
 
     def _check_large_image(self, img):
         """Check if the image is very large and should be tiled."""
@@ -3203,7 +3197,9 @@ class ConvPaintWidget(QWidget):
             layer_name = self._get_unique_layer_name(layer_name)
             data = np.zeros((layer_shape), dtype=np.uint8)
             # Create a new annotation layer with the unique name (copy image transforms)
-            self.viewer.add_labels(data=data, name=layer_name, **self._get_layer_transform_kwargs(img, target_ndim=len(layer_shape)))
+            num_spatial = len(layer_shape)
+            kwargs = self._get_layer_transform_kwargs(img, num_spatial_dims=num_spatial, num_leading_dims=0)
+            self.viewer.add_labels(data=data, name=layer_name, **kwargs)
             labels_layer = self.viewer.layers[layer_name]
             # Set the annotation layer to paint mode
             labels_layer.mode = 'paint'
