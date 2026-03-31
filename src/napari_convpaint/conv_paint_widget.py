@@ -2485,7 +2485,7 @@ class ConvPaintWidget(QWidget):
         selected_device = self.device_dropdown.currentText()
         # Pass selected policy through; runtime fallback/warnings are handled by ConvpaintModel.
         self.fe_device = "gpu" if "gpu" in selected_device else (
-                         "mps" if "mps" in selected_device else
+                         "auto" if "auto" in selected_device else
                          "cpu")
         self.clf_device = self.fe_device # Currently, the FE and CLF device policies are always the same, so we use the FE dropdown as proxy for both.
 
