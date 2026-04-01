@@ -829,7 +829,7 @@ class ConvpaintModel:
                           use_device=None):
         """
         Returns the feature images extracted by the feature extractor model.
-        For details, see the `_extract_features` method.
+        For details, see the underlying `_get_features` method.
         
         Parameters
         ----------
@@ -850,7 +850,7 @@ class ConvpaintModel:
             Reshaped to the input imges' shapes. Features dimension is added first (FHW or FZHW).    
         """
         # Extract features
-        features = self._extract_features(
+        features = self._get_features(
                 data,
                 annotations=None,
                 restore_input_form=True,
@@ -864,8 +864,10 @@ class ConvpaintModel:
             )
 
         return features
+    
+### BACKEND METHOD FOR FEATURE EXTRACTION
 
-    def _extract_features(self, data, annotations=None, restore_input_form=True,
+    def _get_features(self, data, annotations=None, restore_input_form=True,
                           memory_mode=False, img_ids=None,
                           in_channels=None, skip_norm=False, use_device=None,
                           pca_components=0, kmeans_clusters=0):
@@ -1241,8 +1243,8 @@ class ConvpaintModel:
             return self.classifier, None, None
 
         if not memory_mode:
-            # Use _extract_features to extract features and the suiting annotation parts (returns lists if restore_input_form=False)
-            feature_parts, annot_parts = self._extract_features(
+            # Use _get_features to extract features and the suiting annotation parts (returns lists if restore_input_form=False)
+            feature_parts, annot_parts = self._get_features(
                 data, annotations, restore_input_form=False, memory_mode=memory_mode,
                 in_channels=in_channels, skip_norm=skip_norm, use_device=fe_use_device)
             # Get the annotated pixels and targets, and concatenate each
@@ -1254,8 +1256,8 @@ class ConvpaintModel:
             targets = np.concatenate(targets, axis=0) # Concatenate the targets into a single array
 
         else: # memory mode
-            # Use _extract_features to extract features and the suiting annotation parts (returns lists if restore_input_form=False)
-            feature_parts, annot_parts, coords, img_ids, scale = self._extract_features(
+            # Use _get_features to extract features and the suiting annotation parts (returns lists if restore_input_form=False)
+            feature_parts, annot_parts, coords, img_ids, scale = self._get_features(
                 data, annotations, restore_input_form=False, memory_mode=memory_mode,
                 img_ids=img_ids, in_channels=in_channels, skip_norm=skip_norm, use_device=fe_use_device)
             # Get all annotations and features from the table
@@ -1499,7 +1501,7 @@ class ConvpaintModel:
 
         # Check if features are given, if not, extract them
         if feature_img is None:
-            feature_img = self._extract_features(image,
+            feature_img = self._get_features(image,
                                             restore_input_form=False,
                                             in_channels=None, # already extracted outside
                                             skip_norm=True, # already normalized outside
