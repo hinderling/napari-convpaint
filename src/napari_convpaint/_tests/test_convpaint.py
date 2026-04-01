@@ -490,6 +490,7 @@ def test_custom_vgg16_layers(make_napari_viewer, capsys):
 
     assert my_widget.qcombo_fe_type.currentText() == 'vgg16'
 
+
 def test_3d_single_channel_prediction(make_napari_viewer, capsys):
     """Test train and predict on a 3D stack of single-channel images (3D_single mode)."""
 
@@ -556,3 +557,76 @@ def test_3d_single_channel_predict_returns_array():
     assert seg.shape == im_dims, (
         f"Segmentation shape {seg.shape} should be {im_dims}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Parametrized test: all FE models × image types (2D / RGB)
+# ---------------------------------------------------------------------------
+
+ALL_FE_MODELS = [
+    'vgg16',
+    'efficient_netb0',
+    'convnext',
+    'dinov2_vits14_reg',
+    'dino_jafar_small',
+    'gaussian_features',
+    'cellpose_backbone',
+    'combo_dino_vgg',
+    'combo_dino_gauss',
+]
+
+# Use 252×252 so dimensions are divisible by 14 (dino patch size)
+_IM_DIMS = (252, 252)
+_SQ_DIMS = (70, 70)
+
+def _make_image_and_annot(image_type):
+    """Return (image, annotation, channel_mode) for a given image type."""
+    im_rgb, gt = generate_synthetic_square(im_dims=_IM_DIMS, square_dims=_SQ_DIMS, rgb=True)
+    annot = generate_synthetic_circle_annotation(im_dims=_IM_DIMS, circle1_xy=(125, 70), circle2_xy=(125, 125))
+    if image_type == '2d':
+        return im_rgb[:, :, 0], annot, 'single'
+    elif image_type == 'rgb':
+        return im_rgb, annot, 'rgb'
+    else:
+        raise ValueError(f"Unknown image type: {image_type}")
+
+
+def _fe_available(fe_name):
+    """Check whether an FE is actually importable in this environment."""
+    try:
+        from napari_convpaint.convpaint_model import ConvpaintModel
+        if not ConvpaintModel.FE_MODELS_TYPES_DICT:
+            ConvpaintModel._init_fe_models_dict()
+        return fe_name in ConvpaintModel.FE_MODELS_TYPES_DICT
+    except Exception:
+        return False
+
+
+@pytest.mark.parametrize("fe_name", ALL_FE_MODELS)
+@pytest.mark.parametrize("image_type", ['2d', 'rgb'])
+def test_all_models_train_predict(make_napari_viewer, fe_name, image_type):
+    """Train and predict with every FE model on 2D and RGB images."""
+    if not _fe_available(fe_name):
+        pytest.skip(f"{fe_name} not available in this environment")
+
+    im, annot, channel_mode = _make_image_and_annot(image_type)
+
+    viewer = make_napari_viewer()
+    my_widget = ConvpaintWidget(viewer)
+    viewer.add_image(im, name='sample')
+    my_widget._on_add_annot_layer()
+    my_widget.cp_model.set_params(channel_mode=channel_mode)
+    # my_widget.cp_model.lock_device("auto") # Will use mps/cuda if available, otherwise cpu
+
+    my_widget.qcombo_fe_type.setCurrentText(fe_name)
+    my_widget.set_fe_btn.click()
+    my_widget.device_dropdown.setCurrentText('auto') # Will use mps/cuda if available, otherwise cpu
+
+    viewer.layers['annotations'].data[...] = annot
+    my_widget._on_train()
+    my_widget._on_predict()
+
+    assert 'segmentation' in viewer.layers, "Segmentation layer not created"
+    seg = viewer.layers['segmentation'].data
+    assert seg.shape == annot.shape, f"Segmentation shape {seg.shape} != annotation shape {annot.shape}"
+    assert np.unique(seg).size > 1, "Segmentation is uniform — model produced no meaningful output"

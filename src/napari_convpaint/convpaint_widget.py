@@ -51,10 +51,12 @@ class ConvpaintWidget(QWidget):
         # self.default_layer_keys = self.cp_model.get_fe_layer_keys()
         # self.default_proposed_scalings = self.cp_model.get_fe_proposed_scalings()()
         # Use variables of main model as temp variables for the model options tab, as it is the one model used at that time
-        self.temp_fe_description = self.cp_model.get_description()
-        self.temp_fe_layer_keys = self.cp_model.get_fe_layer_keys().copy() # Returns list, so copy to avoid reference issues
-        self.temp_fe_proposed_scalings = self.cp_model.get_fe_proposed_scalings().copy() # Same, also returns list
-        
+        self.temp_fe_description = self.cp_model.get_fe_description()
+        lks = self.cp_model.get_fe_layer_keys()
+        self.temp_fe_layer_keys = lks.copy() if lks is not None else None
+        pps = self.cp_model.get_fe_proposed_scalings()
+        self.temp_fe_proposed_scalings = pps.copy() if pps is not None else None
+
         self.third_party = third_party
         self.selected_channel = None
         self.spatial_dim_info_thresh = 1000000
@@ -1707,8 +1709,10 @@ class ConvpaintWidget(QWidget):
         self.cp_model._param = new_param
         temp_fe_model = ConvpaintModel.create_fe(new_param.fe_name)
         self.temp_fe_description = temp_fe_model.get_description()
-        self.temp_fe_layer_keys = temp_fe_model.get_fe_layer_keys().copy() # Returns list, so copy to avoid reference issues
-        self.temp_fe_proposed_scalings = temp_fe_model.get_fe_proposed_scalings().copy() # Same, also returns list
+        lks = temp_fe_model.get_layer_keys()
+        self.temp_fe_layer_keys = lks.copy() if lks is not None else None
+        pps = temp_fe_model.get_proposed_scalings()
+        self.temp_fe_proposed_scalings = pps.copy() if pps is not None else None
 
         # Adjust trained flag, save button, predict buttons etc., and update model description
         self.trained = save_file.suffix == '.pkl' and new_model.classifier is not None
@@ -1917,11 +1921,14 @@ class ConvpaintWidget(QWidget):
         new_fe_type = self.qcombo_fe_type.currentText()
         temp_fe_model = ConvpaintModel.create_fe(new_fe_type)
         self.temp_fe_description = temp_fe_model.get_description()
-        self.temp_fe_layer_keys = temp_fe_model.get_fe_layer_keys().copy() # Returns list, so copy to avoid reference issues
-        self.temp_fe_proposed_scalings = temp_fe_model.get_fe_proposed_scalings().copy() # Same, also returns list
+        lks = temp_fe_model.get_layer_keys()
+        self.temp_fe_layer_keys = lks.copy() if lks is not None else None
+        pps = temp_fe_model.get_proposed_scalings()
+        self.temp_fe_proposed_scalings = pps.copy() if pps is not None else None
 
         # Get the default FE params for the temp model and update the GUI
-        fe_defaults = self.temp_fe_model.get_default_params()
+        self.temp_fe_defaults = temp_fe_model.get_default_params()
+        fe_defaults = self.temp_fe_defaults
 
         # Update the GUI to show the FE layers of the temp model
         self._update_gui_fe_layer_keys(self.temp_fe_layer_keys)
@@ -1977,7 +1984,7 @@ class ConvpaintWidget(QWidget):
                       fe_use_min_features = self.check_use_min_features.isChecked())
 
         # Get default non-FE params from temp model and update the GUI (also setting the params)
-        fe_defaults = self.temp_fe_model.get_default_params()
+        fe_defaults = self.temp_fe_defaults
         adjusted_params = [] # List of adjusted parameters for raising a warning
         data_dims = self._get_data_dims(self._get_selected_img())
         # Multichannel
