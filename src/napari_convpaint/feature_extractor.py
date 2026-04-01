@@ -272,6 +272,34 @@ class FeatureExtractor:
 
 ### FEATURE EXTRACTION METHODS
 
+    def extract_features(self, data, param, device=torch.device("cpu")):
+        """
+        Extracts the features of an image (stack) with an arbitrary number of channels.
+        This is the main method to call for feature extraction, which will handle scaling and rescaling of the features as needed.
+        It calls the extract_features_pyramid method, which handles the actual feature extraction for each scale.
+
+        Parameters:
+        ----------
+        data : np.ndarray [C, Z, H, W]
+            The input image. Dimensions are [C, Z, H, W].
+        param : Param
+            The parameters for the feature extraction.
+        device : torch.device, optional
+            The device on which to perform feature extraction.
+
+        Returns:
+        ----------
+        features : np.ndarray [F, Z, H, W]
+            The extracted features of the image as a single array with [nb_features, Z, H, W]
+        """
+        # Move model to device if needed; for now, we this along the downstream process
+        # self.move_model_to_device(device)
+
+        # Extract features with scaling and rescaling as needed
+        features = self.extract_features_pyramid(data=data, param=param, patched=self.gives_patched_features(), device=device)
+
+        return features
+
     def extract_features_pyramid(self, data, param, patched=True, device=torch.device("cpu")):
         """
         Extracts the feature pyramid of an image (stack) with an arbitrary number of channels.
@@ -503,4 +531,4 @@ class FeatureExtractor:
         features : np.ndarray [F, H, W]
             The extracted features of the image. [nb_features, H, W]
         """
-        raise NotImplementedError("Subclasses must implement get_features method.")
+        raise NotImplementedError("Subclasses must implement extract_features_from_plane method (or any method upstream of it).")
