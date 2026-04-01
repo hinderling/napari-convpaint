@@ -199,7 +199,7 @@ class ConvpaintModel:
         """
         # Find all FE scripts in the folder feature_extractors (ignore only the __init__py)
         folder = Path(__file__).parent / "feature_extractors"
-        FE_SCRIPTS = [f.stem for f in folder.glob("*.py") if f.is_file() and f.name != "__init__.py"]
+        FE_SCRIPTS = [f.stem for f in folder.glob("*.py") if f.is_file() and f.name not in ("__init__.py", "template.py")]
 
         ConvpaintModel.FE_MODELS_TYPES_DICT = {}
         for script_name in FE_SCRIPTS:
