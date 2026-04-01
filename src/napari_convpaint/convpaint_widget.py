@@ -2786,10 +2786,10 @@ class ConvpaintWidget(QWidget):
         num_scalings = len(scalings) if scalings is not None else 0
         # Get device support information for the FE model and system
         supported_devices = self.cp_model.fe_model.supported_devices() if hasattr(self.cp_model.fe_model, 'supported_devices') else []
-        # device_string =  ' | ' + (', '.join(str(d) for d in supported_devices) + ", cpu" if devices else 'cpu only')
-        gpu_device = get_fe_device(use_device="gpu", supported_devices=supported_devices, warn=False) # See if there's a gpu option
-        device_string = 'options: cuda, cpu' if 'cuda' in str(gpu_device) else(
-                        'options: mps, cpu' if 'mps' in str(gpu_device) else
+        supported = [str(d) for d in supported_devices]
+        # gpu_device = get_fe_device(use_device="gpu", supported_devices=supported_devices, warn=False) # See if there's a gpu option
+        device_string = 'supports: cuda, cpu' if any('cuda' in d for d in supported) else(
+                        'supports: mps, cpu' if any('mps' in d for d in supported) else
                         'uses cpu only')
         # Put together and post
         descr = (fe_name +
