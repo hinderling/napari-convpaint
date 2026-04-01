@@ -1,9 +1,9 @@
 from ..feature_extractor import FeatureExtractor
 
 
-# 1) LIST THE AVAILABLE MODELS HERE
+# 1) LIST THE AVAILABLE MODELS
 # This can just be a model name (string) that is used to recognize your model,
-# or multiple names to possibly differentiate between different versions
+# or multiple names to differentiate between potentially multiple different versions
 AVAILABLE_MODELS = ["gaussian_features"] # List the available model names here
 
 # OPTIONAL: Add options to the dictionary std_models, to enable loading this model by alias
@@ -13,7 +13,7 @@ STD_MODELS = {
     "gaussian_2": {"fe_name": "gaussian_features", "image_downsample": 2} # A version with downsampling by 2 as default
 }
 
-# 2) DEFINE THE INITIALIZATION, DESCRIPTION AND DEFAULT PARAMETERS
+# 2) DEFINE INITIALIZATION, DESCRIPTION AND DEFAULT PARAMETERS
 class GaussianFeatures(FeatureExtractor):
     # Define the initiation method
     def __init__(self, model_name='gaussian_features'):
@@ -44,7 +44,7 @@ class GaussianFeatures(FeatureExtractor):
 
 # 3) OPTIONAL METHODS:
 
-# FOR MODELS THAT NEED TO CREATE An UNDERLYING FE MODEL (E.G. TORCH MODEL), DEFINE THE FOLLOWING METHOD
+# FOR MODELS THAT NEED TO CREATE AN UNDERLYING FE MODEL (E.G. TORCH MODEL), DEFINE THE FOLLOWING METHOD
 
     # @staticmethod
     # def create_model(model_name):
