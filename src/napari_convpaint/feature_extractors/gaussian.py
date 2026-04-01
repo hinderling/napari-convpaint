@@ -5,6 +5,7 @@ from ..feature_extractor import FeatureExtractor
 AVAILABLE_MODELS = ['gaussian_features']
 
 class GaussianFeatures(FeatureExtractor):
+    """A simple feature extractor that applies a Gaussian filter to the input image."""
     def __init__(self, model_name='gaussian_features', sigma=3, **kwargs):
         super().__init__(model_name=model_name)
         self.sigma = sigma

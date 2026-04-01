@@ -47,6 +47,7 @@ else:
 from ..feature_extractor import FeatureExtractor
 
 class IlastikFeatures(FeatureExtractor):
+    """Feature extractor using the full filter set of the popular segmentation tool Ilastik."""
     def __init__(self, model_name='ilastik_2d', **kwargs):
         super().__init__(model_name=model_name)
         self.padding = FILTER_SET.kernel_size // 2
