@@ -1,4 +1,4 @@
-from napari_convpaint.conv_paint_widget import ConvPaintWidget
+from napari_convpaint.convpaint_widget import ConvPaintWidget
 from napari_convpaint.utils import generate_synthetic_square, generate_synthetic_circle_annotation
 import numpy as np
 import os
@@ -285,7 +285,7 @@ def test_3d_stack_training_with_memory_mode(make_napari_viewer, capsys):
     dask arrays (or 3D stacks in general) caused:
     ValueError: Image IDs must be passed as a list with the same length as the data
     """
-    from napari_convpaint.conv_paint_model import ConvpaintModel
+    from napari_convpaint.convpaint_model import ConvpaintModel
 
     # Create a small 3D stack (Z, H, W) and annotations with 2 classes
     np.random.seed(42)
@@ -308,7 +308,7 @@ def test_3d_stack_training_with_dask_input(make_napari_viewer, capsys):
     Reproduces the exact bug from the user reports where dask arrays were not
     recognized as single inputs."""
     import dask.array as da
-    from napari_convpaint.conv_paint_model import ConvpaintModel
+    from napari_convpaint.convpaint_model import ConvpaintModel
 
     np.random.seed(42)
     stack_np = np.random.randint(0, 255, (5, 50, 50)).astype(np.float64)

@@ -2,7 +2,7 @@ import warnings
 import torch
 import numpy as np
 import skimage
-from .conv_paint_utils import get_device_from_torch_model
+from ..utils import get_device_from_torch_model
 
 try:
     from cellpose import models
@@ -17,7 +17,7 @@ IMPORT_ERROR_MESSAGE = (
     "Run 'pip install napari-convpaint[cellpose]' to install it."
 )
 
-from .conv_paint_feature_extractor import FeatureExtractor
+from ..feature_extractor import FeatureExtractor
 
 class CellposeFeatures(FeatureExtractor):
 

@@ -1,12 +1,10 @@
-from napari_convpaint import conv_paint_param, conv_paint_nnlayers, conv_paint_model
-from napari_convpaint.convpaint_sample import create_annotation_cell3d
-from torch.nn.modules.container import Sequential
-import numpy as np
+from napari_convpaint import nnlayers, convpaint_model
+from napari_convpaint.param import Param
 import skimage
 
 def test_hook_model():
     
-    model = conv_paint_nnlayers.Hookmodel(model_name='vgg16')
+    model = nnlayers.Hookmodel(model_name='vgg16')
     layers = ['features.0 Conv2d(3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))',
           'features.12 Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))'
          ]
@@ -19,7 +17,7 @@ def test_hook_model():
 
 def test_filter_image():
 
-    param = conv_paint_param.Param()
+    param = Param()
     param.fe_name = 'vgg16'
     param.fe_layers = ['features.0 Conv2d(3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))',
             'features.12 Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))'
@@ -30,7 +28,7 @@ def test_filter_image():
     param.tile_annotations = True
     param.image_downsample = 1
 
-    model = conv_paint_model.ConvpaintModel(param=param)
+    model = convpaint_model.ConvpaintModel(param=param)
 
     image = skimage.data.cells3d()
     image = image[30,1]

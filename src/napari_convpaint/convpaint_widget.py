@@ -14,8 +14,8 @@ import numpy as np
 import warnings
 import torch
 
-from .conv_paint_utils import normalize_image, compute_image_stats, normalize_image_percentile, normalize_image_imagenet, get_fe_device
-from .conv_paint_model import ConvpaintModel
+from .utils import normalize_image, compute_image_stats, normalize_image_percentile, normalize_image_imagenet, get_fe_device
+from .convpaint_model import ConvpaintModel
 
 class ConvPaintWidget(QWidget):
     """

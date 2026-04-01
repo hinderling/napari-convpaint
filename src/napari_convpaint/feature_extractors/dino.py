@@ -1,7 +1,7 @@
 import torch
 import numpy as np
-from .conv_paint_utils import get_device_from_torch_model, scale_img, guided_model_download
-from .conv_paint_feature_extractor import FeatureExtractor
+from ..utils import get_device_from_torch_model, scale_img, guided_model_download
+from ..feature_extractor import FeatureExtractor
 
 AVAILABLE_MODELS = ['dinov2_vits14_reg']
 

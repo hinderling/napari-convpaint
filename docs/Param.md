@@ -1,7 +1,7 @@
 
 # Param class
 
-::: napari_convpaint.conv_paint_param.Param
+::: napari_convpaint.convpaint_param.Param
     handler: python
     options:
       show_root_heading: false

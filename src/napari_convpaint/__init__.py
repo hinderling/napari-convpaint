@@ -6,3 +6,9 @@ try:
     from ._version import version as __version__
 except ImportError:
     __version__ = "unknown"
+
+
+# Import the model, widget and feature extractor superclass to make them available at the package level
+from .convpaint_model import ConvPaintModel
+from .convpaint_widget import ConvPaintWidget
+from .feature_extractor import FeatureExtractor

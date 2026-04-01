@@ -44,7 +44,7 @@ else:
     FILTERS = tuple(FILTER_LIST[row](SCALE_LIST[col]) for row, col in sorted(ALL_FILTER_SCALING_COMBOS))
     FILTER_SET = FilterSet(filters=FILTERS)
 
-from .conv_paint_feature_extractor import FeatureExtractor
+from ..feature_extractor import FeatureExtractor
 
 class IlastikFeatures(FeatureExtractor):
     def __init__(self, model_name='ilastik_2d', **kwargs):

@@ -2,8 +2,8 @@ import numpy as np
 import torch
 from torch import nn
 from torchvision import models
-from .conv_paint_utils import get_device_from_torch_model, guided_model_download
-from .conv_paint_feature_extractor import FeatureExtractor
+from ..utils import get_device_from_torch_model, guided_model_download
+from ..feature_extractor import FeatureExtractor
 
 AVAILABLE_MODELS = ['vgg16', 'efficient_netb0', 'convnext']
 

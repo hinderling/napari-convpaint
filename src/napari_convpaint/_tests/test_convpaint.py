@@ -1,4 +1,4 @@
-from napari_convpaint.conv_paint_widget import ConvPaintWidget
+from napari_convpaint.convpaint_widget import ConvPaintWidget
 from napari_convpaint.utils import generate_synthetic_square, generate_synthetic_circle_annotation
 import numpy as np
 import os
@@ -533,7 +533,7 @@ def test_3d_single_channel_prediction(make_napari_viewer, capsys):
 def test_3d_single_channel_predict_returns_array():
     """Test that _predict returns arrays (not lists) for single dask array input."""
     import dask.array as da
-    from napari_convpaint.conv_paint_model import ConvpaintModel
+    from napari_convpaint.convpaint_model import ConvpaintModel
 
     # Create synthetic data: a single 2D plane (as would come from _get_current_plane_norm)
     im_dims = (100, 100)

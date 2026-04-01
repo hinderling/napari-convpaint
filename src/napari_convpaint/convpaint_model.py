@@ -11,20 +11,20 @@ import torch
 import pandas as pd
 from typing import Tuple
 from math import lcm
-from napari_convpaint.conv_paint_feature_extractor import FeatureExtractor
+
+from .feature_extractor import FeatureExtractor
+from .param import Param
+from . import utils
 
 FE_SCRIPTS = [
-    "conv_paint_nnlayers",
-    "conv_paint_gaussian",
-    "conv_paint_dino",
-    "conv_paint_dino_jafar",
-    "conv_paint_combo_fe",
-    "conv_paint_cellpose",
-    "conv_paint_ilastik",
+    "nnlayers",
+    "gaussian",
+    "dino",
+    "dino_jafar",
+    "combo_fe",
+    "cellpose",
+    "ilastik",
 ]
-
-from napari_convpaint.conv_paint_param import Param
-from . import conv_paint_utils
 
 class ConvpaintModel:
     """
@@ -215,7 +215,7 @@ class ConvpaintModel:
         """
         Imports one FE script and registers all model names found in `AVAILABLE_MODELS`.
         """
-        module_path = f"napari_convpaint.{script_name}"
+        module_path = f"napari_convpaint.feature_extractors.{script_name}"
         try:
             module = importlib.import_module(module_path)
         except ImportError as e:
@@ -959,7 +959,7 @@ class ConvpaintModel:
         if not skip_norm:
             data = [self._norm_single_image(d) for d in data]
         # if self.fe_model.norm_mode == "imagenet":
-        #     data = [conv_paint_utils.normalize_image_imagenet(d) for d in data]
+        #     data = [utils.normalize_image_imagenet(d) for d in data]
 
         # Record originals BEFORE any padding / resampling for reshaping and rescaling later
         self.original_shapes = [d.shape for d in data]  # list of (C,Z,H,W)
@@ -971,10 +971,10 @@ class ConvpaintModel:
         upscale = params_for_extract.image_downsample < 1 # Register that we upscale if the parameter is negative
         factor  = params_for_extract.image_downsample
         factor  = (-factor) if upscale else factor # Ensure that the factor is positive
-        data = [conv_paint_utils.scale_img(d, factor, input_type="img", upscale=upscale)
+        data = [utils.scale_img(d, factor, input_type="img", upscale=upscale)
                 for d in data]
         if use_annots:
-            annotations = [conv_paint_utils.scale_img(a, factor, input_type="labels", upscale=upscale)
+            annotations = [utils.scale_img(a, factor, input_type="labels", upscale=upscale)
                         for a in annotations]
 
         # --- Memory mode: annotation registering & updating ---------------------------------------
@@ -986,7 +986,7 @@ class ConvpaintModel:
             if num_new == 0:
                 warnings.warn("No new annotations. Train with existing features.")
                 return [], [], [], [], params_for_extract.image_downsample
-            coords = [conv_paint_utils.get_coordinates_image(d) for d in data]
+            coords = [utils.get_coordinates_image(d) for d in data]
         else:
             coords = [None for _ in data]  # No coordinates if not in memory mode
 
@@ -996,20 +996,20 @@ class ConvpaintModel:
         # Get the correct padding size for the feature extraction
         paddings = [self._get_overall_paddings(params_for_extract, d.shape) for d in data]
         # Pad the images and annotations with the correct padding size
-        data = [conv_paint_utils.pad(d, p, input_type="img") for d, p in zip(data, paddings)]
+        data = [utils.pad(d, p, input_type="img") for d, p in zip(data, paddings)]
         # Save the padded shapes for reshaping/rescaling later
         self.padded_shapes = [d.shape for d in data]
         if use_annots:
-            annotations = [conv_paint_utils.pad(a, p, input_type="labels") for a, p in zip(annotations, paddings)]
+            annotations = [utils.pad(a, p, input_type="labels") for a, p in zip(annotations, paddings)]
         if memory_mode:
-            coords = [conv_paint_utils.pad(c, p, input_type="coords") for c, p in zip(coords, paddings)]
+            coords = [utils.pad(c, p, input_type="coords") for c, p in zip(coords, paddings)]
         else:
             coords = [None for _ in data]  # No coordinates if not in memory mode
 
         # --- Annotation plane extraction -----------------------------------------
         # Note: annotated planes are flattened (treating them as individual images)
         if use_annots:
-            planes = [conv_paint_utils.get_annot_planes(d, a, c)
+            planes = [utils.get_annot_planes(d, a, c)
                     for d, a, c in zip(data, annotations, coords)]
             data        = [p for trio in planes for p in trio[0]]
             annotations = [p for trio in planes for p in trio[1]]
@@ -1036,7 +1036,7 @@ class ConvpaintModel:
         if params_for_extract.tile_annotations:
             if use_annots:
                 coords = [None for _ in data] if coords is None else coords
-                tiles = [conv_paint_utils.tile_annot(d, a, c, p, plot_tiles=False)
+                tiles = [utils.tile_annot(d, a, c, p, plot_tiles=False)
                         for d, a, c, p in zip(data, annotations, coords, paddings)]
                 data        = [t for trio in tiles for t in trio[0]]
                 annotations = [t for trio in tiles for t in trio[1]]
@@ -1063,7 +1063,7 @@ class ConvpaintModel:
         # Note: For prediction, we want to keep the features patched if the model supports it
         keep_patched = (not use_annots) and self.fe_model.gives_patched_features()
         use_device = self.check_locked_device(use_device, part='fe')
-        fe_runtime_device = conv_paint_utils.get_fe_device(
+        fe_runtime_device = utils.get_fe_device(
             use_device=use_device,
             supported_devices=self.fe_model.supported_devices(),
             warn=True,
@@ -1076,7 +1076,7 @@ class ConvpaintModel:
                     for d in data]
         
         if pca_components:
-            features = [conv_paint_utils.apply_pca_to_f_image(f, n_components=pca_components)
+            features = [utils.apply_pca_to_f_image(f, n_components=pca_components)
                         for f in features]
 
         # --- Raw early return ----------------------------------------------------
@@ -1090,7 +1090,7 @@ class ConvpaintModel:
         # Apply Kmeans clustering if requested (afterwards treat just like a segmentation)
         class_output = False # Whether the output is a class prediction (change if we do Kmeans)
         if kmeans_clusters: # NOTE: random_state -> fix for reproducibility; OR None for random
-            features = [conv_paint_utils.apply_kmeans_to_f_image(f, n_clusters=kmeans_clusters, random_state=0)
+            features = [utils.apply_kmeans_to_f_image(f, n_clusters=kmeans_clusters, random_state=0)
                         for f in features]
             class_output = True
 
@@ -1161,7 +1161,7 @@ class ConvpaintModel:
         """
         if not use_rf:
             use_device = self.check_locked_device(use_device, part='clf')
-            task_type = conv_paint_utils.get_catboost_device(use_device, warn=True)
+            task_type = utils.get_catboost_device(use_device, warn=True)
             # Fixed seed for reproducibility; can be set to None for random seed
             self.classifier = CatBoostClassifier(
                 iterations=self._param.clf_iterations,
@@ -1251,7 +1251,7 @@ class ConvpaintModel:
                 data, annotations, restore_input_form=False, memory_mode=memory_mode,
                 in_channels=in_channels, skip_norm=skip_norm, use_device=fe_use_device)
             # Get the annotated pixels and targets, and concatenate each
-            f_t_tuples = [conv_paint_utils.get_features_targets(f, a)
+            f_t_tuples = [utils.get_features_targets(f, a)
                         for f, a in zip(feature_parts, annot_parts)] # f and t are linearized
             features = [ft[0] for ft in f_t_tuples] # Create a list of features
             targets = [ft[1] for ft in f_t_tuples] # Create a list of targets
@@ -1793,7 +1793,7 @@ class ConvpaintModel:
 
         # If we want coordinates, create a coordinates img for each image in data
         if get_coords:
-            coords = [conv_paint_utils.get_coordinates_image(img)
+            coords = [utils.get_coordinates_image(img)
                       for img in prep_imgs]
             return list(prep_imgs), list(prep_annots), coords
         # Otherwise, just return the preprocessed images and annotations
@@ -1916,14 +1916,14 @@ class ConvpaintModel:
         fe_norm = self.fe_model.norm_mode
         if fe_norm == 'imagenet':
             if self._param.channel_mode == 'rgb':
-                img_norm = conv_paint_utils.normalize_image_imagenet(img)
+                img_norm = utils.normalize_image_imagenet(img)
                 return img_norm
             else:
                 print("FE model is designed for imagenet normalization, but image is not declared as 'rgb' (parameter channel_mode). " +
                 "Using default normalization instead.")
         elif fe_norm == 'percentile':
             num_ignored_dims = 1 if norm_scope == 2 else 2 # Ignore C dim for stack, C and Z for by image
-            img_norm = conv_paint_utils.normalize_image_percentile(img, ignore_n_first_dims=num_ignored_dims)
+            img_norm = utils.normalize_image_percentile(img, ignore_n_first_dims=num_ignored_dims)
             return img_norm
 
         # DEFAULT NORMALIZATION
@@ -1931,10 +1931,10 @@ class ConvpaintModel:
         # This means that if we normalize by stack (= 2), we ignore the C dimension (= first) only
         # If normalization scope is "by image" (= 3), we additionally keep the Z dimension (= second)
         num_ignored_dims = 1 if norm_scope == 2 else 2 # Ignore C dim for stack, C and Z for by image
-        mean, sd = conv_paint_utils.compute_image_stats(img, ignore_n_first_dims=num_ignored_dims)
+        mean, sd = utils.compute_image_stats(img, ignore_n_first_dims=num_ignored_dims)
         
         # Normalize using these statistics
-        img_norm = conv_paint_utils.normalize_image(img, mean, sd)
+        img_norm = utils.normalize_image(img, mean, sd)
 
         # print(f'Image normalized with shapes for mean {mean.shape} and sd {sd.shape}.')
         # print(f'Channel means: {np.mean(img_norm, axis=(1,2,3))}, planes means: {np.mean(img_norm, axis=(0,2,3))}')
@@ -2061,18 +2061,18 @@ class ConvpaintModel:
             patch_multi_h, patch_multi_w = padded_h, padded_w
         if class_preds:
             new_shape = (padded_z, patch_multi_h, patch_multi_w)
-            outputs_image = conv_paint_utils.rescale_class_labels(
+            outputs_image = utils.rescale_class_labels(
                 outputs_image, output_shape=new_shape)
         else:
             new_shape = (num_outputs, padded_z, patch_multi_h, patch_multi_w)
             order = self._param.unpatch_order
-            outputs_image = conv_paint_utils.rescale_outputs(
+            outputs_image = utils.rescale_outputs(
                 outputs_image, output_shape=new_shape,
                 order=order)
 
         # 3) Remove padding
         # Ensure to only remove the part of padding that was not removed by reduce_to_patch_multiple in the FE model
-        outputs_image = conv_paint_utils.crop_to_shape(
+        outputs_image = utils.crop_to_shape(
             outputs_image,
             pre_pad_shapes[-3:]
         )
@@ -2081,13 +2081,13 @@ class ConvpaintModel:
         orig_z, orig_h, orig_w = original_shape[-3:]
         if self._param.image_downsample not in (-1, 0, 1):
             if class_preds:
-                outputs_image = conv_paint_utils.rescale_class_labels(
+                outputs_image = utils.rescale_class_labels(
                     outputs_image,
                     output_shape=(orig_z, orig_h, orig_w)
                 )
             else:
                 new_shape = (num_outputs, orig_z, orig_h, orig_w)
-                outputs_image = conv_paint_utils.rescale_outputs(
+                outputs_image = utils.rescale_outputs(
                     outputs_image,
                     output_shape=new_shape,
                     order=1

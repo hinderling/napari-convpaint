@@ -1,9 +1,9 @@
 import numpy as np
-from .conv_paint_feature_extractor import FeatureExtractor
-from .conv_paint_dino import DinoFeatures
-from .conv_paint_nnlayers import Hookmodel
-from .conv_paint_gaussian import GaussianFeatures
-# from .conv_paint_cellpose import CellposeFeatures
+from ..feature_extractor import FeatureExtractor
+from .dino import DinoFeatures
+from .nnlayers import Hookmodel
+from .gaussian import GaussianFeatures
+# from .cellpose import CellposeFeatures
 from math import lcm
 
 # AVAILABLE_MODELS = ['combo_dino_vgg', 'combo_dino_ilastik', 'combo_dino_gauss', 'combo_dino_cellpose', 'combo_vgg_ilastik']
@@ -28,7 +28,7 @@ COMBOS = {'combo_dino_vgg': {'constructors': [Hookmodel, DinoFeatures],
 
 # For models that are optional, we need to handle ImportError
 try:
-    from .conv_paint_ilastik import AVAILABLE_MODELS as Ilastik_models, IlastikFeatures
+    from .ilastik import AVAILABLE_MODELS as Ilastik_models, IlastikFeatures
     if Ilastik_models:
         COMBOS['combo_dino_ilastik'] = {'constructors': [IlastikFeatures, DinoFeatures],
                                 'model names': ['ilastik_2d', 'dinov2_vits14_reg'],

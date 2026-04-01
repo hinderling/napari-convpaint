@@ -3,11 +3,11 @@ import warnings
 import numpy as np
 import torch
 import torch.nn.functional as F
-from .conv_paint_utils import get_device_from_torch_model, guided_model_download
-from .conv_paint_feature_extractor import FeatureExtractor
+from ..utils import get_device_from_torch_model, guided_model_download
+from ..feature_extractor import FeatureExtractor
 from typing import List, Tuple
 import copy
-from napari_convpaint.jafar.layers import PretrainedViTWrapper, JAFAR
+from ..jafar.layers import PretrainedViTWrapper, JAFAR
 
 AVAILABLE_MODELS = ["dino_jafar_small"]
 

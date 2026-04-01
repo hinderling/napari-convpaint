@@ -1,7 +1,7 @@
 
 # ConvpaintModel
 
-::: napari_convpaint.conv_paint_model.ConvpaintModel
+::: napari_convpaint.convpaint_model.ConvpaintModel
     handler: python
     options:
       show_root_heading: false

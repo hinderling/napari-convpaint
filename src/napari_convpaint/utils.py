@@ -4,6 +4,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 # from scipy.ndimage import median_filter
 import skimage.transform
+import skimage.draw
 import skimage.morphology as morph
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans

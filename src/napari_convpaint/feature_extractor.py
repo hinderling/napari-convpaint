@@ -1,8 +1,8 @@
 import numpy as np
 import torch
 import warnings
-from .conv_paint_param import Param
-from .conv_paint_utils import scale_img, rescale_features, reduce_to_patch_multiple, pad_to_shape, get_device_from_torch_model
+from .param import Param
+from .utils import scale_img, rescale_features, reduce_to_patch_multiple, pad_to_shape, get_device_from_torch_model
 
 class FeatureExtractor:
     def __init__(self, model_name="vgg16", model=None, **kwargs):

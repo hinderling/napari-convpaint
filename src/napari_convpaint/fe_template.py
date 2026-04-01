@@ -1,6 +1,6 @@
 import skimage
 import numpy as np
-from .conv_paint_feature_extractor import FeatureExtractor
+from .feature_extractor import FeatureExtractor
 
 
 # 1) LIST THE AVAILABLE MODELS HERE
