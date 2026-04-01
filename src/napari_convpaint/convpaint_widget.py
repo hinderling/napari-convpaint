@@ -50,8 +50,10 @@ class ConvpaintWidget(QWidget):
         self.default_cp_param = ConvpaintModel.get_default_params()
         # self.default_layer_keys = self.cp_model.get_fe_layer_keys()
         # self.default_proposed_scalings = self.cp_model.get_fe_proposed_scalings()()
-        # Create a temporary FE model for display
-        self.temp_fe_model = ConvpaintModel.create_fe(self.default_cp_param.fe_name)
+        # Use variables of main model as temp variables for the model options tab, as it is the one model used at that time
+        self.temp_fe_description = self.cp_model.get_description()
+        self.temp_fe_layer_keys = self.cp_model.get_fe_layer_keys().copy() # Returns list, so copy to avoid reference issues
+        self.temp_fe_proposed_scalings = self.cp_model.get_fe_proposed_scalings().copy() # Same, also returns list
         
         self.third_party = third_party
         self.selected_channel = None
@@ -305,7 +307,7 @@ class ConvpaintWidget(QWidget):
         self.fe_group.glayout.addWidget(self.qcombo_fe_type, 1, 0, 1, 2)
 
         # Add "FE description" label to FE group
-        self.FE_description = QLabel(self.temp_fe_model.get_description())
+        self.FE_description = QLabel(self.temp_fe_description)
         self.FE_description.setWordWrap(True)
         self.fe_group.glayout.addWidget(self.FE_description, 2, 0, 1, 2)
 
@@ -1703,7 +1705,10 @@ class ConvpaintWidget(QWidget):
         # Load the model (Note: done after updating GUI, since GUI updates might reset clf or change model)
         self.cp_model = new_model
         self.cp_model._param = new_param
-        self.temp_fe_model = ConvpaintModel.create_fe(new_param.fe_name)
+        temp_fe_model = ConvpaintModel.create_fe(new_param.fe_name)
+        self.temp_fe_description = temp_fe_model.get_description()
+        self.temp_fe_layer_keys = temp_fe_model.get_fe_layer_keys().copy() # Returns list, so copy to avoid reference issues
+        self.temp_fe_proposed_scalings = temp_fe_model.get_fe_proposed_scalings().copy() # Same, also returns list
 
         # Adjust trained flag, save button, predict buttons etc., and update model description
         self.trained = save_file.suffix == '.pkl' and new_model.classifier is not None
@@ -1910,16 +1915,19 @@ class ConvpaintWidget(QWidget):
 
         # Create a temporary model to get the layers (to display) and default parameters
         new_fe_type = self.qcombo_fe_type.currentText()
-        self.temp_fe_model = ConvpaintModel.create_fe(new_fe_type)
+        temp_fe_model = ConvpaintModel.create_fe(new_fe_type)
+        self.temp_fe_description = temp_fe_model.get_description()
+        self.temp_fe_layer_keys = temp_fe_model.get_fe_layer_keys().copy() # Returns list, so copy to avoid reference issues
+        self.temp_fe_proposed_scalings = temp_fe_model.get_fe_proposed_scalings().copy() # Same, also returns list
 
         # Get the default FE params for the temp model and update the GUI
         fe_defaults = self.temp_fe_model.get_default_params()
 
         # Update the GUI to show the FE layers of the temp model
-        self._update_gui_fe_layer_keys(self.temp_fe_model.get_layer_keys())
+        self._update_gui_fe_layer_keys(self.temp_fe_layer_keys)
         self._update_gui_fe_layers(fe_defaults.fe_layers)
         # Same for scalings
-        self._update_gui_fe_proposed_scalings(self.temp_fe_model.get_proposed_scalings())
+        self._update_gui_fe_proposed_scalings(self.temp_fe_proposed_scalings)
         self._update_gui_fe_scalings(fe_defaults.fe_scalings)
 
         # NOTE: only FE params are adjusted here, since the FE is not set yet
@@ -1933,13 +1941,13 @@ class ConvpaintWidget(QWidget):
             if val is not None:
                 if isinstance(val, list): val = str(val)
                 setter(val)
-        self.FE_description.setText(self.temp_fe_model.get_description())
+        self.FE_description.setText(self.temp_fe_description)
 
         self.flag_fe_as_temp() # Flag that the FE is not yet set (since we just changed the temp model)
 
     def _on_fe_layer_selection_changed(self):
         """Enable the set button based on the model type."""
-        if self.temp_fe_model.get_layer_keys() is not None:
+        if self.temp_fe_layer_keys is not None:
             selected_layers = self._get_selected_layer_names()
             if len(selected_layers) == 0:
                 self.set_fe_btn.setEnabled(False)

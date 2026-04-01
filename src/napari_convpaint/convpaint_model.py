@@ -713,6 +713,18 @@ class ConvpaintModel:
         """
         scalings = self.fe_model.get_proposed_scalings()
         return scalings
+    
+    def get_fe_descriptions(self):
+        """
+        Returns the descriptions of the feature extractor layers (None if the model uses no layers).
+
+        Returns
+        ---------
+        descriptions : list[str] or None
+            List of descriptions for the feature extractor layers, or None if the model uses no layers
+        """
+        descriptions = self.fe_model.get_description()
+        return descriptions
 
 
 ### USER METHODS FOR TRAINING AND PREDICTION
