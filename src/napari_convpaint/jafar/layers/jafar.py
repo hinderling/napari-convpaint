@@ -4,8 +4,8 @@ from einops import rearrange
 from torch import nn
 import torch
 
-from napari_convpaint.jafar.layers import CrossAttentionBlock, ResBlock, SFTModulation
-from napari_convpaint.jafar.layers.positional_encoding import RoPE
+from ..layers import CrossAttentionBlock, ResBlock, SFTModulation
+from ..layers.positional_encoding import RoPE
 
 def create_coordinate(h, w, start=0, end=1, device="cpu", dtype=torch.float32):
     # Create a grid of coordinates
