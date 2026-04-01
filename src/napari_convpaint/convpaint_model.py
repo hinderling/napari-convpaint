@@ -1,4 +1,5 @@
 import pickle
+from pathlib import Path
 import importlib
 import inspect
 from pyexpat import features
@@ -15,16 +16,6 @@ from math import lcm
 from .feature_extractor import FeatureExtractor
 from .param import Param
 from . import utils
-
-FE_SCRIPTS = [
-    "nnlayers",
-    "gaussian",
-    "dino",
-    "dino_jafar",
-    "combo_fe",
-    "cellpose",
-    "ilastik",
-]
 
 class ConvpaintModel:
     """
@@ -206,6 +197,10 @@ class ConvpaintModel:
         """
         Initializes the dictionary of all available feature extractor models.
         """
+        # Find all FE scripts in the folder feature_extractors (ignore only the __init__py)
+        folder = Path(__file__).parent / "feature_extractors"
+        FE_SCRIPTS = [f.stem for f in folder.glob("*.py") if f.is_file() and f.name != "__init__.py"]
+
         ConvpaintModel.FE_MODELS_TYPES_DICT = {}
         for script_name in FE_SCRIPTS:
             ConvpaintModel._register_fe_script(script_name)

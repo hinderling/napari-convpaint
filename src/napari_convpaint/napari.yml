@@ -3,7 +3,7 @@ display_name: napari ConvPaint
 contributions:
   commands: 
     - id: napari-convpaint.make_qwidget
-      python_name: napari_convpaint.convpaint_widget:ConvPaintWidget
+      python_name: napari_convpaint.convpaint_widget:ConvpaintWidget
       title: ConvPaint widget
     - id: napari-convpaint.labelcell3d
       title: Label cell 3D

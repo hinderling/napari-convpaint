@@ -17,7 +17,7 @@ import torch
 from .utils import normalize_image, compute_image_stats, normalize_image_percentile, normalize_image_imagenet, get_fe_device
 from .convpaint_model import ConvpaintModel
 
-class ConvPaintWidget(QWidget):
+class ConvpaintWidget(QWidget):
     """
     Implementation of a napari widget for interactive segmentation performed
     via multiple means of feature extraction combined with a CatBoost Classifier

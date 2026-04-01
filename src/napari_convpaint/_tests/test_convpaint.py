@@ -1,4 +1,4 @@
-from napari_convpaint.convpaint_widget import ConvPaintWidget
+from napari_convpaint.convpaint_widget import ConvpaintWidget
 from napari_convpaint.utils import generate_synthetic_square, generate_synthetic_circle_annotation
 import numpy as np
 import os
@@ -38,7 +38,7 @@ def compute_precision_recall(ground_truth, recovered):
 def test_add_layers(make_napari_viewer, capsys):
     """Test that annotation and prediction layers are added correctly"""
     viewer = make_napari_viewer()
-    my_widget = ConvPaintWidget(viewer)
+    my_widget = ConvpaintWidget(viewer)
     viewer.add_image(np.random.random((100, 100)))
     my_widget._on_add_annot_layer()    
 
@@ -50,7 +50,7 @@ def test_annotation_layer_dims(make_napari_viewer, capsys):
 
     viewer = make_napari_viewer()
     # viewer = napari.Viewer()
-    my_widget = ConvPaintWidget(viewer)
+    my_widget = ConvpaintWidget(viewer)
     viewer.add_image(np.random.random((100, 100, 3)))
     my_widget._on_add_annot_layer()
     assert "annotations" in viewer.layers
@@ -59,7 +59,7 @@ def test_annotation_layer_dims(make_napari_viewer, capsys):
 
     viewer = make_napari_viewer()
     # viewer = napari.Viewer()
-    my_widget = ConvPaintWidget(viewer)
+    my_widget = ConvpaintWidget(viewer)
     viewer.add_image(np.random.random((3, 100, 100)))
     my_widget._on_add_annot_layer()
     assert "annotations" in viewer.layers
@@ -72,7 +72,7 @@ def test_correct_model_rgb(make_napari_viewer, capsys):
     im_annot = generate_synthetic_circle_annotation(im_dims=(252,252), circle1_xy=(125,70), circle2_xy=(125,125))
 
     viewer = make_napari_viewer()
-    my_widget = ConvPaintWidget(viewer)
+    my_widget = ConvpaintWidget(viewer)
 
     viewer.add_image(im, name='sample')
     my_widget._on_add_annot_layer()
@@ -88,7 +88,7 @@ def test_correct_model_2d(make_napari_viewer, capsys):
     im_annot = generate_synthetic_circle_annotation(im_dims=(252,252), circle1_xy=(125,70), circle2_xy=(125,125))
 
     viewer = make_napari_viewer()
-    my_widget = ConvPaintWidget(viewer)
+    my_widget = ConvpaintWidget(viewer)
 
     viewer.add_image(im[:,:,0], name='sample')
     my_widget._on_add_annot_layer()
@@ -105,7 +105,7 @@ def test_rgb_prediction(make_napari_viewer, capsys):
     im_annot = generate_synthetic_circle_annotation(im_dims=(252,252), circle1_xy=(125,70), circle2_xy=(125,125))
 
     viewer = make_napari_viewer()
-    my_widget = ConvPaintWidget(viewer)
+    my_widget = ConvpaintWidget(viewer)
     viewer.add_image(im)
     my_widget._on_add_annot_layer()
     viewer.layers['annotations'].data[...] = im_annot
@@ -129,7 +129,7 @@ def test_multi_channel_prediction(make_napari_viewer, capsys):
     im[:,:,1] = np.random.randint(0,200,(252,252))
 
     viewer = make_napari_viewer()
-    my_widget = ConvPaintWidget(viewer)
+    my_widget = ConvpaintWidget(viewer)
     viewer.add_image(np.moveaxis(im,2,0))
     my_widget._on_add_annot_layer()
     my_widget.radio_single_channel.setChecked(True)
@@ -148,7 +148,7 @@ def test_save_model(make_napari_viewer, capsys):
     im_annot = generate_synthetic_circle_annotation(im_dims=(252,252), circle1_xy=(125,70), circle2_xy=(125,125))
 
     viewer = make_napari_viewer()
-    my_widget = ConvPaintWidget(viewer)
+    my_widget = ConvpaintWidget(viewer)
     viewer.add_image(im)
     my_widget._on_add_annot_layer()
     viewer.layers['annotations'].data[...] = im_annot
@@ -167,7 +167,7 @@ def test_load_model(make_napari_viewer, capsys):
     im_annot = generate_synthetic_circle_annotation(im_dims=(252,252), circle1_xy=(125,70), circle2_xy=(125,125))
 
     viewer = make_napari_viewer()
-    my_widget = ConvPaintWidget(viewer)
+    my_widget = ConvpaintWidget(viewer)
     viewer.add_image(im)
     # my_widget.rgb_img = True
     my_widget.cp_model.set_params(channel_mode='rgb')
@@ -196,7 +196,7 @@ def test_save_model_dino(make_napari_viewer, capsys):
     ground_truth = np.array(Image.open(os.path.join(imgs_dir, '0000_ground_truth.png')))
 
     viewer = make_napari_viewer()
-    my_widget = ConvPaintWidget(viewer)
+    my_widget = ConvpaintWidget(viewer)
     viewer.add_image(im)
     my_widget._on_add_annot_layer()
     # my_widget.rgb_img = True
@@ -280,7 +280,7 @@ def test_dino_jafar_small_mps_rgb(make_napari_viewer, capsys):
     im_annot = np.array(Image.open(os.path.join(imgs_dir, '0000_scribbles_all_01500_w3.png')))
 
     viewer = make_napari_viewer()
-    my_widget = ConvPaintWidget(viewer)
+    my_widget = ConvpaintWidget(viewer)
     viewer.add_image(im)
     my_widget._on_add_annot_layer()
     my_widget.cp_model.set_params(channel_mode='rgb')
@@ -324,7 +324,7 @@ def test_load_model_dino(make_napari_viewer, capsys):
     ground_truth = np.array(Image.open(os.path.join(imgs_dir, '0000_ground_truth.png')))
 
     viewer = make_napari_viewer()
-    my_widget = ConvPaintWidget(viewer)
+    my_widget = ConvpaintWidget(viewer)
 
     viewer.add_image(im)
     # my_widget.rgb_img = True
@@ -354,7 +354,7 @@ def test_save_and_load_vgg16_models(make_napari_viewer, capsys):
     im_annot = generate_synthetic_circle_annotation(im_dims=(252,252), circle1_xy=(125,70), circle2_xy=(125,125))
 
     viewer = make_napari_viewer()
-    my_widget = ConvPaintWidget(viewer)
+    my_widget = ConvpaintWidget(viewer)
     viewer.add_image(im)
     my_widget._on_add_annot_layer()
     # my_widget.rgb_img = True
@@ -414,7 +414,7 @@ def test_dino_model_with_different_image_sizes(make_napari_viewer, capsys):
         im_annot[:, :size[1]//2] = 1
 
         viewer = make_napari_viewer()
-        my_widget = ConvPaintWidget(viewer)
+        my_widget = ConvpaintWidget(viewer)
         viewer.add_image(im)
         my_widget._on_add_annot_layer()
         # my_widget.rgb_img = False # Assuming only 2D images are generated
@@ -444,7 +444,7 @@ def test_custom_vgg16_layers(make_napari_viewer, capsys):
     im_annot = generate_synthetic_circle_annotation(im_dims=(252,252), circle1_xy=(125,70), circle2_xy=(125,125))
 
     viewer = make_napari_viewer()
-    my_widget = ConvPaintWidget(viewer)
+    my_widget = ConvpaintWidget(viewer)
     viewer.add_image(im, name='sample')
     my_widget._on_add_annot_layer()
     viewer.layers['annotations'].data[...] = im_annot
@@ -511,7 +511,7 @@ def test_3d_single_channel_prediction(make_napari_viewer, capsys):
     im_annot[0] = im_annot_2d
 
     viewer = make_napari_viewer()
-    my_widget = ConvPaintWidget(viewer)
+    my_widget = ConvpaintWidget(viewer)
     viewer.add_image(im_stack)
     my_widget.cp_model.set_params(channel_mode='single')
     my_widget._on_add_annot_layer()
