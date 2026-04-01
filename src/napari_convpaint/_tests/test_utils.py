@@ -1,10 +1,11 @@
-from napari_convpaint import nnlayers, convpaint_model
+from napari_convpaint import convpaint_model
+from napari_convpaint.feature_extractors import Hookmodel
 from napari_convpaint.param import Param
 import skimage
 
 def test_hook_model():
     
-    model = nnlayers.Hookmodel(model_name='vgg16')
+    model = Hookmodel(model_name='vgg16')
     layers = ['features.0 Conv2d(3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))',
           'features.12 Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))'
          ]
