@@ -44,29 +44,11 @@ class ConvpaintModel:
     - 4D inputs: Will be treated as a stack of multi-channel images, with the first dimension as channels.
     """
 
+    # Available models and Standard models (aliases) are provided by the individual feature-extractor
     FE_MODELS_TYPES_DICT = {}
-
-    # Define the standard models that are available to be loaded by alias
-    std_models = {"vgg": Param(fe_name="vgg16"),
-                  "vgg-m": Param(fe_name="vgg16",
-                                 fe_layers=['features.0 Conv2d(3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))',
-                                            'features.2 Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))',
-                                            'features.5 Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))'],
-                                 fe_scalings=[1, 2, 4]),
-                  "vgg-l": Param(fe_name="vgg16",
-                                 fe_layers=['features.0 Conv2d(3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))',
-                                            'features.2 Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))',
-                                            'features.5 Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))',
-                                            'features.7 Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))',
-                                            'features.10 Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))'],
-                                 fe_scalings=[1, 2, 4, 8]),
-                  "dino": Param(fe_name="dinov2_vits14_reg"),
-                  "gaussian": Param(fe_name="gaussian_features"),
-                  "cellpose": Param(fe_name="cellpose_backbone"),
-                  "ilastik": Param(fe_name="ilastik_2d"),
-                  "dino-jafar": Param(fe_name="dino_jafar_small"),
-                  }
+    STD_MODELS = {}
     
+    # Define the allowed values for the parameters; this is used to check the validity of parameter values when setting them
     allowed_param_vals = {
         'channel_mode': ['multi', 'rgb', 'single'],
         'normalize': [1, 2, 3],
@@ -171,8 +153,8 @@ class ConvpaintModel:
 
         # If an alias is given, create an corresponding model
         if alias is not None:
-            if alias in ConvpaintModel.std_models:
-                param = ConvpaintModel.std_models[alias]
+            if alias in ConvpaintModel.STD_MODELS:
+                param = ConvpaintModel.STD_MODELS[alias]
             else:
                 raise ValueError(f'Alias "{alias}" not found in the standard models.')
 
@@ -252,6 +234,29 @@ class ConvpaintModel:
             fe_class = fe_classes[0]
 
         ConvpaintModel.FE_MODELS_TYPES_DICT.update({model_name: fe_class for model_name in model_names})
+
+        # Optional: allow FE modules to expose STD_MODELS mapping (dict of alias -> param-dict)
+        STD_MODELS_from_module = getattr(module, "STD_MODELS", None)
+        if STD_MODELS_from_module:
+            for alias, alias_params in STD_MODELS_from_module.items():
+                try:
+                    # Accept either a Param instance or a plain dict (preferred).
+                    if isinstance(alias_params, Param):
+                        ConvpaintModel.STD_MODELS[alias] = alias_params
+                    elif isinstance(alias_params, dict):
+                        p = Param()
+                        # If fe_name not provided, default to first AVAILABLE model name from this module
+                        if 'fe_name' not in alias_params or alias_params.get('fe_name') is None:
+                            if model_names:
+                                alias_params = dict(alias_params)  # copy to avoid mutating module dict
+                                alias_params.setdefault('fe_name', model_names[0])
+                        p.set(**alias_params)
+                        # Module-provided entries overwrite any existing alias in ConvpaintModel.STD_MODELS
+                        ConvpaintModel.STD_MODELS[alias] = p
+                    else:
+                        warnings.warn(f"STD_MODELS entry {alias} in {module_path} is not a dict or Param; ignored.")
+                except Exception as e:
+                    warnings.warn(f"Failed to register STD_MODELS entry '{alias}' from {module_path}: {e}")
 
     @staticmethod
     def get_fe_models_types():

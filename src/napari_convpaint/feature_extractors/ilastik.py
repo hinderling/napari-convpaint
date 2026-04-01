@@ -21,6 +21,10 @@ except ImportError as e:
     ILASTIK_AVAILABLE = False
 
 AVAILABLE_MODELS = ['ilastik_2d'] if ILASTIK_AVAILABLE else []
+
+STD_MODELS = {
+    "ilastik": {"fe_name": "ilastik_2d"},
+}
 IMPORT_ERROR_MESSAGE = (
     "Ilastik is not installed and is not available as feature extractor.\n"
     "Run 'pip install napari-convpaint[ilastik]' to install it.\n"

@@ -11,6 +11,10 @@ from ..jafar.layers import PretrainedViTWrapper, JAFAR
 
 AVAILABLE_MODELS = ["dino_jafar_small"]
 
+STD_MODELS = {
+    "dino-jafar": {"fe_name": "dino_jafar_small"},
+}
+
 class DinoJafarFeatures(FeatureExtractor):
     """
     DINOv2 + JAFAR upsampler feature extractor integrated with ConvPaint.

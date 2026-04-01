@@ -7,6 +7,30 @@ from ..feature_extractor import FeatureExtractor
 
 AVAILABLE_MODELS = ['vgg16', 'efficient_netb0', 'convnext']
 
+STD_MODELS = {
+    "vgg": {"fe_name": "vgg16"},
+    "vgg-m": {
+        "fe_name": "vgg16",
+        "fe_layers": [
+            "features.0 Conv2d(3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))",
+            "features.2 Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))",
+            "features.5 Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))",
+        ],
+        "fe_scalings": [1, 2, 4],
+    },
+    "vgg-l": {
+        "fe_name": "vgg16",
+        "fe_layers": [
+            "features.0 Conv2d(3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))",
+            "features.2 Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))",
+            "features.5 Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))",
+            "features.7 Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))",
+            "features.10 Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))",
+        ],
+        "fe_scalings": [1, 2, 4, 8],
+    },
+}
+
 class Hookmodel(FeatureExtractor):
     """
     Class to extract features from a pytorch model using hooks on chosen layers.

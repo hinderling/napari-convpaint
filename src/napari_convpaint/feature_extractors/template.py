@@ -1,11 +1,17 @@
-import skimage
-import numpy as np
-from .feature_extractor import FeatureExtractor
+from ..feature_extractor import FeatureExtractor
 
 
 # 1) LIST THE AVAILABLE MODELS HERE
-AVAILABLE_MODELS = [] # List the available model names here
+# This can just be a model name (string) that is used to recognize your model,
+# or multiple names to possibly differentiate between different versions
+AVAILABLE_MODELS = ["gaussian_features"] # List the available model names here
 
+# OPTIONAL: Add options to the dictionary std_models, to enable loading this model by alias
+STD_MODELS = {
+    "gaussian": {"fe_name": "gaussian_features"}, # Example: this allows to load the gaussian feature extractor by just setting fe_name = "gaussian" in the parameters
+    # You can add more aliases; and you can specify more parameters in the dictionary for an alias, if you want to set some parameters as default for this alias. For example:
+    "gaussian_2": {"fe_name": "gaussian_features", "image_downsample": 2} # A version with downsampling by 2 as default
+}
 
 # 2) DEFINE THE INITIALIZATION, DESCRIPTION AND DEFAULT PARAMETERS
 class GaussianFeatures(FeatureExtractor):
@@ -22,9 +28,10 @@ class GaussianFeatures(FeatureExtractor):
         # self.rgb_input = False # True if the model takes RGB input
 
     def get_description(self):
-        return "" # Briefly describe the feature extractor here
+        return "" # Briefly describe the feature extractor here; this will be displayed in the UI
 
     def get_default_params(self, param=None):
+        # Get the default parameters for the feature extractor; this allows you to only set the parameters that are relevant for your model
         param = super().get_default_params(param=param)
         
         # Define here, which parameters shall be used as default parameters
@@ -37,7 +44,7 @@ class GaussianFeatures(FeatureExtractor):
 
 # 3) OPTIONAL METHODS:
 
-# FOR MODELS THAT NEED TO CREATE A SEPARATE FE MODEL, DEFINE THE FOLLOWING METHOD
+# FOR MODELS THAT NEED TO CREATE An UNDERLYING FE MODEL (E.G. TORCH MODEL), DEFINE THE FOLLOWING METHOD
 
     # @staticmethod
     # def create_model(model_name):
@@ -56,11 +63,11 @@ class GaussianFeatures(FeatureExtractor):
         #     return param
 
 
-# 4) CHOSE BETWEEN THE FOLLOWING METHODS HOW TO IMPLEMENT THE FEATURE EXTRACTION
-#    WITH INCREASING CONTROL AND COMPLEXITY:
+# 4) CHOOSE HOW TO IMPLEMENT THE FEATURE EXTRACTION BY OVERRIDING ONE
+#    OF THE FOLLOWING METHODS WITH INCREASING CONTROL AND COMPLEXITY:
 
 # IMPORTANT for GPU support:
-# Independent of the method chosen, the feature extractor class needs to implement a way to move its
+# Independent of the extraction method chosen, the feature extractor class needs to implement a way to move its
 # internal model and the tensors to the appropriate device (CPU or GPU, with cuda or mps).
 # For standard torch models, you can use the move_model_to_device() method implemented in the base
 # FeatureExtractor class. For other models, you need to implement a similar logic of moving model and tensors.
@@ -101,10 +108,3 @@ class GaussianFeatures(FeatureExtractor):
 #
 #    Define the full feature extraction process, including the feature pyramid. Input = [C, Z, H ,W]
 #    Important: Output needs to be 4D: [nb_features, Z, H, W]
-
-
-# 5) TO USE THE FEATURE EXTRACTOR CLASS INSIDE THE CONVPAINT MODEL, YOU NEED TO FOLLOW THE FOLLOWING STEPS:
-
-# - Import the AVAILABLE_MODELS and the class of the feature extractor
-# - Implement to add the model to the FE_MODELS_TYPES_DICT in the _init_fe_models_dict method
-# - Optional: Add it to the dictionary std_models, to enable loading it with an alias

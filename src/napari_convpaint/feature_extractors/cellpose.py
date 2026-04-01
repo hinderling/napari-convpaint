@@ -12,6 +12,10 @@ except ImportError:
     CELLPOSE_AVAILABLE = False
 
 AVAILABLE_MODELS = ['cellpose_backbone'] if CELLPOSE_AVAILABLE else []
+
+STD_MODELS = {
+    "cellpose": {"fe_name": "cellpose_backbone"},
+}
 IMPORT_ERROR_MESSAGE = (
     "Cellpose is not installed and is not available as feature extractor.\n"
     "Run 'pip install napari-convpaint[cellpose]' to install it."

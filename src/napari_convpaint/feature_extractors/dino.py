@@ -5,6 +5,10 @@ from ..feature_extractor import FeatureExtractor
 
 AVAILABLE_MODELS = ['dinov2_vits14_reg']
 
+STD_MODELS = {
+    "dino": {"fe_name": "dinov2_vits14_reg"},
+}
+
 class DinoFeatures(FeatureExtractor):
     """Feature extractor using DINOv2, a self-supervised vision transformer model from Facebook AI Research (Meta)."""
     def __init__(self, model_name='dinov2_vits14_reg', **kwargs):
