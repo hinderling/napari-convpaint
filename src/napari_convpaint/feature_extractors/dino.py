@@ -65,7 +65,7 @@ class DinoFeatures(FeatureExtractor):
         param.fe_scalings = [1]
         return param
 
-    def get_features(self, image, device=torch.device("cpu"), **kwargs):
+    def extract_features_from_stack(self, image, device=torch.device("cpu"), **kwargs):
         # NOTE: Use this method, as it can pass a stack as a tensor, processing it as a batch.
         self.move_model_to_device(device)
         

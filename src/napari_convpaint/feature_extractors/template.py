@@ -65,7 +65,7 @@ class GaussianFeatures(FeatureExtractor):
 # For standard torch models, you can use the move_model_to_device() method implemented in the base
 # FeatureExtractor class. For other models, you need to implement a similar logic of moving model and tensors.
 
-# a) get_features_from_plane(self, image, device):
+# a) extract_features_from_plane(self, image, device):
 #    
 #    Define how to extract features from a single plane of the image, assuming the number of
 #    channels is compatible with the model (self.num_input_channels). Input = [C, H ,W]
@@ -77,7 +77,7 @@ class GaussianFeatures(FeatureExtractor):
 #    Finally, the image is automatically scaled according to the scaling factors in the
 #    parameters, reduced to patch size. The output is then scaled back to the original size.
 
-# b) get_features(self, image, device):
+# b) extract_features_from_stack(self, image, device):
 #
 #    Define how to extract features from an image stack (4D), assuming the number of input channels
 #    is compatible with the model (self.num_input_channels). Input = [C, Z, H ,W]
@@ -88,7 +88,7 @@ class GaussianFeatures(FeatureExtractor):
 #    Finally, the image is automatically scaled according to the scaling factors in the
 #    parameters, reduced to patch size. The output is then scaled back to the original size.
 
-# c) get_features_from_channels(self, image, rgb_data, device):
+# c) extract_features_from_multichannel_stack(self, image, rgb_data, device):
 #
 #    Define how to extract features from an image stack (4D) with an arbitrary number of channels.
 #    Input = [C, Z, H ,W]
@@ -97,7 +97,7 @@ class GaussianFeatures(FeatureExtractor):
 #    If this is given, the image is automatically scaled according to the scaling factors in the
 #    parameters, reduced to patch size. The output is then scaled back to the original size.
     
-# d) get_feature_pyramid(self, data, param, patched=True, device):
+# d) extract_features_pyramid(self, data, param, patched=True, device):
 #
 #    Define the full feature extraction process, including the feature pyramid. Input = [C, Z, H ,W]
 #    Important: Output needs to be 4D: [nb_features, Z, H, W]

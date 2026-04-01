@@ -98,7 +98,7 @@ class CellposeFeatures(FeatureExtractor):
         else:
             return [torch.device("cpu")]
 
-    def get_features_from_plane(self, image, device=torch.device("cpu")):
+    def extract_features_from_plane(self, image, device=torch.device("cpu")):
 
         self.move_model_to_device(device)
         net = getattr(self.model, "net", self.model)

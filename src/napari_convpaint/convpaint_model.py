@@ -1063,7 +1063,7 @@ class ConvpaintModel:
             supported_devices=self.fe_model.supported_devices(),
             warn=True,
         )
-        features = [self.fe_model.get_feature_pyramid(
+        features = [self.fe_model.extract_features_pyramid(
                 d,
                 params_for_extract,
                 patched=keep_patched,

@@ -185,7 +185,7 @@ class Hookmodel(FeatureExtractor):
     def get_num_input_channels(self):
         return [self.named_modules[0][1].in_channels]
     
-    def get_features(self, image, device=torch.device("cpu")):
+    def extract_features_from_stack(self, image, device=torch.device("cpu")):
         self.move_model_to_device(device)
 
         # Convert image to numpy array and ensure correct data type

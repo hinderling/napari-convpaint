@@ -149,7 +149,7 @@ class DinoJafarFeatures(FeatureExtractor):
         self.device = device
         return device
 
-    def get_features_from_plane(self, img: np.ndarray, device=torch.device("cpu")):
+    def extract_features_from_plane(self, img: np.ndarray, device=torch.device("cpu")):
         """
         Extract features for a single Z plane (RGB). Shape: [3,H,W] -> [F,H,W].
         Dynamic patch size with single (implicit) scale = 1.

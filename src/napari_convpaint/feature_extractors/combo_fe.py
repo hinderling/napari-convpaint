@@ -105,10 +105,10 @@ class ComboFeatures(FeatureExtractor):
         # So, the combo FE itself is not patched, even if it works with a patch_size to comply with the models
         return False
 
-    def get_feature_pyramid(self, image, param, patched=False, device=None):
+    def extract_features_pyramid(self, image, param, patched=False, device=None):
         def1 = self.model1.get_default_params(param)
-        features1 = self.model1.get_feature_pyramid(image, def1, patched=False, device=device)
+        features1 = self.model1.extract_features_pyramid(image, def1, patched=False, device=device)
         def2 = self.model2.get_default_params(param)
-        features2 = self.model2.get_feature_pyramid(image, def2, patched=False, device=device)
+        features2 = self.model2.extract_features_pyramid(image, def2, patched=False, device=device)
         features = np.concatenate((features1, features2), axis=0)
         return features
