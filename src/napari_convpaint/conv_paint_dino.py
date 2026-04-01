@@ -1,27 +1,27 @@
 import torch
 import numpy as np
-from .conv_paint_utils import get_device, get_device_from_torch_model, scale_img, guided_model_download
+from .conv_paint_utils import get_device_from_torch_model, scale_img, guided_model_download
 from .conv_paint_feature_extractor import FeatureExtractor
 
 AVAILABLE_MODELS = ['dinov2_vits14_reg']
 
 class DinoFeatures(FeatureExtractor):
-    def __init__(self, model_name='dinov2_vits14_reg', use_gpu=False):
+    def __init__(self, model_name='dinov2_vits14_reg', **kwargs):
         
-        # Sets self.model_name and self.use_gpu and creates the model
-        super().__init__(model_name=model_name, use_gpu=use_gpu)
+        super().__init__(model_name=model_name)
         
         self.patch_size = 14
         self.padding = 0 # Note: final padding is automatically 1/2 patch size
         self.num_input_channels = [3]
         self.norm_mode = "imagenet"  # DINOv2 expects ImageNet normalization
         self.rgb_input = True  # DINOv2 expects RGB input
+        self.proposed_scalings = [[1]]
 
         # Register the device of the created model
         self.device = get_device_from_torch_model(self.model)
 
     @staticmethod
-    def create_model(model_name, use_gpu=False):
+    def create_model(model_name):
         # Validate for forks to prevent rate limit error on GitHub Actions: https://github.com/pytorch/pytorch/issues/61755
         torch.hub._validate_not_a_forked_repo=lambda a, b, c: True
 
@@ -36,9 +36,8 @@ class DinoFeatures(FeatureExtractor):
 
         model = torch.hub.load('facebookresearch/dinov2', model_name, pretrained=True, verbose=False)
 
-        # Set model to evaluation mode and move it to the correct device
+        # Set model to evaluation mode. Device is selected at feature extraction time.
         model.eval()
-        model = model.to(get_device(use_gpu))
 
         return model
 
@@ -51,8 +50,7 @@ class DinoFeatures(FeatureExtractor):
     def get_default_params(self, param=None):
         param = super().get_default_params(param=param)
         param.fe_name = self.model_name
-        param.fe_use_gpu = self.use_gpu
-        param.fe_layers = []
+        param.fe_layers = None
         param.fe_scalings = [1]
         param.fe_order = 0
         # param.image_downsample = 1
@@ -66,8 +64,9 @@ class DinoFeatures(FeatureExtractor):
         param.fe_scalings = [1]
         return param
 
-    def get_features(self, image, **kwargs):
+    def get_features(self, image, device=torch.device("cpu"), **kwargs):
         # NOTE: Use this method, as it can pass a stack as a tensor, processing it as a batch.
+        self.move_model_to_device(device)
         
         # Prepare the image (normalize etc.)
         image_tensor = self.prep_img(image)
@@ -76,11 +75,8 @@ class DinoFeatures(FeatureExtractor):
             features_dict = self.model.forward_features(image_tensor)
         features = features_dict['x_norm_patchtokens']
 
-        if self.use_gpu:
-            features = features.cpu()
-
         # Move features first, and reshape to spatial dimensions
-        features = features.numpy()
+        features = features.detach().cpu().numpy()
         features = np.moveaxis(features, -1, 0)
 
         patch_size = self.get_patch_size()

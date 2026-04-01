@@ -10,9 +10,9 @@ AVAILABLE_MODELS = [] # List the available model names here
 # 2) DEFINE THE INITIALIZATION, DESCRIPTION AND DEFAULT PARAMETERS
 class GaussianFeatures(FeatureExtractor):
     # Define the initiation method
-    def __init__(self, model_name='gaussian_features', use_gpu=False):
+    def __init__(self, model_name='gaussian_features'):
         # Sets some default parameters and chooses the itialization method
-        super().__init__(model_name=model_name, use_gpu=use_gpu)
+        super().__init__(model_name=model_name)
 
         # Define specifications for the feature extractor model, if necessary
         # self.padding = 0
@@ -59,7 +59,13 @@ class GaussianFeatures(FeatureExtractor):
 # 4) CHOSE BETWEEN THE FOLLOWING METHODS HOW TO IMPLEMENT THE FEATURE EXTRACTION
 #    WITH INCREASING CONTROL AND COMPLEXITY:
 
-# a) get_features_from_plane(self, image):
+# IMPORTANT for GPU support:
+# Independent of the method chosen, the feature extractor class needs to implement a way to move its
+# internal model and the tensors to the appropriate device (CPU or GPU, with cuda or mps).
+# For standard torch models, you can use the move_model_to_device() method implemented in the base
+# FeatureExtractor class. For other models, you need to implement a similar logic of moving model and tensors.
+
+# a) get_features_from_plane(self, image, device):
 #    
 #    Define how to extract features from a single plane of the image, assuming the number of
 #    channels is compatible with the model (self.num_input_channels). Input = [C, H ,W]
@@ -71,7 +77,7 @@ class GaussianFeatures(FeatureExtractor):
 #    Finally, the image is automatically scaled according to the scaling factors in the
 #    parameters, reduced to patch size. The output is then scaled back to the original size.
 
-# b) get_features(self, image):
+# b) get_features(self, image, device):
 #
 #    Define how to extract features from an image stack (4D), assuming the number of input channels
 #    is compatible with the model (self.num_input_channels). Input = [C, Z, H ,W]
@@ -82,7 +88,7 @@ class GaussianFeatures(FeatureExtractor):
 #    Finally, the image is automatically scaled according to the scaling factors in the
 #    parameters, reduced to patch size. The output is then scaled back to the original size.
 
-# c) get_features_from_channels(self, image, rgb_data):
+# c) get_features_from_channels(self, image, rgb_data, device):
 #
 #    Define how to extract features from an image stack (4D) with an arbitrary number of channels.
 #    Input = [C, Z, H ,W]
@@ -91,7 +97,7 @@ class GaussianFeatures(FeatureExtractor):
 #    If this is given, the image is automatically scaled according to the scaling factors in the
 #    parameters, reduced to patch size. The output is then scaled back to the original size.
     
-# d) get_feature_pyramid(self, data, param, patched=True):
+# d) get_feature_pyramid(self, data, param, patched=True, device):
 #
 #    Define the full feature extraction process, including the feature pyramid. Input = [C, Z, H ,W]
 #    Important: Output needs to be 4D: [nb_features, Z, H, W]

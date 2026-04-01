@@ -2,10 +2,10 @@ import numpy as np
 import torch
 import warnings
 from .conv_paint_param import Param
-from .conv_paint_utils import scale_img, rescale_features, reduce_to_patch_multiple, pad_to_shape
+from .conv_paint_utils import scale_img, rescale_features, reduce_to_patch_multiple, pad_to_shape, get_device_from_torch_model
 
 class FeatureExtractor:
-    def __init__(self, model_name="vgg16", model=None, use_gpu=None, **kwargs):
+    def __init__(self, model_name="vgg16", model=None, **kwargs):
         """
         Initializing a feature extractor. This is a superclass for all feature extractors.
 
@@ -15,12 +15,12 @@ class FeatureExtractor:
             The name of the model to use. If model is not None, this parameter is ignored.
         model : object
             The model to use. If not None, this model is used instead of creating a new model.
-        use_gpu : bool
-            Whether to use GPU or not. If not provided, the default is False.
         """
+        # Make sure a modelname is provided
+        if model_name is None:
+            raise ValueError('Please provide a model_name.')
 
         self.model_name = model_name
-        self.use_gpu = use_gpu
 
         # Define specifications for the feature extractor model
         self.padding = 0
@@ -28,20 +28,23 @@ class FeatureExtractor:
         self.num_input_channels = [1]
         self.norm_mode = "default"  # or "imagenet" or "percentile"
         self.rgb_input = False # Whether the model takes RGB input or not
+        self.proposed_scalings = [[1],
+                                  [1,2],
+                                  [1,2,4],
+                                  [1,2,4,8]] # The scalings that are proposed to the user for this FE. Can be adjusted by the user.
+        self.device = torch.device("cpu")
+        self._warned_gpu_unavailable = False
 
-        # Make sure only one method of providing the model is used
-        if model is not None and model_name is not None:
-            raise ValueError('Please provide either a model or a model_name, not both.')
         
         # USE PROVIDED MODEL IF AVAILABLE
         if model is not None:
             self.model = model
         # ELSE CREATE MODEL
         else:
-            self.model = self.create_model(model_name, use_gpu=use_gpu)
+            self.model = self.create_model(model_name)
 
     @staticmethod
-    def create_model(model_name, use_gpu=None):
+    def create_model(model_name):
         """
         This method is intended to be overridden by subclasses to load the specific model.
 
@@ -67,7 +70,7 @@ class FeatureExtractor:
         description : str
             A string describing the feature extractor.
         """
-        return "This is a generic feature extractor. Subclasses should override this method."
+        return "No specific description added for this Feature Extractor (subclasses should override the get_description method)."
 
     def get_default_params(self, param=None):
         """
@@ -92,7 +95,6 @@ class FeatureExtractor:
             
         # FE params
         def_param.fe_name= self.model_name
-        def_param.fe_use_gpu = False
         def_param.fe_scalings = [1]
         def_param.fe_order = 0
         def_param.fe_use_min_features = False
@@ -111,6 +113,22 @@ class FeatureExtractor:
             The keys of the layers in the model.
         """
         return None
+    
+    def get_proposed_scalings(self):
+        """
+        Get the proposed scalings for this feature extractor. These are the scalings that are proposed to the user
+        when this feature extractor is chosen. The user can still adjust the scalings afterwards.
+
+        Returns:
+        ----------
+        proposed_scalings : list of list of int
+            The proposed scalings for this feature extractor. Each element is a list of scalings for one option.
+            Ex.: [[1], [1,2], [1,2,4], [1,2,4,8]]
+        """
+        # In case we have only one proposed scaling, we put it in a list to be consistent with the expected format
+        if isinstance(self.proposed_scalings[0], int):
+            return [self.proposed_scalings]
+        return self.proposed_scalings
     
     def get_enforced_params(self, param=None):
         """
@@ -198,10 +216,63 @@ class FeatureExtractor:
         patched = self.get_patch_size() > 1
         return patched
 
+    def move_model_to_device(self, device=torch.device("cpu")):
+        """
+        Move torch-based feature extractor model to the runtime device.
+
+        For non-torch feature extractors (or models without a .to method), only stores
+        the device on the extractor.
+        """
+        if isinstance(device, torch.device):
+            device = device
+        elif device is None:
+            device = torch.device("cpu")
+        elif isinstance(device, str):
+            warnings.warn(f"Resolving device from string '{device}' is deprecated. Please provide a torch.device object instead.")
+            # Legacy fallback for direct FE usage outside ConvpaintModel.
+            if device == "cpu":
+                device = torch.device("cpu")
+            elif torch.cuda.is_available():
+                device = torch.device("cuda:0")
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                device = torch.device("mps")
+            else:
+                device = torch.device("cpu")
+        else:
+            raise ValueError(f"Invalid device: {device}. Please provide a torch.device object or a string ('cpu', 'cuda', 'mps').")
+
+        if self.model is None or not hasattr(self.model, "to"):
+            self.device = device
+            return device
+
+        current_device = get_device_from_torch_model(self.model)
+        if current_device != device:
+            self.model = self.model.to(device)
+            if hasattr(self.model, "eval"):
+                self.model.eval()
+
+        self.device = device
+        return device
+    
+    def supported_devices(self):
+        """
+        Get the list of devices that the feature extractor supports. This is by default determined by whether the model is a torch model or not.
+
+        Returns:
+        ----------
+        supported_devices : list of torch.device
+            The list of devices that the feature extractor supports.
+        """
+        if self.model is not None and hasattr(self.model, "to"):
+            return [torch.device("cuda"), torch.device("mps"), [torch.device("cpu")]]
+        else:
+            return [torch.device("cpu")]
+
+
 
 ### FEATURE EXTRACTION METHODS
 
-    def get_feature_pyramid(self, data, param, patched=True):
+    def get_feature_pyramid(self, data, param, patched=True, device=torch.device("cpu")):
         """
         Gets the feature pyramid of an image with an arbitrary number of channels.
         Assumes that the image is a 4D array with dimensions [C, Z, H, W].
@@ -221,7 +292,9 @@ class FeatureExtractor:
         rgb_data : bool
             Whether the input data is RGB or not. If True, the input data must also have 3 channels.
             Relevant only if the model can take RGB input, to distinguish between 3-channel non-RGB and RGB input.
-        
+        device : torch.device, optional
+            The device on which to perform feature extraction.
+
         Returns:
         ----------
         features_all_scales : np.ndarray [F, Z, H, W]
@@ -229,6 +302,10 @@ class FeatureExtractor:
         """
 
         features_all_scales = []
+
+        # Check if the given selection of scalings is in the proposed scalings, and if not, give a warning
+        if not param.fe_scalings in self.get_proposed_scalings():
+            warnings.warn(f"The selected scalings {param.fe_scalings} are not in the proposed scalings {self.proposed_scalings}. Please check if this is intentional.")
 
         # Iterate over the scales and extract features for each scale
         for s in param.fe_scalings:
@@ -245,7 +322,7 @@ class FeatureExtractor:
             # Extract features as list for different channel_series (and layers if applicable)
             # Each element is [nb_features, z, w, h]
             rgb_data = param.channel_mode == 'rgb'
-            features = self.get_features_from_channels(image_scaled, rgb_data=rgb_data)
+            features = self.get_features_from_channels(image_scaled, rgb_data=rgb_data, device=device)
             # In case the features are not a list, but a single array, make it a list
             if not isinstance(features, list):
                 features = [features]
@@ -290,8 +367,11 @@ class FeatureExtractor:
 
             # If use_min_features is True, shorten features
             if param.fe_use_min_features:
-                max_features = np.min(self.features_per_layer)
-                features = features[:max_features] # NOTE: This would probably be better with PCA
+                if self.features_per_layer is None:
+                    warnings.warn("Cannot use min_features because features_per_layer is not defined. Using all features instead.")
+                else:
+                    max_features = np.min(self.features_per_layer)
+                    features = features[:max_features] # NOTE: This would probably be better with PCA
 
             # Add the features to the list of features
             features_all_scales.append(features)
@@ -301,7 +381,7 @@ class FeatureExtractor:
 
         return features_all_scales
 
-    def get_features_from_channels(self, image, rgb_data=False):
+    def get_features_from_channels(self, image, rgb_data=False, device=torch.device("cpu")):
         """
         Gets the features of an image with an arbitrary number of channels.
         Assumes that the image is a 4D array with dimensions [C, Z, H, W],
@@ -317,7 +397,9 @@ class FeatureExtractor:
         rgb_data : bool
             Whether the input data is RGB or not. If True, the input data must also have 3 channels.
             Relevant only if the model can take RGB input, to distinguish between 3-channel non-RGB and RGB input.
-        
+        device : torch.device, optional
+            The device on which to perform feature extraction.
+
         Returns:
         ----------
         features : list of np.ndarrays or torch.Tensors [F, Z, H, W]
@@ -342,7 +424,7 @@ class FeatureExtractor:
         non_rgb_triple_with_rgb_fe = not rgb_data and img_channels == 3 and fe_rgb_input
         if img_channels in fe_input_channels and not non_rgb_triple_with_rgb_fe:
             # return [self.get_features(image)]
-            return self.get_features(image)
+            return self.get_features(image, device=device)
 
         # For each channel, create a replicate with the needed number of input channels
         fe_input_channels = min(fe_input_channels)
@@ -353,7 +435,7 @@ class FeatureExtractor:
         for channel in channel_series:
             # Output is either a single array or a list of features,
             # possibly from different layers (and thus with different sizes)
-            output = self.get_features(channel)
+            output = self.get_features(channel, device=device)
             # Make one list of all outputs (aligning different channel_series and layers)
             if isinstance(output, list):
                 # If the output is a list of features, add the elements to the list
@@ -364,7 +446,7 @@ class FeatureExtractor:
 
         return all_outputs
 
-    def get_features(self, image):
+    def get_features(self, image, device=torch.device("cpu")):
         """
         Gets the features of an image given as a stack of planes.
         Assumes that the image is a 4D array with dimensions [C, Z, H, W],
@@ -375,6 +457,8 @@ class FeatureExtractor:
         ----------
         image : np.ndarray [C, Z, H, W]
             The input image. Dimensions are [C, Z, H, W].
+        device : torch.device, optional
+            The device on which to perform feature extraction.
 
         Returns:
         ----------
@@ -385,7 +469,7 @@ class FeatureExtractor:
         all_features = []
         # Go through the stack, and get features for each plane
         for z in range(image.shape[1]):
-            features = self.get_features_from_plane(image[:,z])
+            features = self.get_features_from_plane(image[:,z], device=device)
             all_features.append(features)
 
         # If the features are a list of arrays, stack them separately along z-axis
@@ -398,7 +482,7 @@ class FeatureExtractor:
 
         return all_features
 
-    def get_features_from_plane(self, image):
+    def get_features_from_plane(self, image, device=torch.device("cpu")):
         """
         Gets the features of a single plane of the image with [C, H, W].
         Assumes that the image is a 3D array with dimensions [C, H, W],
@@ -411,6 +495,8 @@ class FeatureExtractor:
         ----------
         image : np.ndarray [C, H, W]
             The input image. Dimensions are [C, H, W].
+        device : torch.device, optional
+            The device on which to perform feature extraction.
 
         Returns:
         ----------

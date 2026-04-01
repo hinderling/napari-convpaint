@@ -1,5 +1,4 @@
 import numpy as np
-from .conv_paint_utils import get_device
 from .conv_paint_feature_extractor import FeatureExtractor
 from .conv_paint_dino import DinoFeatures
 from .conv_paint_nnlayers import Hookmodel
@@ -8,7 +7,7 @@ from .conv_paint_gaussian import GaussianFeatures
 from math import lcm
 
 # AVAILABLE_MODELS = ['combo_dino_vgg', 'combo_dino_ilastik', 'combo_dino_gauss', 'combo_dino_cellpose', 'combo_vgg_ilastik']
-AVAILABLE_MODELS = ['combo_dino_vgg', 'combo_dino_gauss', 'combo_dino_ilastik']
+AVAILABLE_MODELS = ['combo_dino_vgg', 'combo_dino_gauss']
 
 COMBOS = {'combo_dino_vgg': {'constructors': [Hookmodel, DinoFeatures],
                              'model names': ['vgg16', 'dinov2_vits14_reg'],
@@ -20,7 +19,7 @@ COMBOS = {'combo_dino_vgg': {'constructors': [Hookmodel, DinoFeatures],
         #                     'model names': ['ilastik_2d', 'vgg16'],
         #                     'description': "Combining Ilastik with a default VGG16."},
           'combo_dino_gauss': {'constructors': [GaussianFeatures, DinoFeatures],
-                               'model names': ['gaussian', 'dinov2_vits14_reg'],
+                               'model names': ['gaussian_features', 'dinov2_vits14_reg'],
                                'description': "Combining a Gaussian filter with DINOv2."},
         #   'combo_dino_cellpose': {'constructors': [CellposeFeatures, DinoFeatures],
         #                           'model names': ['cellpose', 'dinov2_vits14_reg'],
@@ -29,11 +28,14 @@ COMBOS = {'combo_dino_vgg': {'constructors': [Hookmodel, DinoFeatures],
 
 # For models that are optional, we need to handle ImportError
 try:
-    from .conv_paint_ilastik import IlastikFeatures
-    COMBOS['combo_dino_ilastik'] = {'constructors': [IlastikFeatures, DinoFeatures],
-                             'model names': ['ilastik_2d', 'dinov2_vits14_reg'],
-                             'description': "Combining Ilastik with DINOv2."}
-except ImportError:
+    from .conv_paint_ilastik import AVAILABLE_MODELS as Ilastik_models, IlastikFeatures
+    if Ilastik_models:
+        COMBOS['combo_dino_ilastik'] = {'constructors': [IlastikFeatures, DinoFeatures],
+                                'model names': ['ilastik_2d', 'dinov2_vits14_reg'],
+                                'description': "Combining Ilastik with DINOv2."}
+        AVAILABLE_MODELS.append('combo_dino_ilastik')
+except Exception as e:
+    print(f"Error importing Ilastik for combo: {e}")
     pass
 
 class ComboFeatures(FeatureExtractor):
@@ -44,8 +46,6 @@ class ComboFeatures(FeatureExtractor):
     ----------
     model_name : str
         Name of the model, e.g. 'combo_dino_vgg'.
-    use_gpu : bool
-        If True, use the GPU for feature extraction.
 
     Attributes
     ----------
@@ -55,38 +55,23 @@ class ComboFeatures(FeatureExtractor):
         Patch size of the combined feature extractor.
     padding : int
         Padding of the combined feature extractor.
-    device : str
-        Device used for feature extraction.
     """
-    def __init__(self, model_name='combo_dino_vgg', use_gpu=False):
+    def __init__(self, model_name='combo_dino_vgg', **kwargs):
         
-        # Sets self.model_name and self.use_gpu and creates the model
-        # Use "use_gpu=False" to force CPU mode; and move them manually below
-        super().__init__(model_name=model_name, use_gpu=False)
+        super().__init__(model_name=model_name)
 
         self.model1, self.model2 = self.model
 
-        # Move all models to the device manually to ensure they are all on the same...
-        self.use_gpu = use_gpu
-        self.device = get_device(use_gpu)
-        for fe in self.model:
-            if fe.model is None:
-                continue
-            fe.model = fe.model.to(self.device)
-            fe.model.eval()
-            fe.device = self.device
-            fe.use_gpu = self.use_gpu
-
     @staticmethod
-    def create_model(model_name, use_gpu=False):
+    def create_model(model_name):
         constructors = COMBOS[model_name]['constructors']
         names = COMBOS[model_name]['model names']
         if len(constructors) != 2:
             raise ValueError(f"Expected 2 constructors, got {len(constructors)}")
         if len(names) != 2:
             raise ValueError(f"Expected 2 model names, got {len(names)}")
-        model1 = constructors[0](model_name=names[0], use_gpu=use_gpu)
-        model2 = constructors[1](model_name=names[1], use_gpu=use_gpu)
+        model1 = constructors[0](model_name=names[0])
+        model2 = constructors[1](model_name=names[1])
         return (model1, model2)
 
     def get_description(self):
@@ -96,8 +81,7 @@ class ComboFeatures(FeatureExtractor):
     def get_default_params(self, param=None):
         param = super().get_default_params(param=param)
         param.fe_name = self.model_name
-        param.fe_use_gpu = self.use_gpu
-        param.fe_layers = [0]
+        param.fe_layers = None # Layers are not set by default, and should be chosen by the user among the proposed ones (which depend on the model)
         param.fe_scalings = [1]
         param.fe_order = 0
         param.tile_image = False
@@ -121,10 +105,10 @@ class ComboFeatures(FeatureExtractor):
         # So, the combo FE itself is not patched, even if it works with a patch_size to comply with the models
         return False
 
-    def get_feature_pyramid(self, image, param, patched=False):
+    def get_feature_pyramid(self, image, param, patched=False, device=None):
         def1 = self.model1.get_default_params(param)
-        features1 = self.model1.get_feature_pyramid(image, def1, patched=False)
+        features1 = self.model1.get_feature_pyramid(image, def1, patched=False, device=device)
         def2 = self.model2.get_default_params(param)
-        features2 = self.model2.get_feature_pyramid(image, def2, patched=False)
+        features2 = self.model2.get_feature_pyramid(image, def2, patched=False, device=device)
         features = np.concatenate((features1, features2), axis=0)
         return features

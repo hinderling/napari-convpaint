@@ -4,6 +4,11 @@ import numpy as np
 import os
 from PIL import Image
 import napari
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch import einsum
+import pytest
 
 def compute_precision_recall(ground_truth, recovered):
 
@@ -205,7 +210,7 @@ def test_save_model_dino(make_napari_viewer, capsys):
     cp_model._param.fe_scalings = [1]
     cp_model._param.fe_order = 0  # Set interpolation order to 0
     cp_model._param.fe_name = 'dinov2_vits14_reg'
-    cp_model._param.fe_use_gpu = False
+    # cp_model._param.fe_use_gpu = False
     cp_model._param.fe_use_min_features = False
     cp_model._param.tile_annotations = False
     cp_model._param.image_downsample = 1
@@ -222,6 +227,92 @@ def test_save_model_dino(make_napari_viewer, capsys):
     my_widget._on_save_model(save_file='_tests/model_dir/test_model_dino.pkl')
     assert my_widget.qcombo_fe_type.currentText() == 'dinov2_vits14_reg'
     assert os.path.exists('_tests/model_dir/test_model_dino.pkl')
+
+
+def test_cross_attention_matches_mha_reference():
+    """Verify that the manual attention score computation in CrossAttention
+    produces identical results to the original nn.MultiheadAttention.forward()
+    run on CPU."""
+    from napari_convpaint.jafar.layers.attentions import CrossAttention
+
+    torch.manual_seed(42)
+    query_dim, key_dim, value_dim, num_heads = 128, 128, 384, 4
+    B, N_q, N_k = 1, 64, 16
+
+    ca = CrossAttention(query_dim, key_dim, value_dim, num_heads).eval()
+
+    query = torch.randn(B, N_q, query_dim)
+    key   = torch.randn(B, N_k, key_dim)
+    value = torch.randn(B, N_k, value_dim)
+
+    # --- Reference: original nn.MultiheadAttention on CPU ---
+    with torch.no_grad():
+        q_normed = ca.norm_q(query)
+        k_normed = ca.norm_k(key)
+        v_normed = ca.norm_v(value)
+        _, ref_scores = ca.attention(
+            q_normed, k_normed, v_normed, average_attn_weights=True
+        )
+        ref_output = einsum("b i j, b j d -> b i d", ref_scores, value)
+
+    # --- New implementation ---
+    with torch.no_grad():
+        new_output, new_scores = ca(query, key, value)
+
+    assert torch.allclose(ref_scores, new_scores, atol=1e-6), \
+        f"Attention scores differ: max delta = {(ref_scores - new_scores).abs().max():.2e}"
+    assert torch.allclose(ref_output, new_output, atol=1e-6), \
+        f"Attention output differs: max delta = {(ref_output - new_output).abs().max():.2e}"
+
+
+@pytest.mark.skipif(
+    not torch.backends.mps.is_available(),
+    reason="MPS device not available"
+)
+def test_dino_jafar_small_mps_rgb(make_napari_viewer, capsys):
+    """Test dino_jafar_small on MPS with an RGB image.
+
+    Reproduces a crash where MPS fails with:
+    [MPSNDArrayDescriptor sliceDimension:withSubrange:] failed assertion
+    """
+    imgs_dir = os.path.join(os.path.dirname(__file__), '_tests', 'test_imgs')
+    im = np.array(Image.open(os.path.join(imgs_dir, '0000_img.png')))
+    im_annot = np.array(Image.open(os.path.join(imgs_dir, '0000_scribbles_all_01500_w3.png')))
+
+    viewer = make_napari_viewer()
+    my_widget = ConvPaintWidget(viewer)
+    viewer.add_image(im)
+    my_widget._on_add_annot_layer()
+    my_widget.cp_model.set_params(channel_mode='rgb')
+
+    # Select dino_jafar_small
+    my_widget.qcombo_fe_type.setCurrentText('dino_jafar_small')
+    assert my_widget.qcombo_fe_type.currentText() == 'dino_jafar_small'
+
+    cp_model = my_widget.cp_model
+    cp_model._param.fe_scalings = [1]
+    cp_model._param.fe_order = 0
+    cp_model._param.fe_name = 'dino_jafar_small'
+    # cp_model._param.fe_use_gpu = True  # Force MPS
+    cp_model.lock_device("gpu", "fe") # New way to force GPU constantly...
+    cp_model._param.fe_use_min_features = False
+    cp_model._param.tile_annotations = False
+    cp_model._param.image_downsample = 1
+    cp_model._param.normalize = 1
+    my_widget._update_gui_from_params()
+    my_widget.set_fe_btn.click()
+
+    viewer.layers['annotations'].data[...] = im_annot
+    my_widget._on_train()
+    my_widget._on_predict()
+
+    recovered = viewer.layers['segmentation'].data
+    precision, recall = compute_precision_recall(
+        np.array(Image.open(os.path.join(imgs_dir, '0000_ground_truth.png'))),
+        recovered
+    )
+    assert precision > 0.7, f"Precision: {precision}, too low"
+    assert recall > 0.7, f"Recall: {recall}, too low"
 
 
 def test_load_model_dino(make_napari_viewer, capsys):

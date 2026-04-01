@@ -729,28 +729,86 @@ def get_features_targets(features, annot):
 
 ### DEVICE & NORMALIZATION
 
-def get_device(use_gpu=None):
+def _normalize_device_policy(use_device):
     """
-    Get the device to use for PyTorch operations.
-    If CUDA is available, use the first available GPU. If MPS is available, use it.
-
-    Parameters:
-    ----------
-    use_gpu : bool, optional
-        If True, use GPU if available. If False, use CPU. Default is None.
-
-    Returns:
-    ----------
-    device : torch.device
-        The device to use for PyTorch operations.
+    Normalize and validate a device policy string ("auto", "gpu", "cpu").
     """
-    if use_gpu:
-        if torch.cuda.is_available():
-            return torch.device('cuda:0')  # use first available GPU
-        elif torch.backends.mps.is_available(): #check if mps is available
-            return torch.device('mps')
-        else:
-            warnings.warn('CUDA or MPS is not available. Setting device to CPU.')
+    # Legacy support for booleans: True -> "gpu", False -> "cpu"
+    if isinstance(use_device, bool):
+        use_device = 'gpu' if use_device else 'cpu'
+    # Default to "auto" if None
+    if use_device is None:
+        use_device = 'auto'
+    # Validate that the result is a string and one of the expected values
+    if not isinstance(use_device, str):
+        raise ValueError('Device policy must be a string: "auto", "gpu", or "cpu".')
+    valid = {'auto', 'gpu', 'cpu'}
+    if use_device not in valid:
+        raise ValueError(f"Invalid use_device '{use_device}'. Expected one of {sorted(valid)}.")
+    
+    return use_device
+
+def get_fe_device(use_device="auto", supported_devices=None, warn=True):
+    """
+    Get the concrete runtime device to use for feature extraction.
+
+    Parameters
+    ----------
+    use_device : str or bool, optional
+        Device policy. Supported values are "gpu", "cpu", and "auto" (default).
+        Legacy booleans are accepted for compatibility: True -> "gpu", False -> "cpu".
+    supported_devices : list, optional
+        Devices supported by the FE, e.g. [torch.device("cuda"), torch.device("mps")].
+        If None, assumes no GPU backend is supported by the FE.
+    warn : bool, optional
+        Whether to emit fallback warnings when explicit GPU was requested.
+
+    Returns
+    -------
+    torch.device
+        Resolved runtime device.
+    """
+    use_device = _normalize_device_policy(use_device)
+
+    # Explicit CPU request short-circuits all GPU checks, even if available and supported, and prevents warnings.
+    if use_device == 'cpu': 
+        return torch.device('cpu')
+
+    # Check devices supported by the FE
+    if supported_devices is None:
+        supported_devices = []
+    supported_types = set()
+    for dev in supported_devices:
+        if isinstance(dev, torch.device):
+            supported_types.add(dev.type)
+        elif isinstance(dev, str):
+            supported_types.add(torch.device(dev).type)
+    supports_cuda = 'cuda' in supported_types
+    supports_mps = 'mps' in supported_types
+
+    # Check GPU backends available in the runtime environment
+    cuda_available = torch.cuda.is_available()
+    mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+
+    # If a device/backend is supported by FE and available by the system, use it 
+    if cuda_available and supports_cuda:
+        return torch.device('cuda:0')
+    if mps_available and supports_mps:
+        return torch.device('mps')
+
+    # If a GPU was explicitly requested but not available or supported, warn and fall back to CPU
+    if use_device == 'gpu' and warn:
+        if not supports_cuda and not supports_mps:
+            warnings.warn('The selected Feature Extractor does not support any available GPU backend. Falling back to CPU.')
+        elif not cuda_available and not mps_available:
+            warnings.warn('Neither CUDA nor MPS is available. Falling back to CPU for feature extractor.')
+        # From above, we know that at least one, but not a matching GPU backend is supported, so we can be specific in the warning:
+        elif all([supports_cuda, not supports_mps, mps_available, not cuda_available]):
+            warnings.warn('Only CUDA is supported by the Feature Extractor, but only MPS is available. Falling back to CPU for feature extractor.')
+        elif all([supports_mps, not supports_cuda, cuda_available, not mps_available]):
+            warnings.warn('Only MPS is supported by the Feature Extractor, but only CUDA is available. Falling back to CPU for feature extractor.')
+        else: # This case should not be possible, but we cover it just in case
+            warnings.warn(f'Requested GPU for feature extractor, but the available GPU backend is not supported by this feature extractor. Falling back to CPU.')
     return torch.device('cpu')
 
 def get_device_from_torch_model(model):
@@ -768,33 +826,48 @@ def get_device_from_torch_model(model):
             The device the model is on.
     """
     try:
-        return next(model.parameters()).device
+        if hasattr(model, 'parameters'):
+            return next(model.parameters()).device
+        elif hasattr(model, "net") and hasattr(model.net, 'parameters'): # Some models, like cellpose, have a 'net' attribute that contains the parameters
+            return next(model.net.parameters()).device
+        else:
+            raise ValueError("Model does not have parameters or a 'net' attribute with parameters.")
     except StopIteration:
         try:
             return next(model.buffers()).device
         except StopIteration:
             return torch.device("unknown")
 
-def get_catboost_device(use_gpu=None):
+def get_catboost_device(use_device="auto", warn=True):
     """
     Get the device to use for CatBoost operations.
-    If CUDA is available, use the first available GPU. If MPS is available, use it.
+    If CUDA is available, use the first available GPU.
+    Otherwise, use CPU (even if MPS is available since CatBoost does not support MPS).
 
     Parameters:
     ----------
-    use_gpu : bool, optional
-        If True, use CUDA if available. If False, use CPU. Default is None.
+    use_device : str or bool, optional
+        Device policy. Supported values are "gpu", "cpu", and "auto" (default).
+        Legacy booleans are accepted for compatibility: True -> "gpu", False -> "cpu".
 
     Returns:
     ----------
     device : str
         The device to use for CatBoost operations.
     """
-    if use_gpu:
-        if torch.cuda.is_available():
-            return 'GPU'
-        else:
-            warnings.warn('CUDA is not available. Using CPU for CatBoost.')
+    
+    use_device = _normalize_device_policy(use_device)
+
+    if use_device == 'cpu':
+        return 'CPU'
+
+    if torch.cuda.is_available():
+        return 'GPU'
+
+    if use_device == 'gpu' and warn:
+        warnings.warn('CUDA is not available. Falling back to CPU for CatBoost.')
+        if torch.backends.mps.is_available():
+            warnings.warn('Note for MPS users: MPS is available on this device but not supported by CatBoost.')
     return 'CPU'
 
 def normalize_image(image, image_mean, image_std):
