@@ -1,5 +1,5 @@
 from napari_convpaint.convpaint_widget import ConvpaintWidget
-from napari_convpaint.testing_utils import generate_synthetic_square, generate_synthetic_circle_annotation
+from napari_convpaint.testing_data import generate_synthetic_square, generate_synthetic_circle_annotation
 import numpy as np
 import os
 from PIL import Image

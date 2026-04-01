@@ -1,7 +1,5 @@
 from napari_convpaint.convpaint_widget import ConvpaintWidget
-from napari_convpaint.testing_utils import generate_synthetic_square, generate_synthetic_circle_annotation
 import numpy as np
-import os
 
 def test_3d_single_channel(make_napari_viewer, capsys):
     """A 3D stack where 3rd dim is z or t"""
