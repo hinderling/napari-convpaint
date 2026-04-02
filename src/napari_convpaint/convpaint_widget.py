@@ -593,16 +593,18 @@ class ConvpaintWidget(QWidget):
         from qtpy.QtCore import QTimer
 
         # Defer slightly to let Qt finish rendering
-        QTimer.singleShot(0, self._populate_model_defaults)
-        QTimer.singleShot(10, self._connect_bind_reset)
+        QTimer.singleShot(0, self._late_init)
 
     def _import_convpaint_model_class(self):
         if not hasattr(self, "_cpm_class"):
             from .convpaint_model import ConvpaintModel
             self._cpm_class = ConvpaintModel
 
-    def _populate_model_defaults(self):
-        """Populate UI widgets with defaults from ConvpaintModel without creating the heavy model."""
+    def _late_init(self):
+        """Populate UI widgets with defaults from ConvpaintModel, set up connections, and reset model.
+        This is called after the GUI is shown to ensure that all components are properly initialized."""
+
+        # === MODEL DEFAULTS & WIDGET POPULATION ===
         self._import_convpaint_model_class()
         self.cp_model = self._cpm_class()
         # Get default parameters to set in widget
@@ -624,7 +626,6 @@ class ConvpaintWidget(QWidget):
         num_items = self.qcombo_fe_type.count()
         self.qcombo_fe_type.setMaxVisibleItems(num_items) # Make sure the dropdown shows all items
 
-    def _connect_bind_reset(self):
         # === CONNECTIONS ===
         # Add connections and initialize by setting default model and params
         self._add_connections()
