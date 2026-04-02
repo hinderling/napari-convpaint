@@ -11,6 +11,8 @@ from math import lcm
 
 # Imported inline to avoid heavy memory usage when the functions are not used:
 # from sklearn.ensemble import RandomForestClassifier
+# from catboost import CatBoostClassifier
+# import catboost
 
 from .feature_extractor import FeatureExtractor
 from .param import Param
