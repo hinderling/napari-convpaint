@@ -70,7 +70,7 @@ class FeatureExtractor:
         description : str
             A string describing the feature extractor.
         """
-        return "No specific description added for this Feature Extractor (subclasses should override the get_description method)."
+        return f"No specific description added for this Feature Extractor ({self.model_name}). Note that subclasses should override the get_description method."
 
     def get_default_params(self, param=None):
         """
