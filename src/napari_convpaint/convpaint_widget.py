@@ -1,8 +1,11 @@
+from time import time
+start = time()
+print("START:", start)
 from qtpy.QtWidgets import (QWidget, QPushButton,QVBoxLayout,
                             QLabel, QComboBox,QFileDialog, QListWidget,
                             QCheckBox, QAbstractItemView, QGridLayout, QSpinBox, QButtonGroup,
                             QRadioButton,QDoubleSpinBox)
-from qtpy import QtWidgets, QtGui, QtCore
+from qtpy import QtWidgets, QtGui
 from qtpy.QtCore import Qt, QTimer, QUrl
 from magicgui.widgets import create_widget
 import napari
@@ -12,10 +15,13 @@ from napari_guitils.gui_structures import VHGroup, TabSet
 from pathlib import Path
 import numpy as np
 import warnings
-import torch
+import threading
 
-from .utils import normalize_image, compute_image_stats, normalize_image_percentile, normalize_image_imagenet, get_fe_device
 from .convpaint_model import ConvpaintModel
+
+# Imported inline to avoid heavy memory usage when the functions are not used:
+# import torch
+# from .utils import normalize_image, compute_image_stats, normalize_image_percentile, normalize_image_imagenet, get_fe_device
 
 class ConvpaintWidget(QWidget):
     """
@@ -41,21 +47,10 @@ class ConvpaintWidget(QWidget):
     def __init__(self, napari_viewer, parent=None, third_party=False):
 
         ### Initialize the widget state
-
+        print("Imports = ", time() - start)
+        last = time()
         super().__init__(parent=parent)
         self.viewer = napari_viewer
-        # Initialize the Convpaint Model
-        self.cp_model = ConvpaintModel()
-        # Get default parameters to set in widget
-        self.default_cp_param = ConvpaintModel.get_default_params()
-        # self.default_layer_keys = self.cp_model.get_fe_layer_keys()
-        # self.default_proposed_scalings = self.cp_model.get_fe_proposed_scalings()()
-        # Use variables of main model as temp variables for the model options tab, as it is the one model used at that time
-        self.temp_fe_description = self.cp_model.get_fe_description()
-        lks = self.cp_model.get_fe_layer_keys()
-        self.temp_fe_layer_keys = lks.copy() if lks is not None else None
-        pps = self.cp_model.get_fe_proposed_scalings()
-        self.temp_fe_proposed_scalings = pps.copy() if pps is not None else None
 
         self.third_party = third_party
         self.selected_channel = None
@@ -302,14 +297,11 @@ class ConvpaintWidget(QWidget):
 
         # Add "FE architecture" combo box to FE group
         self.qcombo_fe_type = QComboBox()
-        self.qcombo_fe_type.addItems(sorted(ConvpaintModel.get_fe_models_types().keys()))
         self.qcombo_fe_type.setToolTip('Select architecture of feature extraction model.')
-        num_items = self.qcombo_fe_type.count()
-        self.qcombo_fe_type.setMaxVisibleItems(num_items) # Make sure the dropdown shows all items
         self.fe_group.glayout.addWidget(self.qcombo_fe_type, 1, 0, 1, 2)
 
         # Add "FE description" label to FE group
-        self.FE_description = QLabel(self.temp_fe_description)
+        self.FE_description = QLabel('None')
         self.FE_description.setWordWrap(True)
         self.fe_group.glayout.addWidget(self.FE_description, 2, 0, 1, 2)
 
@@ -363,7 +355,6 @@ class ConvpaintWidget(QWidget):
         self.spin_iterations = QSpinBox()
         self.spin_iterations.setMinimum(1)
         self.spin_iterations.setMaximum(1000)
-        self.spin_iterations.setValue(self.default_cp_param.clf_iterations)
         self.spin_iterations.setToolTip('Set the number of iterations for the classifier')
         self.classifier_params_group.glayout.addWidget(QLabel('Iterations'), 0, 0, 1, 1)
         self.classifier_params_group.glayout.addWidget(self.spin_iterations, 0, 1, 1, 1)
@@ -372,7 +363,6 @@ class ConvpaintWidget(QWidget):
         self.spin_learning_rate.setMinimum(0.001)
         self.spin_learning_rate.setMaximum(1.0)
         self.spin_learning_rate.setSingleStep(0.01)
-        self.spin_learning_rate.setValue(self.default_cp_param.clf_learning_rate)
         self.spin_learning_rate.setToolTip('Set the learning rate for the classifier')
         self.classifier_params_group.glayout.addWidget(QLabel('Learning Rate'), 1, 0, 1, 1)
         self.classifier_params_group.glayout.addWidget(self.spin_learning_rate, 1, 1, 1, 1)
@@ -380,7 +370,6 @@ class ConvpaintWidget(QWidget):
         self.spin_depth = QSpinBox()
         self.spin_depth.setMinimum(1)
         self.spin_depth.setMaximum(20)
-        self.spin_depth.setValue(self.default_cp_param.clf_depth)
         self.spin_depth.setToolTip('Set the depth of the trees for the classifier')
         self.classifier_params_group.glayout.addWidget(QLabel('Depth'), 2, 0, 1, 1)
         self.classifier_params_group.glayout.addWidget(self.spin_depth, 2, 1, 1, 1)
@@ -524,7 +513,6 @@ class ConvpaintWidget(QWidget):
 
             # Label for number of trainings performed
             self.label_training_count = QLabel('')
-            self._update_training_counts()
             self.advanced_training_group.glayout.addWidget(self.label_training_count, 3, 0, 1, 2)
 
             # Button to display a diagram of class distribution
@@ -597,8 +585,31 @@ class ConvpaintWidget(QWidget):
         if 'Files' in self.tab_names or 'Project' in self.tab_names:
             self._on_create_files_project()
 
-        # === CONNECTIONS ===
+        # === CREATE ConvpaintModel AND POPULATE DEFAULT VALUES ===
+        # Initialize lightweight UI state; defer creating the heavy ConvpaintModel
+        # so the widget becomes visible immediately.
+        self.default_cp_param = ConvpaintModel.get_default_params()
+        self.cp_model = None
+        # Lightweight placeholders until model is ready
+        self.temp_fe_description = ""
+        self.temp_fe_layer_keys = None
+        self.temp_fe_proposed_scalings = (self.default_cp_param.fe_scalings.copy()
+                                          if getattr(self.default_cp_param, 'fe_scalings', None) else None)
+        self.temp_fe_defaults = self.default_cp_param
 
+        self.spin_iterations.setValue(self.default_cp_param.clf_iterations)
+        self.spin_learning_rate.setValue(self.default_cp_param.clf_learning_rate)
+        self.spin_depth.setValue(self.default_cp_param.clf_depth)
+        if 'Advanced' in self.tab_names:
+            self._update_training_counts()
+        self.FE_description.setText(self.temp_fe_description)
+        self.qcombo_fe_type.addItems(sorted(ConvpaintModel.get_fe_models_types().keys()))
+        num_items = self.qcombo_fe_type.count()
+        self.qcombo_fe_type.setMaxVisibleItems(num_items) # Make sure the dropdown shows all items
+
+        # === CONNECTIONS ===
+        print("Creating CPM = ", time() - last)
+        last = time()
         # Add connections and initialize by setting default model and params
         self._add_connections()
         if self.image_layer_selection_widget.value is not None:
@@ -610,7 +621,9 @@ class ConvpaintWidget(QWidget):
                     f'(ndim={self.image_layer_selection_widget.value.ndim}). '
                     f'Please select a compatible image (2D-4D).'
                 )
-        self._reset_model()
+            # Defer heavy model creation to background so UI shows immediately.
+            from qtpy.QtCore import QTimer
+            QTimer.singleShot(0, lambda: threading.Thread(target=self._create_model_and_reset, daemon=True).start())
 
         # === KEY BINDINGS ===
 
@@ -623,7 +636,8 @@ class ConvpaintWidget(QWidget):
         self.viewer.bind_key('Shift+w', lambda event=None: self.set_annot_label_class(2, event), overwrite=True)
         self.viewer.bind_key('Shift+e', lambda event=None: self.set_annot_label_class(3, event), overwrite=True)
         self.viewer.bind_key('Shift+r', lambda event=None: self.set_annot_label_class(4, event), overwrite=True)
-
+        print("Adding connections = ", time() - last)
+        last = time()
 ### Visibility toggles for key bindings
 
     def toggle_annotation(self, event=None):
@@ -727,9 +741,9 @@ class ConvpaintWidget(QWidget):
             self.cp_model.set_param('seg_smoothening', self.spin_smoothen.value(), ignore_warnings=True))
         # set self.use_device according to the drop down value
         self.device_dropdown.currentIndexChanged.connect(self._on_change_device)
-        self.check_tile_annotations.stateChanged.connect(lambda: 
+        self.check_tile_annotations.stateChanged.connect(lambda:
             self.cp_model.set_param('tile_annotations', self.check_tile_annotations.isChecked(), ignore_warnings=True))
-        self.check_tile_image.stateChanged.connect(lambda: 
+        self.check_tile_image.stateChanged.connect(lambda:
             self.cp_model.set_param('tile_image', self.check_tile_image.isChecked(), ignore_warnings=True))
 
         # === MODEL OPTIONS TAB ===
@@ -1970,7 +1984,7 @@ class ConvpaintWidget(QWidget):
         reset the classifier."""
 
         # Read FE parameters from the GUI
-        new_param = self.cp_model.get_params()
+        new_param = self.cp_model.get_params() # Take the current and adjust FE-specific ones
         new_layers = self._get_selected_layer_names() # includes re-writing to keys
         scalings = self._get_selected_scaling_factors()
         if scalings is None:
@@ -2516,6 +2530,7 @@ class ConvpaintWidget(QWidget):
         mps_fe_only_tooltip = 'MPS is available and supported by this feature extractor, but CatBoost does not support MPS. Classifier will use CPU in all cases.'
         mps_none_tooltip = 'MPS is available, but neither this feature extractor nor CatBoost supports MPS. Device is fixed to CPU.'
 
+        import torch
         mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
         cuda_available = torch.cuda.is_available()
 
@@ -2864,6 +2879,9 @@ class ConvpaintWidget(QWidget):
         # Get data from selected layer, with channels first if present
         image_stack = self._get_data_channel_first(img) # 2D, 3D or 4D array, with C first if present
 
+        # Import heavy image utilities lazily to avoid import-time cost
+        from .utils import normalize_image, normalize_image_percentile, normalize_image_imagenet
+
         norm_scope = self.cp_model.get_param("normalize")
         if norm_scope == 1: # No normalization
             return image_stack
@@ -2907,6 +2925,7 @@ class ConvpaintWidget(QWidget):
 
     def _get_current_plane_norm(self):
         """Get the current image plane to predict on, normalized according to the settings."""
+        from .utils import normalize_image, normalize_image_imagenet
         
         # Get image and the info needed about normalization
         img = self._get_selected_img(check=True)
@@ -2984,6 +3003,9 @@ class ConvpaintWidget(QWidget):
     def _compute_image_stats(self, img):
         """Get image stats depending on the normalization settings and data dimensions.
         Takes image as given in the viewer (not channel first)."""
+
+        # Import heavy utility here to avoid importing at module import time
+        from .utils import compute_image_stats
 
         # If no image is selected or image has unsupported dimensions, set stats to None
         if img is None:
