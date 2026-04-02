@@ -2,7 +2,6 @@ import pickle
 from pathlib import Path
 import importlib
 import inspect
-from catboost import CatBoostClassifier
 import numpy as np
 import warnings
 import skimage
@@ -573,6 +572,10 @@ class ConvpaintModel:
         Creates new feature extractor, and resets the classifier.
         Only intended for internal use at model initiation.
         """
+        # Lazy-import catboost here (before torch loads model weights) to avoid
+        # a segfault on Apple Silicon caused by catboost initialising shared
+        # native libraries (libomp / Metal) after PyTorch's MPS backend.
+        import catboost  # noqa: F401
 
         # Reset the model and classifier
         self.reset_classifier()
@@ -1179,6 +1182,7 @@ class ConvpaintModel:
             use_device = self.check_locked_device(use_device, part='clf')
             task_type = utils.get_catboost_device(use_device, warn=True)
             # Fixed seed for reproducibility; can be set to None for random seed
+            from catboost import CatBoostClassifier
             self.classifier = CatBoostClassifier(
                 iterations=self._param.clf_iterations,
                 learning_rate=self._param.clf_learning_rate,

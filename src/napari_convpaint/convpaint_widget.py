@@ -595,6 +595,14 @@ class ConvpaintWidget(QWidget):
         # Defer slightly to let Qt finish rendering
         QTimer.singleShot(0, self._late_init)
 
+    def ensure_init(self):
+        """Run deferred model initialization synchronously if it hasn't run yet.
+        Useful for tests and non-GUI contexts where showEvent is not triggered."""
+        if hasattr(self, "_post_init_done") and self._post_init_done:
+            return
+        self._post_init_done = True
+        self._late_init()
+
     def _import_convpaint_model_class(self):
         if not hasattr(self, "_cpm_class"):
             from .convpaint_model import ConvpaintModel
@@ -625,6 +633,8 @@ class ConvpaintWidget(QWidget):
         self.qcombo_fe_type.addItems(sorted(self._cpm_class.get_fe_models_types().keys()))
         num_items = self.qcombo_fe_type.count()
         self.qcombo_fe_type.setMaxVisibleItems(num_items) # Make sure the dropdown shows all items
+
+
 
         # === CONNECTIONS ===
         # Add connections and initialize by setting default model and params
