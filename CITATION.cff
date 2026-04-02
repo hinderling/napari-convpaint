@@ -1,0 +1,58 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Convpaint—Interactive pixel classification using pretrained neural networks"
+type: software
+authors:
+  - family-names: Hinderling
+    given-names: Lucien
+  - family-names: Schwob
+    given-names: Roman
+  - family-names: Witz
+    given-names: Guillaume
+  - family-names: Stojiljković
+    given-names: Ana
+  - family-names: Dobrzyński
+    given-names: Maciej
+  - family-names: Vladymyrov
+    given-names: Mykhailo
+  - family-names: Frei
+    given-names: Joël
+  - family-names: Grädel
+    given-names: Benjamin
+  - family-names: Frismantiene
+    given-names: Agne
+  - family-names: Pertz
+    given-names: Olivier
+license: BSD-3-Clause
+preferred-citation:
+  type: article
+  title: "Convpaint—Interactive pixel classification using pretrained neural networks"
+  authors:
+    - family-names: Hinderling
+      given-names: Lucien
+    - family-names: Schwob
+      given-names: Roman
+    - family-names: Witz
+      given-names: Guillaume
+    - family-names: Stojiljković
+      given-names: Ana
+    - family-names: Dobrzyński
+      given-names: Maciej
+    - family-names: Vladymyrov
+      given-names: Mykhailo
+    - family-names: Frei
+      given-names: Joël
+    - family-names: Grädel
+      given-names: Benjamin
+    - family-names: Frismantiene
+      given-names: Agne
+    - family-names: Pertz
+      given-names: Olivier
+  doi: "10.1016/j.crmeth.2026.101335"
+  url: "https://doi.org/10.1016/j.crmeth.2026.101335"
+  journal: "Cell Reports Methods"
+  volume: 6
+  issue: 3
+  start: 101335
+  year: 2026
+  month: 3
