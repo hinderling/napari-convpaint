@@ -709,6 +709,7 @@ class ConvpaintWidget(QWidget):
         for layer in self.viewer.layers:
             layer.events.name.connect(self._update_image_layers)
         self.viewer.layers.events.inserted.connect(self._on_insert_layer)
+        self.viewer.layers.events.removed.connect(self._on_layer_removed)
 
         # === HOME TAB ===
 
@@ -1094,9 +1095,11 @@ class ConvpaintWidget(QWidget):
 
     def _on_change_seg_cmap(self, event=None):
         """Update annotation colormap when segmentation colormap changes."""
-        if (self.cmap_flag or # Avoid infinite loop
-            (event is not None and event.source != self.viewer.layers[self.seg_prefix])): # Only triggers of segmentation layer
+        if self.cmap_flag:
             return
+        if event is not None:
+            if self.seg_prefix not in self.viewer.layers or event.source != self.viewer.layers[self.seg_prefix]:
+                return
         # Make sure we are not in a loop
         self.cmap_flag = True
         # Update the colormap of all labels layers according to the segmentation layer
@@ -1159,6 +1162,12 @@ class ConvpaintWidget(QWidget):
         layer.events.name.connect(self._update_image_layers)
         layer.events.name.connect(self._update_annotation_layers)
         layer.events.data.connect(self._on_select_layer)
+
+    def _on_layer_removed(self, event=None):
+        """When a layer is removed, remove it from the sets of annotation and segmentation layers if it is in there."""
+        # keep only layers that still exist in viewer
+        self.annot_layers = {l for l in self.annot_layers if l is None or l.name in self.viewer.layers}
+        self.seg_layers = {l for l in self.seg_layers if l is None or l.name in self.viewer.layers}
 
     # Layer selection
 
