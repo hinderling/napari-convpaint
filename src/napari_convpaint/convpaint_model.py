@@ -2,16 +2,16 @@ import pickle
 from pathlib import Path
 import importlib
 import inspect
-from pyexpat import features
 from catboost import CatBoostClassifier
-from sklearn.ensemble import RandomForestClassifier
 import numpy as np
 import warnings
 import skimage
-import torch
 import pandas as pd
 from typing import Tuple
 from math import lcm
+
+# Imported inline to avoid heavy memory usage when the functions are not used:
+# from sklearn.ensemble import RandomForestClassifier
 
 from .feature_extractor import FeatureExtractor
 from .param import Param
@@ -45,8 +45,8 @@ class ConvpaintModel:
     """
 
     # Available models and Standard models (aliases) are provided by the individual feature-extractor
-    FE_MODELS_TYPES_DICT = {}
-    STD_MODELS = {}
+    FE_MODELS_TYPES_DICT = {} # Will contain fe_name:type_class (e.g. vgg16:Hookmodel) pairs for all available feature extractor models
+    STD_MODELS = {} # Will contain alias:Param pairs for standard models (e.g. "vgg-s": Param(fe_name="vgg16", fe_layers=['features.0... ))
     
     # Define the allowed values for the parameters; this is used to check the validity of parameter values when setting them
     allowed_param_vals = {
@@ -268,9 +268,11 @@ class ConvpaintModel:
         models_dict : dict
             Dictionary of all available feature extractors; names as keys and types as values.
         """
+        if not ConvpaintModel.FE_MODELS_TYPES_DICT:
+            ConvpaintModel._init_fe_models_dict()
         models_dict = ConvpaintModel.FE_MODELS_TYPES_DICT.copy()
         return models_dict
-    
+
     @staticmethod
     def get_default_params():
         """
@@ -1188,6 +1190,7 @@ class ConvpaintModel:
             self.classifier.fit(features, targets)
             self._param.classifier = 'CatBoost'
         else: # train a random forest classififer (does not support GPU)
+                from sklearn.ensemble import RandomForestClassifier
                 # Fix random_state for reproducibility; can be set to None for random seed
                 self.classifier = RandomForestClassifier(n_estimators=100, n_jobs=-1, random_state=0)
                 self.classifier.fit(features, targets)

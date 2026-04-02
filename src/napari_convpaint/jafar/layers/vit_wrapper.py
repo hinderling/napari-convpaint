@@ -7,7 +7,7 @@ import timm.data
 import torch
 from timm.models.vision_transformer import VisionTransformer
 from torch import nn
-from torchvision import transforms 
+from torchvision import transforms
 
 # https://github.com/Jiawei-Yang/Denoising-ViT/blob/82704df9ba253c9696dcf3a8239434e3cbacf19d/dvt/models/vit_wrapper.py#L59
 

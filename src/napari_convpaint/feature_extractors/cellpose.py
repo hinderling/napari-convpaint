@@ -2,24 +2,40 @@ import warnings
 import torch
 import numpy as np
 import skimage
+import importlib.util
 from ..utils import get_device_from_torch_model
 
-try:
-    from cellpose import models
-    CELLPOSE_AVAILABLE = True
-except ImportError:
-    models = None
-    CELLPOSE_AVAILABLE = False
+def import_models():
+    try:
+        from cellpose import models
+    except ImportError:
+        models = None
+    return models
 
-AVAILABLE_MODELS = ['cellpose_backbone'] if CELLPOSE_AVAILABLE else []
+# Check availability and provide infos for ConvpaintModel
+
+def cellpose_available():
+    available = importlib.util.find_spec("cellpose") is not None
+    # if not available:
+    #     warnings.warn(
+    #         "Cellpose is not installed and is not available as feature extractor.\n"
+    #         "Run 'pip install napari-convpaint[cellpose]' to install it."
+    #     )
+    return available
+
+
+AVAILABLE_MODELS = ['cellpose_backbone'] if cellpose_available() else []
 
 STD_MODELS = {
     "cellpose": {"fe_name": "cellpose_backbone"},
 }
+
 IMPORT_ERROR_MESSAGE = (
-    "Cellpose is not installed and is not available as feature extractor.\n"
-    "Run 'pip install napari-convpaint[cellpose]' to install it."
-)
+            "Cellpose is not installed and is not available as feature extractor.\n"
+            "Run 'pip install napari-convpaint[cellpose]' to install it."
+        )
+
+# Actual feature extractor implementation
 
 from ..feature_extractor import FeatureExtractor
 
@@ -36,6 +52,14 @@ class CellposeFeatures(FeatureExtractor):
 
     @staticmethod
     def create_model(model_name):
+
+        models = import_models()
+        if models is None:
+            raise ImportError(
+            "Cellpose could not be imported. If called through ConvpaintModel, this should not happen as the availability of Cellpose is checked before. " +
+            "Make sure to have cellpose installed and available in your environment."
+        )
+
         # Load the cellpose model
         model_cellpose = models.CellposeModel(model_type='tissuenet_cp3',
                                               gpu=False) # We will move the model to the appropriate device at feature extraction time

@@ -1,58 +1,65 @@
 import itertools
 import numpy as np
+import importlib.util
+import warnings
 
-try:
-    from ilastik.napari.filters import (FilterSet,
-                                        Gaussian,
-                                        LaplacianOfGaussian,
-                                        GaussianGradientMagnitude,
-                                        DifferenceOfGaussians,
-                                        StructureTensorEigenvalues,
-                                        HessianOfGaussianEigenvalues)
-    ILASTIK_AVAILABLE = True
-except ImportError as e:
-    FilterSet = None
-    Gaussian = None
-    LaplacianOfGaussian = None
-    GaussianGradientMagnitude = None
-    DifferenceOfGaussians = None
-    StructureTensorEigenvalues = None
-    HessianOfGaussianEigenvalues = None
-    ILASTIK_AVAILABLE = False
+def import_ilastik_filters():
+    try:
+        from ilastik.napari.filters import (
+            FilterSet,
+            Gaussian,
+            LaplacianOfGaussian,
+            GaussianGradientMagnitude,
+            DifferenceOfGaussians,
+            StructureTensorEigenvalues,
+            HessianOfGaussianEigenvalues,
+        )
+    except ImportError:
+        return None
 
-AVAILABLE_MODELS = ['ilastik_2d'] if ILASTIK_AVAILABLE else []
+    return {
+        "FilterSet": FilterSet,
+        "Gaussian": Gaussian,
+        "LaplacianOfGaussian": LaplacianOfGaussian,
+        "GaussianGradientMagnitude": GaussianGradientMagnitude,
+        "DifferenceOfGaussians": DifferenceOfGaussians,
+        "StructureTensorEigenvalues": StructureTensorEigenvalues,
+        "HessianOfGaussianEigenvalues": HessianOfGaussianEigenvalues,
+    }
+
+# Check availability and provide infos for ConvpaintModel
+
+def ilastik_available():
+    available = importlib.util.find_spec("ilastik.napari.filters") is not None
+    # if not available:
+    #     warnings.warn(
+    #         "Ilastik is not installed and is not available as feature extractor.\n"
+    #         "Run 'pip install napari-convpaint[ilastik]' to install it.\n"
+    #         "Make sure to also have fastfilters installed ('conda install -c ilastik-forge fastfilters')."
+    #     )
+    return available
+
+AVAILABLE_MODELS = ['ilastik_2d'] if ilastik_available() else []
 
 STD_MODELS = {
     "ilastik": {"fe_name": "ilastik_2d"},
 }
-IMPORT_ERROR_MESSAGE = (
-    "Ilastik is not installed and is not available as feature extractor.\n"
-    "Run 'pip install napari-convpaint[ilastik]' to install it.\n"
-    "Make sure to also have fastfilters installed ('conda install -c ilastik-forge fastfilters')."
-)
 
-# Define the filter set and scales
-if not ILASTIK_AVAILABLE:
-    FILTERS = tuple()
-    FILTER_SET = None
-else:
-    FILTER_LIST = (Gaussian,
-                LaplacianOfGaussian,
-                GaussianGradientMagnitude,
-                DifferenceOfGaussians,
-                StructureTensorEigenvalues,
-                HessianOfGaussianEigenvalues)
-    SCALE_LIST = (0.3, 0.7, 1.0, 1.6, 3.5, 5.0, 10.0)
-    # Generate all combinations of FILTER_LIST and SCALE_LIST
-    ALL_FILTER_SCALING_COMBOS = list(itertools.product(range(len(FILTER_LIST)), range(len(SCALE_LIST))))
-    FILTERS = tuple(FILTER_LIST[row](SCALE_LIST[col]) for row, col in sorted(ALL_FILTER_SCALING_COMBOS))
-    FILTER_SET = FilterSet(filters=FILTERS)
+IMPORT_ERROR_MESSAGE = (
+            "Ilastik is not installed and is not available as feature extractor.\n"
+            "Run 'pip install napari-convpaint[ilastik]' to install it.\n"
+            "Make sure to also have fastfilters installed ('conda install -c ilastik-forge fastfilters')."
+        )
+
+# Actual feature extractor implementation
 
 from ..feature_extractor import FeatureExtractor
 
 class IlastikFeatures(FeatureExtractor):
     """Feature extractor using the full filter set of the popular segmentation tool Ilastik."""
     def __init__(self, model_name='ilastik_2d', **kwargs):
+        global FILTER_SET
+        FILTER_SET = create_filter_set()
         super().__init__(model_name=model_name)
         self.padding = FILTER_SET.kernel_size // 2
 
@@ -73,3 +80,31 @@ class IlastikFeatures(FeatureExtractor):
         features = np.moveaxis(features, -1, 0)
 
         return features
+    
+def create_filter_set():
+    filters_mod = import_ilastik_filters()
+    if filters_mod is None:
+        raise ImportError(
+            "Ilastik filters could not be imported. If called through ConvpaintModel, this should not happen as the availability of Ilastik is checked before. " +
+            "Make sure to have ilastik.napari.filters installed and available in your environment."
+        )
+
+    FILTER_LIST = (
+        filters_mod["Gaussian"],
+        filters_mod["LaplacianOfGaussian"],
+        filters_mod["GaussianGradientMagnitude"],
+        filters_mod["DifferenceOfGaussians"],
+        filters_mod["StructureTensorEigenvalues"],
+        filters_mod["HessianOfGaussianEigenvalues"],
+    )
+
+    SCALE_LIST = (0.3, 0.7, 1.0, 1.6, 3.5, 5.0, 10.0)
+
+    combos = itertools.product(range(len(FILTER_LIST)), range(len(SCALE_LIST)))
+
+    filters = tuple(
+        FILTER_LIST[row](SCALE_LIST[col])
+        for row, col in combos
+    )
+
+    return filters_mod["FilterSet"](filters=filters)
