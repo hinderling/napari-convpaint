@@ -1,6 +1,3 @@
-from time import time
-start = time()
-print("START:", start)
 from qtpy.QtWidgets import (QWidget, QPushButton,QVBoxLayout,
                             QLabel, QComboBox,QFileDialog, QListWidget,
                             QCheckBox, QAbstractItemView, QGridLayout, QSpinBox, QButtonGroup,
@@ -15,13 +12,11 @@ from napari_guitils.gui_structures import VHGroup, TabSet
 from pathlib import Path
 import numpy as np
 import warnings
-import threading
-
-from .convpaint_model import ConvpaintModel
 
 # Imported inline to avoid heavy memory usage when the functions are not used:
 # import torch
 # from .utils import normalize_image, compute_image_stats, normalize_image_percentile, normalize_image_imagenet, get_fe_device
+# from .convpaint_model import ConvpaintModel
 
 class ConvpaintWidget(QWidget):
     """
@@ -47,8 +42,6 @@ class ConvpaintWidget(QWidget):
     def __init__(self, napari_viewer, parent=None, third_party=False):
 
         ### Initialize the widget state
-        print("Imports = ", time() - start)
-        last = time()
         super().__init__(parent=parent)
         self.viewer = napari_viewer
 
@@ -585,17 +578,41 @@ class ConvpaintWidget(QWidget):
         if 'Files' in self.tab_names or 'Project' in self.tab_names:
             self._on_create_files_project()
 
-        # === CREATE ConvpaintModel AND POPULATE DEFAULT VALUES ===
-        # Initialize lightweight UI state; defer creating the heavy ConvpaintModel
-        # so the widget becomes visible immediately.
-        self.default_cp_param = ConvpaintModel.get_default_params()
-        self.cp_model = None
-        # Lightweight placeholders until model is ready
-        self.temp_fe_description = ""
-        self.temp_fe_layer_keys = None
-        self.temp_fe_proposed_scalings = (self.default_cp_param.fe_scalings.copy()
-                                          if getattr(self.default_cp_param, 'fe_scalings', None) else None)
-        self.temp_fe_defaults = self.default_cp_param
+### ConvpaintModel instatiation and default population & calling connections, resetting model and key bindings
+
+    def showEvent(self, event):
+        """Override the showEvent to populate the model defaults and set up connections AFTER the GUI is shown."""
+        super().showEvent(event)
+
+        # Run only once
+        if hasattr(self, "_post_init_done") and self._post_init_done:
+            return
+
+        self._post_init_done = True
+
+        from qtpy.QtCore import QTimer
+
+        # Defer slightly to let Qt finish rendering
+        QTimer.singleShot(0, self._populate_model_defaults)
+        QTimer.singleShot(10, self._connect_bind_reset)
+
+    def _import_convpaint_model_class(self):
+        if not hasattr(self, "_cpm_class"):
+            from .convpaint_model import ConvpaintModel
+            self._cpm_class = ConvpaintModel
+
+    def _populate_model_defaults(self):
+        """Populate UI widgets with defaults from ConvpaintModel without creating the heavy model."""
+        self._import_convpaint_model_class()
+        self.cp_model = self._cpm_class()
+        # Get default parameters to set in widget
+        self.default_cp_param = self._cpm_class.get_default_params()
+        # Use variables of main model as temp variables for the model options tab, as it is the one model used at that time
+        self.temp_fe_description = self.cp_model.get_fe_description()
+        lks = self.cp_model.get_fe_layer_keys()
+        self.temp_fe_layer_keys = lks.copy() if lks is not None else None
+        pps = self.cp_model.get_fe_proposed_scalings()
+        self.temp_fe_proposed_scalings = pps.copy() if pps is not None else None
 
         self.spin_iterations.setValue(self.default_cp_param.clf_iterations)
         self.spin_learning_rate.setValue(self.default_cp_param.clf_learning_rate)
@@ -603,13 +620,12 @@ class ConvpaintWidget(QWidget):
         if 'Advanced' in self.tab_names:
             self._update_training_counts()
         self.FE_description.setText(self.temp_fe_description)
-        self.qcombo_fe_type.addItems(sorted(ConvpaintModel.get_fe_models_types().keys()))
+        self.qcombo_fe_type.addItems(sorted(self._cpm_class.get_fe_models_types().keys()))
         num_items = self.qcombo_fe_type.count()
         self.qcombo_fe_type.setMaxVisibleItems(num_items) # Make sure the dropdown shows all items
 
+    def _connect_bind_reset(self):
         # === CONNECTIONS ===
-        print("Creating CPM = ", time() - last)
-        last = time()
         # Add connections and initialize by setting default model and params
         self._add_connections()
         if self.image_layer_selection_widget.value is not None:
@@ -621,13 +637,9 @@ class ConvpaintWidget(QWidget):
                     f'(ndim={self.image_layer_selection_widget.value.ndim}). '
                     f'Please select a compatible image (2D-4D).'
                 )
-            # Defer heavy model creation to background so UI shows immediately.
-            from qtpy.QtCore import QTimer
-            QTimer.singleShot(0, lambda: threading.Thread(target=self._create_model_and_reset, daemon=True).start())
+        self._reset_model()
 
         # === KEY BINDINGS ===
-
-        # Add key bindings
         self.viewer.bind_key('Shift+a', self.toggle_annotation, overwrite=True)
         self.viewer.bind_key('Shift+s', self._on_train, overwrite=True)
         self.viewer.bind_key('Shift+d', self._on_predict, overwrite=True)
@@ -636,8 +648,8 @@ class ConvpaintWidget(QWidget):
         self.viewer.bind_key('Shift+w', lambda event=None: self.set_annot_label_class(2, event), overwrite=True)
         self.viewer.bind_key('Shift+e', lambda event=None: self.set_annot_label_class(3, event), overwrite=True)
         self.viewer.bind_key('Shift+r', lambda event=None: self.set_annot_label_class(4, event), overwrite=True)
-        print("Adding connections = ", time() - last)
-        last = time()
+        
+
 ### Visibility toggles for key bindings
 
     def toggle_annotation(self, event=None):
@@ -1695,7 +1707,7 @@ class ConvpaintWidget(QWidget):
         
         # Load the model parameters
         save_string = str(save_file)
-        new_model = ConvpaintModel(model_path=save_string)
+        new_model = self._cpm_class(model_path=save_string)
         new_param = new_model.get_params()
         
         # Check if the new multichannel setting is incompatible with data
@@ -1721,7 +1733,7 @@ class ConvpaintWidget(QWidget):
         # Load the model (Note: done after updating GUI, since GUI updates might reset clf or change model)
         self.cp_model = new_model
         self.cp_model._param = new_param
-        temp_fe_model = ConvpaintModel.create_fe(new_param.fe_name)
+        temp_fe_model = self._cpm_class.create_fe(new_param.fe_name)
         self.temp_fe_description = temp_fe_model.get_description()
         lks = temp_fe_model.get_layer_keys()
         self.temp_fe_layer_keys = lks.copy() if lks is not None else None
@@ -1933,7 +1945,7 @@ class ConvpaintWidget(QWidget):
 
         # Create a temporary model to get the layers (to display) and default parameters
         new_fe_type = self.qcombo_fe_type.currentText()
-        temp_fe_model = ConvpaintModel.create_fe(new_fe_type)
+        temp_fe_model = self._cpm_class.create_fe(new_fe_type)
         self.temp_fe_description = temp_fe_model.get_description()
         lks = temp_fe_model.get_layer_keys()
         self.temp_fe_layer_keys = lks.copy() if lks is not None else None
@@ -2056,7 +2068,7 @@ class ConvpaintWidget(QWidget):
         if adjusted_params: show_info(f'The feature extractor adjusted the parameters {adjusted_params}')
 
         # Create a new model with the new FE
-        self.cp_model = ConvpaintModel(param=new_param)
+        self.cp_model = self._cpm_class(param=new_param)
         self._reset_device_options()
         self._reset_clf() # Call to take all actions needed after resetting the clf
         # Reset the features for continuous training
