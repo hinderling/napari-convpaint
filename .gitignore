@@ -96,3 +96,5 @@ src/napari_convpaint/jafar/checkpoints/*.pth
 **/catboost_info/learn/events.out.tfevents
 src/config/base.yaml
 src/config/*
+
+tools/*

@@ -1,9 +1,14 @@
 import numpy as np
 import torch
 from torch import nn
-from torchvision import models
 from ..utils import get_device_from_torch_model, guided_model_download
-from ..feature_extractor import FeatureExtractor
+
+def import_models():
+    try:
+        from torchvision import models
+    except ImportError:
+        models = None
+    return models
 
 AVAILABLE_MODELS = ['vgg16', 'efficient_netb0', 'convnext']
 
@@ -30,6 +35,8 @@ STD_MODELS = {
         "fe_scalings": [1, 2, 4, 8],
     },
 }
+
+from ..feature_extractor import FeatureExtractor
 
 class Hookmodel(FeatureExtractor):
     """
@@ -77,6 +84,13 @@ class Hookmodel(FeatureExtractor):
 
     @staticmethod
     def create_model(model_name):
+
+        models = import_models()
+        if models is None:
+            raise ImportError(
+            "Torchvision models could not be imported. If called through ConvpaintModel, this should not happen as the availability of Torchvision is checked before. " +
+            "Make sure to have torchvision installed and available in your environment."
+        )
 
         # CREATE VGG16 MODEL
         if model_name == 'vgg16':

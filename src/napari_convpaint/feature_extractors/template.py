@@ -1,26 +1,29 @@
 from ..feature_extractor import FeatureExtractor
 
 
-# 1) LIST THE AVAILABLE MODELS
+# 1) LIST THE AVAILABLE MODELS (REQUIRED):
+
 # This can just be a model name (string) that is used to recognize your model,
 # or multiple names to differentiate between potentially multiple different versions
 AVAILABLE_MODELS = ["gaussian_features"] # List the available model names here
 
-# OPTIONAL: Add options to the dictionary std_models, to enable loading this model by alias
+# OPTIONAL: Add options to the dictionary std_models, to enable loading this model by alias in the API
 STD_MODELS = {
     "gaussian": {"fe_name": "gaussian_features"}, # Example: this allows to load the gaussian feature extractor by just setting fe_name = "gaussian" in the parameters
     # You can add more aliases; and you can specify more parameters in the dictionary for an alias, if you want to set some parameters as default for this alias. For example:
     "gaussian_2": {"fe_name": "gaussian_features", "image_downsample": 2} # A version with downsampling by 2 as default
 }
 
-# 2) DEFINE INITIALIZATION, DESCRIPTION AND DEFAULT PARAMETERS
+
+# 2) DEFINE INITIALIZATION, DESCRIPTION AND DEFAULT PARAMETERS (TECHNICALLY OPTIONAL, BUT STRONGLY RECOMMENDED):
+
 class GaussianFeatures(FeatureExtractor):
     # Define the initiation method
     def __init__(self, model_name='gaussian_features'):
-        # Sets some default parameters and chooses the itialization method
+        # __init__ of FeatureExtractor superclass sets some default parameters and chooses the itialization method
         super().__init__(model_name=model_name)
 
-        # Define specifications for the feature extractor model, if necessary
+        # Define specifications for the feature extractor model, if necessary; examples:
         # self.padding = 0
         # self.patch_size = 1
         # self.num_input_channels = [1]
@@ -28,7 +31,8 @@ class GaussianFeatures(FeatureExtractor):
         # self.rgb_input = False # True if the model takes RGB input
 
     def get_description(self):
-        return "" # Briefly describe the feature extractor here; this will be displayed in the UI
+        # Briefly describe the feature extractor here; this will be displayed in the UI
+        return ""
 
     def get_default_params(self, param=None):
         # Get the default parameters for the feature extractor; this allows you to only set the parameters that are relevant for your model
@@ -42,35 +46,37 @@ class GaussianFeatures(FeatureExtractor):
         return param
 
 
-# 3) OPTIONAL METHODS:
+# 3) METHODS FOR MORE ADVANCED FEATURE EXTRACTORS (OPTIONAL):
 
-# FOR MODELS THAT NEED TO CREATE AN UNDERLYING FE MODEL (E.G. TORCH MODEL), DEFINE THE FOLLOWING METHOD
+    # FOR MODELS THAT NEED TO CREATE AN UNDERLYING FE MODEL (E.G. TORCH MODEL), DEFINE THE FOLLOWING METHOD
 
     # @staticmethod
     # def create_model(model_name):
     #     pass
 
-# IF THE MODEL ABSOLUTELY REQUIRES SOME PARAMETERS TO BE SET, DEFINE THE FOLLOWING METHOD
+    # IF THE MODEL ABSOLUTELY REQUIRES SOME PARAMETERS TO BE SET, DEFINE THE FOLLOWING METHOD
     
-        # def get_enforced_params(self, param=None):
-        #     param = super().get_enforced_params(param=param)
-            
-        #     # Define here, which parameters shall be used as enforced parameters
-        #     # param.fe_layers = []
-        #     # param.fe_scalings = [1]
-        #     # etc.
-    
-        #     return param
+    # def get_enforced_params(self, param=None):
+    #     param = super().get_enforced_params(param=param)
+        
+    #     # Define here, which parameters shall be used as enforced parameters
+    #     # param.fe_layers = []
+    #     # param.fe_scalings = [1]
+    #     # etc.
+
+    #     return param
 
 
-# 4) CHOOSE HOW TO IMPLEMENT THE FEATURE EXTRACTION BY OVERRIDING ONE
-#    OF THE FOLLOWING METHODS WITH INCREASING CONTROL AND COMPLEXITY:
+# 4) IMPLEMENT THE FEATURE EXTRACTION
+
+# CHOOSE A POINT OF ENTRY BY OVERRIDING ONE OF THE METHODS BELOW WITH INCREASING CONTROL AND COMPLEXITY
 
 # IMPORTANT for GPU support:
-# Independent of the extraction method chosen, the feature extractor class needs to implement a way to move its
-# internal model and the tensors to the appropriate device (CPU or GPU, with cuda or mps).
-# For standard torch models, you can use the move_model_to_device() method implemented in the base
-# FeatureExtractor class. For other models, you need to implement a similar logic of moving model and tensors.
+# Independent of the extraction method chosen, if want the feature extractor to be able to use GPU,
+# the class needs to implement a way to move its internal model (if applicable) and the tensors to the
+# appropriate device (CPU or GPU, with cuda or mps).
+# For standard torch models, you can use the move_model_to_device() method of the base FeatureExtractor class
+# to move the model. For other models, you need to implement a similar logic of moving model and tensors.
 
 # a) extract_features_from_plane(self, image, device):
 #    

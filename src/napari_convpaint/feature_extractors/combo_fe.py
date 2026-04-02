@@ -1,5 +1,4 @@
 import numpy as np
-from ..feature_extractor import FeatureExtractor
 from .dino import DinoFeatures
 from .nnlayers import Hookmodel
 from .gaussian import GaussianFeatures
@@ -37,6 +36,8 @@ try:
 except Exception as e:
     print(f"Error importing Ilastik for combo: {e}")
     pass
+
+from ..feature_extractor import FeatureExtractor
 
 class ComboFeatures(FeatureExtractor):
     """
