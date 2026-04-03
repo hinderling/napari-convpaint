@@ -34,7 +34,7 @@ try:
                                 'description': "Combining Ilastik with DINOv2."}
         AVAILABLE_MODELS.append('combo_dino_ilastik')
 except Exception as e:
-    print(f"Error importing Ilastik for combo: {e}")
+    print(f"Ilastik is not available, and therefore combo feature extractors involving Ilastik are not available.")
     pass
 
 from ..feature_extractor import FeatureExtractor
