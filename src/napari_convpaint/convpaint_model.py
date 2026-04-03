@@ -142,7 +142,6 @@ class ConvpaintModel:
         if not ConvpaintModel.FE_MODELS_TYPES_DICT:
             ConvpaintModel._init_fe_models_dict()
 
-        num_kwargs_given =  + len(kwargs)
         if (alias is not None) + (model_path is not None) + (param is not None) + (fe_name is not None) > 1:
             raise ValueError('Please provide either an alias, a model path, a param object, or ' +
                              'a feature extractor name (and optionally additional kwargs) but not multiples.\n' +
@@ -197,7 +196,7 @@ class ConvpaintModel:
         try:
             module = importlib.import_module(module_path)
         except ImportError as e:
-            warnings.warn(f"Could not import feature extractor module '{module_path}': {e}")
+            warnings.warn(f"Error when trying to import feature extractor module '{module_path}': {e}")
             return
 
         model_names = getattr(module, "AVAILABLE_MODELS", None)
