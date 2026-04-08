@@ -30,7 +30,7 @@ def import_ilastik_filters():
 # Check availability and provide infos for ConvpaintModel
 
 def ilastik_available():
-    available = importlib.util.find_spec("ilastik.napari.filters") is not None
+    available = importlib.util.find_spec("ilastik") is not None
     # if not available:
     #     warnings.warn(
     #         "Ilastik is not installed and is not available as feature extractor.\n"

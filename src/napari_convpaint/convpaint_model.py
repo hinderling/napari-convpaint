@@ -8,6 +8,7 @@ import skimage
 import pandas as pd
 from typing import Tuple
 from math import lcm
+from .pickle_compat import migrate_pickle, safe_load
 
 # Imported inline to avoid heavy memory usage when the functions are not used:
 # from sklearn.ensemble import RandomForestClassifier
@@ -142,7 +143,6 @@ class ConvpaintModel:
         if not ConvpaintModel.FE_MODELS_TYPES_DICT:
             ConvpaintModel._init_fe_models_dict()
 
-        num_kwargs_given =  + len(kwargs)
         if (alias is not None) + (model_path is not None) + (param is not None) + (fe_name is not None) > 1:
             raise ValueError('Please provide either an alias, a model path, a param object, or ' +
                              'a feature extractor name (and optionally additional kwargs) but not multiples.\n' +
@@ -197,7 +197,7 @@ class ConvpaintModel:
         try:
             module = importlib.import_module(module_path)
         except ImportError as e:
-            warnings.warn(f"Could not import feature extractor module '{module_path}': {e}")
+            warnings.warn(f"Error when trying to import feature extractor module '{module_path}': {e}")
             return
 
         model_names = getattr(module, "AVAILABLE_MODELS", None)
@@ -474,8 +474,16 @@ class ConvpaintModel:
         Loads the model from a pickle file.
         Only intended for internal use at model initiation.
         """
-        with open(pkl_path, 'rb') as f:
-            data = pickle.load(f)
+        try:
+            with open(pkl_path, 'rb') as f:
+                data = pickle.load(f)
+            used_compat = False
+        # Fall-back option for loading old pkl files with reference to conv_paint_param
+        # will save pkl with corrected reference; can be removed later
+        except Exception:
+            # Fall back to safe_load which remaps old module names
+            data = safe_load(pkl_path)
+            used_compat = True
         new_param = data.get('param', None)
         # If there is the old use_gpu parameter saved, use lock_device to set the device policy for the feature extractor accordingly
         if hasattr(new_param, 'use_gpu'):
@@ -499,6 +507,17 @@ class ConvpaintModel:
                 raise ValueError('Annotations must be a dictionary.')
             self.table = data['table']
             self.annot_dict = data['annotations']
+        # If we loaded via the compatibility loader, try to migrate the file
+        # in-place so future loads do not need the shim. Fail silently.
+        try:
+            if used_compat:
+                try:
+                    migrate_pickle(pkl_path)
+                except Exception:
+                    warnings.warn(f"Failed to migrate pickle file: {pkl_path}")
+        except NameError:
+            # used_compat not set for some unexpected code paths; ignore
+            pass
 
     def _load_yml(self, yml_path):
         """
