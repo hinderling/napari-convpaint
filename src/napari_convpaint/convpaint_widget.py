@@ -397,13 +397,20 @@ class ConvpaintWidget(QWidget):
             self.remove_class_btn = QPushButton('Remove class')
             self.remove_class_btn.clicked.connect(lambda: self._on_remove_class_label(del_annots=True))
             self.class_labels_layout.addWidget(self.remove_class_btn, len(self.initial_labels)+1, 5, 1, 5)
+            # Minimal import/export buttons (CSV)
+            self.export_class_btn = QPushButton('Export labels (csv)')
+            self.export_class_btn.clicked.connect(lambda: self._export_labels_dialog())
+            self.class_labels_layout.addWidget(self.export_class_btn, len(self.initial_labels)+2, 0, 1, 5)
+            self.import_class_btn = QPushButton('Import labels (csv/txt)')
+            self.import_class_btn.clicked.connect(lambda: self._import_labels_dialog())
+            self.class_labels_layout.addWidget(self.import_class_btn, len(self.initial_labels)+2, 5, 1, 5)
             # Reset to initial state
             self.reset_class_btn = QPushButton('Reset to default')
             self.reset_class_btn.clicked.connect(self._on_reset_class_labels)
-            self.class_labels_layout.addWidget(self.reset_class_btn, len(self.initial_labels)+2, 0, 1, 10)
+            self.class_labels_layout.addWidget(self.reset_class_btn, len(self.initial_labels)+3, 0, 1, 10)
             self.btn_class_distribution_annot = QPushButton('Show class distribution (in annotation)')
             self.btn_class_distribution_annot.setToolTip('Show a diagram of the class distribution in the annotation layer')
-            self.class_labels_layout.addWidget(self.btn_class_distribution_annot, len(self.initial_labels)+3, 0, 1, 10)
+            self.class_labels_layout.addWidget(self.btn_class_distribution_annot, len(self.initial_labels)+4, 0, 1, 10)
 
             # Create the class labels
             self._create_default_class_labels()
@@ -578,6 +585,7 @@ class ConvpaintWidget(QWidget):
         if 'Files' in self.tab_names or 'Project' in self.tab_names:
             self._on_create_files_project()
 
+
 ### ConvpaintModel instatiation and default population & calling connections, resetting model and key bindings
 
     def showEvent(self, event):
@@ -700,6 +708,7 @@ class ConvpaintWidget(QWidget):
         for l in labels_layers:
             if l is not None and l.name in self.viewer.layers:
                 self.viewer.layers[l.name].selected_label = x
+
 
 ### Define the connections between the widget elements
 
@@ -858,6 +867,7 @@ class ConvpaintWidget(QWidget):
             # Button to add features for stack (all planes)
             self.btn_add_features_stack.clicked.connect(self._on_get_feature_image_all)
 
+
 ### Define the behaviour in the class labels tab
 
     # Cass Labels
@@ -901,8 +911,10 @@ class ConvpaintWidget(QWidget):
         # Re-add the buttons below the class labels
         self.class_labels_layout.addWidget(self.add_class_btn, len(self.class_labels)+1, 0, 1, 5)
         self.class_labels_layout.addWidget(self.remove_class_btn, len(self.class_labels)+1, 5, 1, 5)
-        self.class_labels_layout.addWidget(self.reset_class_btn, len(self.class_labels)+2, 0, 1, 10)
-        self.class_labels_layout.addWidget(self.btn_class_distribution_annot, len(self.class_labels)+3, 0, 1, 10)
+        self.class_labels_layout.addWidget(self.export_class_btn, len(self.class_labels)+2, 0, 1, 5)
+        self.class_labels_layout.addWidget(self.import_class_btn, len(self.class_labels)+2, 5, 1, 5)
+        self.class_labels_layout.addWidget(self.reset_class_btn, len(self.class_labels)+3, 0, 1, 10)
+        self.class_labels_layout.addWidget(self.btn_class_distribution_annot, len(self.class_labels)+4, 0, 1, 10)
     
     def _on_add_class_label(self, text=None):
         """Add a new class label and icon to the layout and update all annotation and segmentation layers."""
@@ -942,8 +954,10 @@ class ConvpaintWidget(QWidget):
         self.class_labels_layout.removeWidget(self.btn_class_distribution_annot)
         self.class_labels_layout.addWidget(self.add_class_btn, class_num+1, 0, 1, 5)
         self.class_labels_layout.addWidget(self.remove_class_btn, class_num+1, 5, 1, 5)
-        self.class_labels_layout.addWidget(self.reset_class_btn, class_num+2, 0, 1, 10)
-        self.class_labels_layout.addWidget(self.btn_class_distribution_annot, class_num+3, 0, 1, 10)
+        self.class_labels_layout.addWidget(self.export_class_btn, class_num+2, 0, 1, 5)
+        self.class_labels_layout.addWidget(self.import_class_btn, class_num+2, 5, 1, 5)
+        self.class_labels_layout.addWidget(self.reset_class_btn, class_num+3, 0, 1, 10)
+        self.class_labels_layout.addWidget(self.btn_class_distribution_annot, class_num+4, 0, 1, 10)
 
     def _on_remove_class_label(self, del_annots=True, event=None):
         """Remove the last class label and icon from the layout and update all annotation and segmentation layers."""
@@ -970,8 +984,10 @@ class ConvpaintWidget(QWidget):
             self.class_labels_layout.removeWidget(self.btn_class_distribution_annot)
             self.class_labels_layout.addWidget(self.add_class_btn, len(self.class_labels)+1, 0, 1, 5)
             self.class_labels_layout.addWidget(self.remove_class_btn, len(self.class_labels)+1, 5, 1, 5)
-            self.class_labels_layout.addWidget(self.reset_class_btn, len(self.class_labels)+2, 0, 1, 10)
-            self.class_labels_layout.addWidget(self.btn_class_distribution_annot, len(self.class_labels)+3, 0, 1, 10)
+            self.class_labels_layout.addWidget(self.export_class_btn, len(self.class_labels)+2, 0, 1, 5)
+            self.class_labels_layout.addWidget(self.import_class_btn, len(self.class_labels)+2, 5, 1, 5)
+            self.class_labels_layout.addWidget(self.reset_class_btn, len(self.class_labels)+3, 0, 1, 10)
+            self.class_labels_layout.addWidget(self.btn_class_distribution_annot, len(self.class_labels)+4, 0, 1, 10)
             # Update the icons and class labels
             self._update_class_labels()
         else:
@@ -1118,6 +1134,140 @@ class ConvpaintWidget(QWidget):
         self._update_cmaps() # Also calls _update_class_icons()
         # Update the class icons
         # self._update_class_icons()
+
+    def export_class_labels_csv(self, file_path):
+        """
+        Save current class labels to a CSV file.
+        CSV columns: index,label
+        Index 0 is 'No label', subsequent indices correspond to widget labels order.
+        """
+        if file_path is None:
+            raise ValueError("file_path must be provided")
+
+        import csv
+        # Build list of label names: include "No label" at index 0
+        label_names = ["No label"] + [w.text() for w in self.class_labels]
+
+        with open(file_path, "w", newline="", encoding="utf-8") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(["index", "label"])
+            for idx, name in enumerate(label_names):
+                writer.writerow([idx, name])
+
+    def import_class_labels_csv(self, file_path):
+        """
+        Load class labels from a CSV produced by `export_class_labels_csv`.
+
+        Behavior:
+        - Expects rows with columns `index,label` (header optional).
+        - Ignores the index==0 row ("No label").
+        - Resets widget labels to defaults (2 labels), then adds extra labels if CSV contains more than 2 labels.
+        - If CSV provides fewer than 2 labels, remaining labels are set to "Class N" (e.g. "Class 2").
+        """
+        if file_path is None:
+            raise ValueError("file_path must be provided")
+
+        import csv
+
+        parsed = []
+        with open(file_path, newline="", encoding="utf-8") as fh:
+            reader = csv.reader(fh)
+            rows = list(reader)
+
+        if not rows:
+            # empty file -> don't do anything
+            return
+
+        # Special case: single-row file with multiple comma-separated values
+        # Interpret as labels list: e.g. "A,B,C" -> ['A','B','C']
+        if len(rows) == 1 and len(rows[0]) > 1:
+            parsed = [c.strip() for c in rows[0] if c.strip() != ""]
+            # proceed to reset/add using parsed
+            rows = []  # skip normal parsing below
+
+        # Skip header if present
+        if rows:
+            first = rows[0]
+            if len(first) >= 2 and first[0].strip().lower() == 'index' and first[1].strip().lower() == 'label':
+                rows = rows[1:]
+            elif len(first) >= 1 and first[0].strip().lower() == 'label' and len(first) == 1:
+                rows = rows[1:]
+
+        num_appended = 0
+        for row in rows:
+            if not row:
+                continue
+            # If two columns, treat as index,label
+            if len(row) >= 2:
+                # try parse index; if non-numeric, treat first column as label
+                try:
+                    idx = int(row[0])
+                except Exception:
+                    parsed.append(row[0].strip())
+                    num_appended += 1
+                    continue
+                label = row[1].strip()
+                if idx == 0:
+                    # skip "No label"
+                    continue
+                if idx != num_appended + 1: # + 1 because index 0 is "No label"
+                    warnings.warn(f"Row {num_appended + 1} of labelled classes has index {idx}, meaning it is not increasing sequentially. Using the row number as index instead.")
+                parsed.append(label)
+                num_appended += 1
+            # Single column: treat as a label name
+            else:
+                val = row[0].strip()
+                # ignore empty rows
+                if val != "":
+                    parsed.append(val)
+                    num_appended += 1
+
+        # Reset to defaults (this will create 2 labels)
+        self._on_reset_class_labels()
+
+        # Add extra labels if CSV contains more than 2
+        n_parsed = len(parsed)
+        if n_parsed > 2:
+            for i in range(n_parsed - 2):
+                # add extra empty labels; we'll set texts in the unified loop below
+                self._on_add_class_label()
+        # If there are fewer than 2 in the import, rename the 2 base labels to "pad" the imported ones
+        elif n_parsed < 2:
+            # Rename the 2 base labels to "pad" the imported ones
+            self.class_labels[0].setText(f'Class 1')
+            self.class_labels[1].setText(f'Class 2')
+
+        # Overwrite as many label texts as available; pad missing up to 2
+        for i in range(0, n_parsed):
+            self.class_labels[i].setText(parsed[i])
+
+        # Sync labels to layers
+        self._update_class_labels()
+        # Keep icons/cmaps in sync (no color data is read or written)
+        try:
+            self.update_all_labels_and_cmaps()
+        except Exception:
+            # don't fail on cmap sync problems
+            pass
+
+    def _export_labels_dialog(self):
+        path, _ = QFileDialog.getSaveFileName(self, 'Export class labels', filter='CSV/Text Files (*.csv *.txt);;All Files (*)')
+        if not path:
+            return
+        try:
+            self.export_class_labels_csv(path)
+        except Exception as e:
+            show_info(f'Failed to export labels: {e}')
+
+    def _import_labels_dialog(self):
+        path, _ = QFileDialog.getOpenFileName(self, 'Import class labels', filter='CSV/Text Files (*.csv *.txt);;All Files (*)')
+        if not path:
+            return
+        try:
+            self.import_class_labels_csv(path)
+        except Exception as e:
+            show_info(f'Failed to import labels: {e}')
+
 
 ### Add the Files/Project tab
 
@@ -1861,8 +2011,10 @@ class ConvpaintWidget(QWidget):
             # Re-add the buttons below the class labels
             self.class_labels_layout.addWidget(self.add_class_btn, len(self.class_labels)+1, 0, 1, 5)
             self.class_labels_layout.addWidget(self.remove_class_btn, len(self.class_labels)+1, 5, 1, 5)
-            self.class_labels_layout.addWidget(self.reset_class_btn, len(self.class_labels)+2, 0, 1, 10)
-            self.class_labels_layout.addWidget(self.btn_class_distribution_annot, len(self.class_labels)+3, 0, 1, 10)
+            self.class_labels_layout.addWidget(self.export_class_btn, len(self.class_labels)+2, 0, 1, 5)
+            self.class_labels_layout.addWidget(self.import_class_btn, len(self.class_labels)+2, 5, 1, 5)
+            self.class_labels_layout.addWidget(self.reset_class_btn, len(self.class_labels)+3, 0, 1, 10)
+            self.class_labels_layout.addWidget(self.btn_class_distribution_annot, len(self.class_labels)+4, 0, 1, 10)
 
         # Re-apply device dropdown state after attributes reset potentially changed policies.
         self._reset_device_options()
@@ -2130,7 +2282,8 @@ class ConvpaintWidget(QWidget):
         """Reset the classifier parameters to the default values
         and discard the trained model."""
         self._reset_clf_params()
-    
+
+
 ### Helper functions
 
     def _get_layer_transform_kwargs(self, img_layer, num_spatial_dims, num_leading_dims=0):
@@ -3163,7 +3316,7 @@ class ConvpaintWidget(QWidget):
         # self.annotation_layer_selection_widget.choices = [(layer.name, layer) for layer in annot_layer_list]
         # return annot_layer_list
 
-    
+
 ### ADVANCED TAB
     
     def _update_training_counts(self):
