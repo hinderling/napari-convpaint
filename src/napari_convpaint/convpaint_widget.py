@@ -74,7 +74,7 @@ class ConvpaintWidget(QWidget):
         docs_button.setText("Documentation")
         docs_button.setStyleSheet("QToolButton {color: #999; text-decoration: underline; margin-left: 4px; margin-right: 8px}")
         docs_button.clicked.connect(lambda: QtGui.QDesktopServices.openUrl(QUrl("https://guiwitz.github.io/napari-convpaint/book/Landing.html")))
-        docs_button.setToolTip("Open the documentation in your browser")
+        docs_button.setToolTip("Open the documentation in your default browser.")
 
         # Create a widget to hold tab bar and button side by side
         tab_header_widget = QWidget()
@@ -138,15 +138,12 @@ class ConvpaintWidget(QWidget):
         self.model_group.glayout.addWidget(self.model_description1, 0,0,1,2)
         # Save and load model buttons
         self.save_model_btn = QPushButton('Save model')
-        self.save_model_btn.setToolTip('Save model as *.pkl (incl. classifier) or *.yml (parameters only) file')
         self.save_model_btn.setEnabled(True)
         self.model_group.glayout.addWidget(self.save_model_btn, 1,0,1,1)
         self.load_model_btn = QPushButton('Load model')
-        self.load_model_btn.setToolTip('Select *.pkl or *.yml file to load')
         self.model_group.glayout.addWidget(self.load_model_btn, 1,1,1,1)
         # Reset model button
         self._reset_convpaint_btn = QPushButton('Reset Convpaint')
-        self._reset_convpaint_btn.setToolTip('Discard current model and create new default model.')
         self.model_group.glayout.addWidget(self._reset_convpaint_btn, 2,0,1,2)
 
         # Add elements to "Layer selection" group
@@ -157,10 +154,13 @@ class ConvpaintWidget(QWidget):
         self.annotation_layer_selection_widget = create_widget(annotation=napari.layers.Labels, label='Pick annotation')
         self._update_annotation_layers()
         # Add widgets to layout
-        self.layer_selection_group.glayout.addWidget(QLabel('Image layer'), 0,0,1,1)
+        self.image_layer_label = QLabel('Image layer')
+        self.layer_selection_group.glayout.addWidget(self.image_layer_label, 0,0,1,1)
         self.layer_selection_group.glayout.addWidget(self.image_layer_selection_widget.native, 0,1,1,1)
-        self.layer_selection_group.glayout.addWidget(QLabel('Annotation layer'), 1,0,1,1)
+        self.annotation_layer_label = QLabel('Annotation layer')
+        self.layer_selection_group.glayout.addWidget(self.annotation_layer_label, 1,0,1,1)
         self.layer_selection_group.glayout.addWidget(self.annotation_layer_selection_widget.native, 1,1,1,1)
+
         # Add button for adding annotation/segmentation layers
         self.add_layers_btn = QPushButton('Add annotations layer')
         self.add_layers_btn.setEnabled(True)
@@ -170,11 +170,8 @@ class ConvpaintWidget(QWidget):
         # Radio buttons for "Data Dimensions"
         self.button_group_channels = QButtonGroup()
         self.radio_single_channel = QRadioButton('Single channel image')
-        self.radio_single_channel.setToolTip('2D images or 3D images where additional dimension is NOT channels')
         self.radio_multi_channel = QRadioButton('Multichannel image')
-        self.radio_multi_channel.setToolTip('Images with an additional channel dimension')
         self.radio_rgb = QRadioButton('RGB image')
-        self.radio_rgb.setToolTip('This option is used with images displayed as RGB')
         self.radio_single_channel.setChecked(True)
         self.channel_buttons = [self.radio_single_channel, self.radio_multi_channel, self.radio_rgb]
         for x in self.channel_buttons: x.setEnabled(False)
@@ -192,11 +189,8 @@ class ConvpaintWidget(QWidget):
         # "Normalize" radio buttons
         self.button_group_normalize = QButtonGroup()
         self.radio_no_normalize = QRadioButton('No normalization')
-        self.radio_no_normalize.setToolTip('No normalization is applied')
         self.radio_normalize_over_stack = QRadioButton('Normalize over stack')
-        self.radio_normalize_over_stack.setToolTip('Normalize over complete z or t stack')
         self.radio_normalize_by_image = QRadioButton('Normalized by plane')
-        self.radio_normalize_by_image.setToolTip('Normalize each plane individually')
         self.radio_normalize_over_stack.setChecked(True)
         self.norm_buttons = [self.radio_no_normalize, self.radio_normalize_over_stack, self.radio_normalize_by_image]
         self.button_group_normalize.addButton(self.radio_no_normalize, id=1)
@@ -208,10 +202,8 @@ class ConvpaintWidget(QWidget):
 
         # Add buttons for "Train/Segment" group
         self.train_classifier_btn = QPushButton('Train')
-        self.train_classifier_btn.setToolTip('Train model on annotations')
         self.train_group.glayout.addWidget(self.train_classifier_btn, 0,0,1,1)
         self.check_auto_seg = QCheckBox('Auto segment')
-        self.check_auto_seg.setToolTip('Automatically segment image after training')
         self.check_auto_seg.setChecked(self.auto_seg)
         self.train_group.glayout.addWidget(self.check_auto_seg, 0,1,1,1)
         # Project checkbox
@@ -227,10 +219,8 @@ class ConvpaintWidget(QWidget):
         #     self.train_classifier_on_project_btn.setEnabled(False)
         self.segment_btn = QPushButton('Segment image')
         self.segment_btn.setEnabled(False)
-        self.segment_btn.setToolTip('Segment 2D image or current slice/frame of 3D image/movie ')
         self.train_group.glayout.addWidget(self.segment_btn, 1,0,1,1)
         self.segment_all_btn = QPushButton('Segment stack')
-        self.segment_all_btn.setToolTip('Segment all slices/frames of 3D image/movie')
         self.segment_all_btn.setEnabled(False)
         self.train_group.glayout.addWidget(self.segment_all_btn, 1,1,1,1)
 
@@ -238,37 +228,34 @@ class ConvpaintWidget(QWidget):
         # "Tile annotations" checkbox
         self.check_tile_annotations = QCheckBox('Tile annotations for training')
         self.check_tile_annotations.setChecked(False)
-        self.check_tile_annotations.setToolTip('Crop around annotated regions to speed up training.\nDisable for models that extract long range features (e.g. DINO).')
         self.acceleration_group.glayout.addWidget(self.check_tile_annotations, 0,0,1,1)
         # "Tile image" checkbox
         self.check_tile_image = QCheckBox('Tile image for segmentation')
         self.check_tile_image.setChecked(False)
-        self.check_tile_image.setToolTip('Tile image to reduce memory usage.\nUse with care when using models that extract long range features (e.g. DINO).')
         self.acceleration_group.glayout.addWidget(self.check_tile_image, 0,1,1,1)
         # Use Device/GPU dropdown
         self.device_options_default = ['auto', 'gpu', 'cpu']
         self.device_options_gpu_only_clf = ['auto', 'gpu (only classifier)', 'cpu']
         self.device_dropdown = QComboBox()
         self.device_dropdown.addItems(self.device_options_default)
-        self.acceleration_group.glayout.addWidget(QLabel('Device (GPU/CPU)'), 1,0,1,1)
-        self.device_dropdown.setToolTip('Select device policy for feature extraction and classifier.')
+        self.device_label = QLabel('Device (GPU/CPU)')
+        self.acceleration_group.glayout.addWidget(self.device_label, 1,0,1,1)
         self.acceleration_group.glayout.addWidget(self.device_dropdown, 1,1,1,1)
         # "Downsample" spinbox
         self.spin_downsample = QSpinBox()
-        self.spin_downsample.setMinimum(-10)
-        self.spin_downsample.setMaximum(10)
+        self.spin_downsample.setMinimum(-20)
+        self.spin_downsample.setMaximum(20)
         self.spin_downsample.setValue(1)
-        self.spin_downsample.setToolTip('Reduce image size, e.g. for faster computing (output is rescaled to original size). ' +
-                                        'Negative values will instead upscale the image by the absolute value.')
-        self.acceleration_group.glayout.addWidget(QLabel('Downsample input'), 2,0,1,1)
+        self.downsample_label = QLabel('Downsample input')
+        self.acceleration_group.glayout.addWidget(self.downsample_label, 2,0,1,1)
         self.acceleration_group.glayout.addWidget(self.spin_downsample, 2,1,1,1)
         # "Smoothen output" spinbox
         self.spin_smoothen = QSpinBox()
         self.spin_smoothen.setMinimum(1)
         self.spin_smoothen.setMaximum(50)
         self.spin_smoothen.setValue(1)
-        self.spin_smoothen.setToolTip('Smoothen output with a filter of this size.')
-        self.acceleration_group.glayout.addWidget(QLabel('Smoothen segmentation'), 3,0,1,1)
+        self.smoothen_label = QLabel('Smoothen output')
+        self.acceleration_group.glayout.addWidget(self.smoothen_label, 3,0,1,1)
         self.acceleration_group.glayout.addWidget(self.spin_smoothen, 3,1,1,1)
 
         # === MODEL TAB ===
@@ -290,7 +277,6 @@ class ConvpaintWidget(QWidget):
 
         # Add "FE architecture" combo box to FE group
         self.qcombo_fe_type = QComboBox()
-        self.qcombo_fe_type.setToolTip('Select architecture of feature extraction model.')
         self.fe_group.glayout.addWidget(self.qcombo_fe_type, 1, 0, 1, 2)
 
         # Add "FE description" label to FE group
@@ -311,7 +297,8 @@ class ConvpaintWidget(QWidget):
         # Create and add scalings selection to FE group
         self.fe_scaling_factors = QComboBox()
         self.fe_scaling_factors.setEditable(True)
-        self.fe_group.glayout.addWidget(QLabel('Pyramid downscaling factors'), 4, 0, 1, 1)
+        self.scalings_label = QLabel('Pyramid scaling factors')
+        self.fe_group.glayout.addWidget(self.scalings_label, 4, 0, 1, 1)
         self.fe_group.glayout.addWidget(self.fe_scaling_factors, 4, 1, 1, 1)
 
         # Add interpolation order spinbox to FE group
@@ -319,56 +306,51 @@ class ConvpaintWidget(QWidget):
         self.spin_interpolation_order.setMinimum(0)
         self.spin_interpolation_order.setMaximum(5)
         self.spin_interpolation_order.setValue(1)
-        self.spin_interpolation_order.setToolTip('Interpolation order for image rescaling')
-        self.fe_group.glayout.addWidget(QLabel('Pyramid interpolation order'), 5, 0, 1, 1)
+        self.interpolation_label = QLabel('Interpolation order')
+        self.fe_group.glayout.addWidget(self.interpolation_label, 5, 0, 1, 1)
         self.fe_group.glayout.addWidget(self.spin_interpolation_order, 5, 1, 1, 1)
 
         # Add min features checkbox to FE group
         self.check_use_min_features = QCheckBox('Use min features')
         self.check_use_min_features.setChecked(False)
-        self.check_use_min_features.setToolTip('Use same number of features from each layer. Otherwise use all features from each layer.')
         # self.fe_group.glayout.addWidget(self.check_use_min_features, 6, 0, 1, 1)
 
         # # Add use gpu checkbox to FE group
         # self.check_use_gpu = QCheckBox('Use GPU')
         # self.check_use_gpu.setChecked(False)
-        # self.check_use_gpu.setToolTip('Use GPU for training and segmentation')
         # self.fe_group.glayout.addWidget(self.check_use_gpu, 6, 1, 1, 1)
 
         # Add "set" buttons to FE group
         self.set_fe_btn = QPushButton('Set feature extractor')
-        self.set_fe_btn.setToolTip('Set the feature extraction model')
         self.fe_group.glayout.addWidget(self.set_fe_btn, 6, 0, 1, 2)
         # And reset button
         self.reset_default_fe_btn = QPushButton('Reset to default')
-        self.reset_default_fe_btn.setToolTip('Set the feature extractor back to the default model')
         self.fe_group.glayout.addWidget(self.reset_default_fe_btn, 7, 0, 1, 2)
 
         # Add classifier parameters
         self.spin_iterations = QSpinBox()
         self.spin_iterations.setMinimum(1)
         self.spin_iterations.setMaximum(1000)
-        self.spin_iterations.setToolTip('Set the number of iterations for the classifier')
-        self.classifier_params_group.glayout.addWidget(QLabel('Iterations'), 0, 0, 1, 1)
+        self.iterations_label = QLabel('Iterations')
+        self.classifier_params_group.glayout.addWidget(self.iterations_label, 0, 0, 1, 1)
         self.classifier_params_group.glayout.addWidget(self.spin_iterations, 0, 1, 1, 1)
 
         self.spin_learning_rate = QDoubleSpinBox()
         self.spin_learning_rate.setMinimum(0.001)
         self.spin_learning_rate.setMaximum(1.0)
         self.spin_learning_rate.setSingleStep(0.01)
-        self.spin_learning_rate.setToolTip('Set the learning rate for the classifier')
-        self.classifier_params_group.glayout.addWidget(QLabel('Learning Rate'), 1, 0, 1, 1)
+        self.learning_rate_label = QLabel('Learning Rate')
+        self.classifier_params_group.glayout.addWidget(self.learning_rate_label, 1, 0, 1, 1)
         self.classifier_params_group.glayout.addWidget(self.spin_learning_rate, 1, 1, 1, 1)
 
         self.spin_depth = QSpinBox()
         self.spin_depth.setMinimum(1)
         self.spin_depth.setMaximum(20)
-        self.spin_depth.setToolTip('Set the depth of the trees for the classifier')
-        self.classifier_params_group.glayout.addWidget(QLabel('Depth'), 2, 0, 1, 1)
+        self.depth_label = QLabel('Depth')
+        self.classifier_params_group.glayout.addWidget(self.depth_label, 2, 0, 1, 1)
         self.classifier_params_group.glayout.addWidget(self.spin_depth, 2, 1, 1, 1)
 
         self.set_clf_btn = QPushButton('Set classifier parameters')
-        self.set_clf_btn.setToolTip('Apply classifier parameters to the current model')
         self.classifier_params_group.glayout.addWidget(self.set_clf_btn, 3, 0, 1, 2)
 
         self.set_default_clf_btn = QPushButton('Reset to defaults')
@@ -383,7 +365,7 @@ class ConvpaintWidget(QWidget):
             self.class_names_layout.setAlignment(Qt.AlignTop)
             self.class_names_widget = QWidget()
             self.class_names_widget.setLayout(self.class_names_layout)
-            
+             
             # Add text to instruct the user (note that it is optional to use)
             class_names_text = QLabel('Set the names of the classes (optional):')
             class_names_text.setWordWrap(True)
@@ -392,24 +374,18 @@ class ConvpaintWidget(QWidget):
 
             # Add buttons ("add class", "remove class" and reset)
             self.add_class_btn = QPushButton('Add class')
-            self.add_class_btn.clicked.connect(lambda: self._on_add_class(text=None))
             self.class_names_layout.addWidget(self.add_class_btn, len(self.initial_names)+1, 0, 1, 5)
             self.remove_class_btn = QPushButton('Remove class')
-            self.remove_class_btn.clicked.connect(lambda: self._on_remove_class(del_annots=True))
             self.class_names_layout.addWidget(self.remove_class_btn, len(self.initial_names)+1, 5, 1, 5)
             # Minimal import/export buttons (CSV)
             self.export_class_names_btn = QPushButton('Export class names (csv)')
-            self.export_class_names_btn.clicked.connect(lambda: self._export_class_names_dialog())
             self.class_names_layout.addWidget(self.export_class_names_btn, len(self.initial_names)+2, 0, 1, 5)
             self.import_class_names_btn = QPushButton('Import class names (csv/txt)')
-            self.import_class_names_btn.clicked.connect(lambda: self._import_class_names_dialog())
             self.class_names_layout.addWidget(self.import_class_names_btn, len(self.initial_names)+2, 5, 1, 5)
             # Reset to initial state
             self.reset_class_names_btn = QPushButton('Reset to default')
-            self.reset_class_names_btn.clicked.connect(self._on_reset_class_names)
             self.class_names_layout.addWidget(self.reset_class_names_btn, len(self.initial_names)+3, 0, 1, 10)
             self.btn_class_distribution_annot = QPushButton('Show class distribution (in annotation)')
-            self.btn_class_distribution_annot.setToolTip('Show a diagram of the class distribution in the annotation layer')
             self.class_names_layout.addWidget(self.btn_class_distribution_annot, len(self.initial_names)+4, 0, 1, 10)
 
             # Create the class names
@@ -425,6 +401,7 @@ class ConvpaintWidget(QWidget):
         if 'Advanced' in self.tab_names:
             # Create group boxes
             self.advanced_note_group = VHGroup('Important note', orientation='G')
+            self.advanced_appearance_group = VHGroup('Appearance', orientation='G')
             self.advanced_labels_group = VHGroup('Layers handling', orientation='G')
             self.advanced_training_group = VHGroup('Training', orientation='G')
             # self.advanced_multifile_group = VHGroup('Multifile Training', orientation='G')
@@ -435,6 +412,7 @@ class ConvpaintWidget(QWidget):
 
             # Add groups to the tab
             self.tabs.add_named_tab('Advanced', self.advanced_note_group.gbox)
+            self.tabs.add_named_tab('Advanced', self.advanced_appearance_group.gbox)
             self.tabs.add_named_tab('Advanced', self.advanced_labels_group.gbox)
             self.tabs.add_named_tab('Advanced', self.advanced_training_group.gbox)
             # self.tabs.add_named_tab('Advanced', self.advanced_multifile_group.gbox)$
@@ -451,33 +429,35 @@ class ConvpaintWidget(QWidget):
             self.advanced_note.setWordWrap(True)
             self.advanced_note_group.glayout.addWidget(self.advanced_note, 0, 0, 1, 2)
 
+            # Appearance: show/hide tooltips
+            self.check_show_tooltips = QCheckBox('Show tooltips')
+            self.check_show_tooltips.setChecked(True)
+            self.advanced_appearance_group.glayout.addWidget(self.check_show_tooltips, 0, 0, 1, 1)
+            # Wire the checkbox to toggle the promoted widgets' tooltips
+            self.check_show_tooltips.toggled.connect(lambda checked: self._setup_init_tooltips() if checked else self._remove_init_tooltips())
+
             # Checkbox to turn off automatic addition of annot/segmentation layers
             self.check_auto_add_layers = QCheckBox('Auto add annotations')
-            self.check_auto_add_layers.setToolTip('Automatically add annotation layer when selecting images')
             self.check_auto_add_layers.setChecked(self.auto_add_layers)
             self.advanced_labels_group.glayout.addWidget(self.check_auto_add_layers, 1, 0, 1, 1)
 
             # Checkbox for keeping old layers
             self.check_keep_layers = QCheckBox('Keep old layers')
-            self.check_keep_layers.setToolTip('Keep old annotation and output layers when creating new ones.')
             self.check_keep_layers.setChecked(self.keep_layers)
             self.advanced_labels_group.glayout.addWidget(self.check_keep_layers, 1, 1, 1, 1)
 
             # Button for adding annotation layers for selected images
             self.btn_add_all_annot_layers = QPushButton('Add for all selected')
-            self.btn_add_all_annot_layers.setToolTip('Add annotation layers for all selected images in the layers list')
             self.advanced_labels_group.glayout.addWidget(self.btn_add_all_annot_layers, 2, 0, 1, 1)
 
             # Checkbox for auto-selecting annotation layers
             self.check_auto_select_annot = QCheckBox('Auto-select annotation layer')
-            self.check_auto_select_annot.setToolTip('Automatically select annotation layers when selecting images')
             self.check_auto_select_annot.setChecked(self.auto_select_annot)
             self.advanced_labels_group.glayout.addWidget(self.check_auto_select_annot, 2, 1, 1, 1)
 
             # Textbox to define the prefix for the annotation layers; NOTE: DISABLED FOR NOW
             # self.text_annot_prefix = QtWidgets.QLineEdit()
             # self.text_annot_prefix.setText('annot_')
-            # self.text_annot_prefix.setToolTip('Prefix for annotation layers to be used for training')
             # self.advanced_labels_group.glayout.addWidget(QLabel('Annotation prefix'), 2, 0, 1, 1)
             # self.advanced_labels_group.glayout.addWidget(self.text_annot_prefix, 2, 1, 1, 1)
             # Ensure both columns are stretched equally
@@ -486,17 +466,13 @@ class ConvpaintWidget(QWidget):
 
             # Button for training on selected images
             self.btn_train_on_selected = QPushButton('Train on selected data')
-            self.btn_train_on_selected.setToolTip("Train using layers selected in the viewer's layer list and beginning with 'annotations'")
             # self.advanced_training_group.glayout.addWidget(self.btn_train_on_selected, 1, 0, 1, 2)
 
             # Radio Buttons for continuous training
             self.button_group_cont_training = QButtonGroup()
             self.radio_img_training = QRadioButton('Image')
-            self.radio_img_training.setToolTip('Keep features in memory, updating them only for new annotations in each training, as long as the image is not changed')
             self.radio_global_training = QRadioButton('Global')
-            self.radio_global_training.setToolTip('Keep features in memory, updating them only for new annotations in each training, until reset manually')
             self.radio_single_training = QRadioButton('Off')
-            self.radio_single_training.setToolTip('Extract all features freshly for each training')
             self.radio_img_training.setChecked(True)
             self.button_group_cont_training.addButton(self.radio_img_training, id=1)
             self.button_group_cont_training.addButton(self.radio_global_training, id=2)
@@ -507,7 +483,6 @@ class ConvpaintWidget(QWidget):
             self.advanced_training_group.glayout.addWidget(self.radio_single_training, 2,3,1,1)
 
             # self.check_cont_training = QCheckBox('Continuous training')
-            # self.check_cont_training.setToolTip('Save and use combined features in memory for training')
             # self.check_cont_training.setChecked(self.cont_training)
             # self.advanced_training_group.glayout.addWidget(self.check_cont_training, 2, 0, 1, 1)
 
@@ -517,66 +492,58 @@ class ConvpaintWidget(QWidget):
 
             # Button to display a diagram of class distribution
             self.btn_class_distribution_trained = QPushButton('Show class distr. (trained)')
-            self.btn_class_distribution_trained.setToolTip('Show a diagram of the class distribution in the data saved in the model for training')
             self.advanced_training_group.glayout.addWidget(self.btn_class_distribution_trained, 3, 2, 1, 2)
 
             # Reset training button
             self.btn_reset_training = QPushButton('Reset continuous training')
-            self.btn_reset_training.setToolTip('Clear training history and restart training counter')
             self.advanced_training_group.glayout.addWidget(self.btn_reset_training, 4, 0, 1, 4)
 
             # Dask option
             self.check_use_dask = QCheckBox('Use Dask when tiling image for segmentation')
-            self.check_use_dask.setToolTip('Use Dask when using the option "Tile for segmentation"')
             self.check_use_dask.setChecked(self.use_dask)
             self.advanced_prediction_group.glayout.addWidget(self.check_use_dask, 0, 0, 1, 1)
 
             # Input channels option
             self.text_input_channels = QtWidgets.QLineEdit()
             self.text_input_channels.setPlaceholderText('e.g. 0,1,2 or 0,1')
-            self.text_input_channels.setToolTip('Comma-separated list of channels to use for training and segmentation.\nLeave empty to use all channels.')
-            self.advanced_input_group.glayout.addWidget(QLabel('Input channels (empty = all)'), 0, 0, 1, 2)
+            self.channels_label = QLabel('Input channels (empty = all)')
+            self.advanced_input_group.glayout.addWidget(self.channels_label, 0, 0, 1, 2)
             self.advanced_input_group.glayout.addWidget(self.text_input_channels, 0, 2, 1, 2)
 
             # Button to switch first to axes
             self.btn_switch_axes = QPushButton('Switch channels axis')
-            self.btn_switch_axes.setToolTip('Switch first two axes of the input image (to match the convention to have channels first)')
             self.advanced_input_group.glayout.addWidget(self.btn_switch_axes, 1, 0, 1, 2)
 
             # Checkbox for adding segmentation
             self.check_add_seg = QCheckBox('Segmentation')
-            self.check_add_seg.setToolTip('Add a layer with the predicted segmentation as output (= highest class probability)')
             self.check_add_seg.setChecked(self.add_seg)
             self.advanced_output_group.glayout.addWidget(self.check_add_seg, 0, 0, 1, 1)
 
             # Checkbox for adding probabilities
             self.check_add_probas = QCheckBox('Probabilities')
-            self.check_add_probas.setToolTip('Add a layer with class probabilities as output')
             self.check_add_probas.setChecked(self.add_probas)
             self.advanced_output_group.glayout.addWidget(self.check_add_probas, 0, 1, 1, 1)
 
             # Button to add features for the current plane
             self.btn_add_features = QPushButton('Get features image')
-            self.btn_add_features.setToolTip('Add a layer with the features extracted for the current plane')
             self.advanced_unsupervised_group.glayout.addWidget(self.btn_add_features, 2, 0, 1, 2)
             # Button to add features for the whole stack
             self.btn_add_features_stack = QPushButton('Get features of stack')
-            self.btn_add_features_stack.setToolTip('Add a layer with the features extracted for the whole stack')
             self.advanced_unsupervised_group.glayout.addWidget(self.btn_add_features_stack, 2, 2, 1, 2)
 
             # PCA option for the features
             self.text_features_pca = QtWidgets.QLineEdit()
             self.text_features_pca.setPlaceholderText('e.g. 3 or 5')
-            self.text_features_pca.setToolTip('Number of PCA components to use for the features image.\nSet to 0 to disable PCA.')
             self.text_features_pca.setText(self.features_pca_components)
-            self.advanced_unsupervised_group.glayout.addWidget(QLabel('PCA components (0 = off)'), 0, 0, 1, 2)
+            self.pca_label = QLabel('PCA components (0 = off)')
+            self.advanced_unsupervised_group.glayout.addWidget(self.pca_label, 0, 0, 1, 2)
             self.advanced_unsupervised_group.glayout.addWidget(self.text_features_pca, 0, 2, 1, 2)
             # Kmeans option for the features
             self.text_features_kmeans = QtWidgets.QLineEdit()
             self.text_features_kmeans.setPlaceholderText('e.g. 3 or 5')
-            self.text_features_kmeans.setToolTip('Number of Kmeans clusters to use for the features image.\nSet to 0 to disable Kmeans.')
             self.text_features_kmeans.setText(self.features_kmeans_clusters)
-            self.advanced_unsupervised_group.glayout.addWidget(QLabel('Kmeans clusters (0 = off)'), 1, 0, 1, 2)
+            self.kmeans_label = QLabel('Kmeans clusters (0 = off)')
+            self.advanced_unsupervised_group.glayout.addWidget(self.kmeans_label, 1, 0, 1, 2)
             self.advanced_unsupervised_group.glayout.addWidget(self.text_features_kmeans, 1, 2, 1, 2)
 
         # === FILES/PROJECT TAB (MULTIFILE) ===
@@ -585,6 +552,163 @@ class ConvpaintWidget(QWidget):
         if 'Files' in self.tab_names or 'Project' in self.tab_names:
             self._on_create_files_project()
 
+        # === Show tooltips by default ===
+
+        self._setup_init_tooltips()
+        # Set device tooltips separately, as we want to show these dynamically and permanently, even when the "Show tooltips" checkbox is unchecked
+        for w in [self.device_label, self.device_dropdown]:
+            w.setToolTip('Select device policy for feature extraction and classifier.')
+
+    def _setup_init_tooltips(self):
+
+        # Set tooltip for the tabs
+        self.tabs.setTabToolTip(self.tabs.tab_names.index('Home'), 'Main controls for Convpaint: select layers, train model and segment images. Adjust image processing and acceleration options.')
+        self.tabs.setTabToolTip(self.tabs.tab_names.index('Model options'), 'Select the feature extraction model and adjust classifier parameters.')
+        if 'Class names' in self.tab_names:
+            self.tabs.setTabToolTip(self.tabs.tab_names.index('Class names'), 'Set the names of the classes for the annotation and segmentation layer. ' +
+                                    'This is optional but can help with keeping track of the classes, especially when using more than 3 classes.')
+        if 'Advanced' in self.tab_names:
+            self.tabs.setTabToolTip(self.tabs.tab_names.index('Advanced'), 'Advanced options for power users. Use with caution, as these options may lead to situations where the tool does not function as expected. ' +
+                                    'Adjust layer handling, training accross images, Dask usage, form of input and output, and get features as a displayable image.')
+
+        # Home tab
+        self.save_model_btn.setToolTip('Save model as *.pkl (incl. classifier) or *.yml (parameters only) file.')
+        self.load_model_btn.setToolTip('Select *.pkl or *.yml file to load.')
+        self._reset_convpaint_btn.setToolTip('Discard current model and create new default model.')
+        for w in [self.image_layer_label, self.image_layer_selection_widget.native]:
+            w.setToolTip('Select the image for training and/or segmentation.')
+        for w in [self.annotation_layer_label, self.annotation_layer_selection_widget.native]:
+            w.setToolTip('Select the annotation layer for training.')
+        self.add_layers_btn.setToolTip('Add annotation layer with the correct dimensions to the viewer.')
+        self.radio_single_channel.setToolTip('2D images or 3D images where additional dimension is NOT channels.')
+        self.radio_multi_channel.setToolTip('Images with an additional channel dimension.')
+        self.radio_rgb.setToolTip('This option is used with images displayed as RGB.')
+        self.radio_no_normalize.setToolTip('No normalization is applied.')
+        self.radio_normalize_over_stack.setToolTip('Normalize over complete z or t stack.')
+        self.radio_normalize_by_image.setToolTip('Normalize each plane individually.')
+        self.train_classifier_btn.setToolTip('Train model on annotations.')
+        self.check_auto_seg.setToolTip('Automatically segment image after training.')
+        self.segment_btn.setToolTip('Segment 2D image or current slice/frame of 3D image/movie.')
+        self.segment_all_btn.setToolTip('Segment all slices/frames of 3D image/movie.')
+        self.check_tile_annotations.setToolTip('Crop around annotated regions to speed up training.\n' +
+                                               'Disable for models that extract long range features (e.g. DINO).')
+        self.check_tile_image.setToolTip('Tile image to reduce memory usage.\n' +
+                                         'Use with care when using models that extract long range features (e.g. DINO).')
+        # Do not toggle device options, as we want to show tooltips dynamically and permanently
+        # for w in [self.device_label, self.device_dropdown]:
+        #     w.setToolTip('Select device policy for feature extraction and classifier.')
+        for w in [self.downsample_label, self.spin_downsample]:
+             w.setToolTip('Reduce image size, e.g. for faster computing (output is rescaled to original size).\n' +
+                            'Negative values will instead upscale the image by the absolute value.')
+        for w in [self.smoothen_label, self.spin_smoothen]:
+             w.setToolTip('Smoothen output with a filter of this size.\n' +
+                            'Increasing this value can reduce noise in the output and make details less prominent.')
+
+        # Model options tab
+        self.qcombo_fe_type.setToolTip('Select architecture of feature extraction model.')
+        self.fe_layer_selection.setToolTip('Select the layers of the feature extraction model (if applicable) to use for training and segmentation.\n' +
+                                           'Select a range by dragging or using shift, choose multiple with ctrl/cmd.\n' +
+                                           'If multiple layers are selected, features from these layers will be concatenated and used together for training the classifier.\n')
+        for w in [self.scalings_label, self.fe_scaling_factors]:
+            w.setToolTip('Set the scaling factors for the pyramid features. Image will be scaled by these factors,\n' +
+                         'the features extracted and rescaled to original size, and, finally, concatenated for all scales.')
+        for w in [self.interpolation_label, self.spin_interpolation_order]:
+            w.setToolTip('Interpolation order for rescaling of the extracted features.')
+        self.check_use_min_features.setToolTip('Use same number of features from each layer. Otherwise use all features from each layer.')
+        # self.check_use_gpu.setToolTip('Use GPU for training and segmentation')
+        self.set_fe_btn.setToolTip('Set the feature extraction model.')
+        self.reset_default_fe_btn.setToolTip('Set the feature extractor back to the default model.')
+        for w in [self.iterations_label, self.spin_iterations]:
+             w.setToolTip('Set the number of iterations for the classifier.')
+        for w in [self.learning_rate_label, self.spin_learning_rate]:
+            w.setToolTip('Set the learning rate for the classifier.')
+        for w in [self.depth_label, self.spin_depth]:
+            w.setToolTip('Set the depth of the trees for the classifier.')
+        self.set_clf_btn.setToolTip('Apply classifier parameters to the current model.')
+        self.set_default_clf_btn.setToolTip('Reset classifier parameters to default values.')
+
+        # Class names tab
+        if 'Class names' in self.tab_names:
+            self.add_class_btn.setToolTip('Add a class name to the list.')
+            self.remove_class_btn.setToolTip('Remove a class from the list. Note that this will also delete the corresponding annotations from the annotation layer, if they exist.')
+            self.export_class_names_btn.setToolTip('Export class names as a csv file.')
+            self.import_class_names_btn.setToolTip('Import class names from a csv or txt file.')
+            self.reset_class_names_btn.setToolTip('Reset the list of class names to "Background" and "Foreground".')
+            self.btn_class_distribution_annot.setToolTip('Show a diagram of the class distribution in the annotation layer.')
+
+        # Advanced tab
+        if 'Advanced' in self.tab_names:
+            self.check_show_tooltips.setToolTip('Toggle display of inline tooltips for various controls.')
+            self.check_auto_add_layers.setToolTip('Automatically add annotation layer when selecting images.')
+            self.check_keep_layers.setToolTip('Keep old annotation and output layers when creating new ones.')
+            self.btn_add_all_annot_layers.setToolTip('Add annotation layers for all selected images in the layers list.')
+            self.check_auto_select_annot.setToolTip('Automatically select annotation layers when selecting images.')
+            # self.text_annot_prefix.setToolTip('Prefix for annotation layers to be used for training')
+            self.btn_train_on_selected.setToolTip("Train using layers selected in the viewer's layer list and beginning with 'annotations'.")
+            self.radio_img_training.setToolTip('Keep features in memory, updating them only for new annotations in each training, as long as the image is not changed.')
+            self.radio_global_training.setToolTip('Keep features in memory, updating them only for new annotations in each training, until reset manually.')
+            self.radio_single_training.setToolTip('Extract all features freshly for each training.')
+            # self.check_cont_training.setToolTip('Save and use combined features in memory for training')
+            self.btn_class_distribution_trained.setToolTip('Show a diagram of the class distribution in the data saved in the model for training.')
+            self.btn_reset_training.setToolTip('Clear training history and restart training counter.')
+            self.check_use_dask.setToolTip('Use Dask when using the option "Tile for segmentation".')
+            for w in [self.channels_label, self.text_input_channels]:
+                w.setToolTip('Comma-separated list of channels to use for training and segmentation.\n' +
+                             'Leave empty to use all channels.')
+            self.btn_switch_axes.setToolTip('Switch first two axes of the input image (to match the convention to have channels first).')
+            self.check_add_seg.setToolTip('Add a layer with the predicted segmentation as output (= highest class probability).')
+            self.check_add_probas.setToolTip('Add a layer with class probabilities as output.')
+            self.btn_add_features.setToolTip('Add a layer with the features extracted for the current plane.')
+            self.btn_add_features_stack.setToolTip('Add a layer with the features extracted for the whole stack.')
+            for w in [self.pca_label, self.text_features_pca]:
+                 w.setToolTip('Number of PCA components to use for the features image.\nSet to 0 to disable PCA.')
+            for w in [self.kmeans_label, self.text_features_kmeans]:
+                w.setToolTip('Number of Kmeans clusters to use for the features image.\nSet to 0 to disable Kmeans.')
+
+    def _remove_init_tooltips(self):
+        # Remove tooltips for the tabs
+        for tab_name in self.tabs.tab_names:
+            self.tabs.setTabToolTip(self.tabs.tab_names.index(tab_name), '')
+
+        # Home tab
+        for w in [self.save_model_btn, self.load_model_btn, self._reset_convpaint_btn,
+                  self.image_layer_label, self.image_layer_selection_widget.native,
+                  self.annotation_layer_label, self.annotation_layer_selection_widget.native,
+                  self.add_layers_btn, self.radio_single_channel, self.radio_multi_channel, self.radio_rgb,
+                  self.radio_no_normalize, self.radio_normalize_over_stack, self.radio_normalize_by_image,
+                  self.train_classifier_btn, self.check_auto_seg, self.segment_btn, self.segment_all_btn,
+                  self.check_tile_annotations, self.check_tile_image, #self.device_label, self.device_dropdown,
+                  self.downsample_label, self.spin_downsample, self.smoothen_label, self.spin_smoothen]:
+            w.setToolTip('')
+
+        # Model options tab
+        for w in [self.qcombo_fe_type, self.fe_layer_selection, self.scalings_label, self.fe_scaling_factors,
+                  self.interpolation_label, self.spin_interpolation_order, self.check_use_min_features,
+                  # self.check_use_gpu,
+                  self.set_fe_btn, self.reset_default_fe_btn,
+                  self.iterations_label, self.spin_iterations,
+                  self.learning_rate_label, self.spin_learning_rate,
+                  self.depth_label, self.spin_depth,
+                  self.set_clf_btn, 	self.set_default_clf_btn]:
+            w.setToolTip('')
+
+        # Class names tab
+        if 'Class names' in self.tab_names:
+            for w in [self.add_class_btn, self.remove_class_btn,
+                      self.export_class_names_btn, 	self.import_class_names_btn,
+                      self.reset_class_names_btn, 	self.btn_class_distribution_annot]:
+                w.setToolTip('')
+
+        # Advanced tab
+        if 'Advanced' in self.tab_names:
+            for w in [self.check_show_tooltips, 	self.check_auto_add_layers,
+                      self.check_keep_layers, 	self.btn_add_all_annot_layers,
+                      self.check_auto_select_annot,# 	self.text_annot_prefix,
+                      self.btn_train_on_selected,self.radio_img_training,self.radio_global_training,self.radio_single_training,# 	self.check_cont_training,
+                      self.btn_class_distribution_trained,self.btn_reset_training,self.check_use_dask,self.channels_label,
+                      self.text_input_channels,self.btn_switch_axes,self.check_add_seg,self.check_add_probas,self.btn_add_features,self.btn_add_features_stack,
+                      self.pca_label,self.text_features_pca,self.kmeans_label,self.text_features_kmeans]:
+                w.setToolTip('')
 
 ### ConvpaintModel instatiation and default population & calling connections, resetting model and key bindings
 
@@ -810,6 +934,12 @@ class ConvpaintWidget(QWidget):
         # === CLASS NAMES TAB ===
 
         if 'Class names' in self.tab_names:
+            self.add_class_btn.clicked.connect(lambda: self._on_add_class(text=None))
+            self.remove_class_btn.clicked.connect(lambda: self._on_remove_class(del_annots=True))
+            self.export_class_names_btn.clicked.connect(lambda: self._export_class_names_dialog())
+            self.import_class_names_btn.clicked.connect(lambda: self._import_class_names_dialog())
+            self.reset_class_names_btn.clicked.connect(self._on_reset_class_names)
+
             for class_name in self.class_names:
                 class_name.textChanged.connect(self._update_class_names)
             if self.annotation_layer_selection_widget.value is not None:
@@ -1289,7 +1419,7 @@ class ConvpaintWidget(QWidget):
 
         # Add the train on project button to the tab
         self.train_classifier_on_project_btn = QPushButton('Train on Files')
-        self.train_classifier_on_project_btn.setToolTip('Train on all images loaded in Files tab')
+        self.train_classifier_on_project_btn.setToolTip('Train on all images loaded in Files tab.')
         self.tabs.add_named_tab(tab_name, self.train_classifier_on_project_btn)
         self.train_classifier_on_project_btn.clicked.connect(self._on_train_on_project)
             
@@ -3466,6 +3596,9 @@ class ConvpaintWidget(QWidget):
                 return
             labels = self.cp_model.table['label'].values
         else:
+            if self.annotation_layer_selection_widget.value is None:
+                warnings.warn('No annotation layer selected. Cannot show class distribution.')
+                return
             # Otherwise get the labels from the annotations layer selected in the layers widget (excluding unlabeled pixels)
             labels = self.annotation_layer_selection_widget.value.data.flatten()
             labels = labels[labels != 0]
