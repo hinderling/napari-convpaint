@@ -3027,6 +3027,9 @@ class ConvpaintWidget(QWidget):
     def _get_selected_scaling_factors(self):
         """Get the selected scaling factors for the FE."""
         scaling_text = self.fe_scaling_factors.currentText()
+        if "shark" in scaling_text.lower():
+            self._show_shark_easter_egg()
+            return None
         # Try to convert the text to a tuple of ints (e.g. "[1,2,3]" -> (1,2,3))
         try:
             scalings = eval(scaling_text)
@@ -3040,6 +3043,25 @@ class ConvpaintWidget(QWidget):
             warnings.warn(f"Could not parse scaling factors from text '{scaling_text}'")
             return None
         return scalings
+    
+    def _show_shark_easter_egg(self):
+        """Show a shark in the viewer as an easter egg."""
+        shark_data_path = "./images/segmentation_shark.mp4"
+        shark_layer_name = "Convpaint Shark"
+        self.viewer.open(shark_data_path, name=shark_layer_name)
+        for l in self.viewer.layers:
+            if not l.name == shark_layer_name:
+                l.visible = False
+        self.viewer.reset_view()
+        from napari.settings import get_settings
+        settings = get_settings()
+        settings.application.playback_fps = 300
+        settings.application.playback_mode = "back_and_forth"
+        try:
+            with warnings.catch_warnings(action="ignore"): # Suppress deprecation warning about _qt_viewer
+                self.viewer.window._qt_viewer.dims.play()
+        except Exception as e:
+            warnings.warn(f"Could not play shark video. Play it manually if you want :)")
 
     def _get_data_channel_first(self, img):
         """Get data from selected channel. If RGB/RGBA, move channel axis to first
@@ -3318,95 +3340,6 @@ class ConvpaintWidget(QWidget):
 
 
 ### ADVANCED TAB
-    
-    def _update_training_counts(self):
-        """Update the training counts (used with continuous_training/memory_mode) in the GUI."""
-        if self.cp_model is None:
-            return
-        pix = len(self.cp_model.table)
-        imgs = len(np.unique(self.cp_model.table['img_id']))
-        lbls = len(np.unique(self.cp_model.table['label']))
-        self.label_training_count.setText(f'{pix} pixels, {imgs} image{"s"*(imgs>1)}, {lbls} labels')
-
-    def _reset_train_features(self):
-        """Reset the training features used with continuous_training/memory_mode."""
-        self.cp_model.reset_training()
-        self._update_training_counts()
-        # Save image_layer names and their corresponding annotation layers, to allow only extracting new features
-        self.features_annots = {}
-
-    def _on_show_class_distribution(self, trained_data=False):
-        """Show the class distribution of the data used with continuous_training/memory_mode (saved in self.cp_model.table)
-        in a pie chart using the according cmaps.
-        
-        trained_data: If True, show the distribution of the data in the training table (i.e. used for training).
-                      If False, show the distribution of the data in the currently selected annotation layer.
-        """
-
-        try:
-            import matplotlib.pyplot as plt
-        except ImportError:
-            warnings.warn('matplotlib is not installed. Cannot show class distribution.')
-            return
-
-        # Get the class distribution from the training table
-        if trained_data:
-            # If trained_data, get the labels from the training table (memory mode)
-            if self.cp_model is None or self.cp_model.table is None:
-                warnings.warn('No training data available. Cannot show class distribution.')
-                return
-            labels = self.cp_model.table['label'].values
-        else:
-            # Otherwise get the labels from the annotations layer selected in the layers widget (excluding unlabeled pixels)
-            labels = self.annotation_layer_selection_widget.value.data.flatten()
-            labels = labels[labels != 0]
-        if len(labels) == 0:
-            warnings.warn('No labels available. Cannot show class distribution.')
-            return
-        classes = np.unique(labels)
-        counts = np.array([np.sum(labels == c) for c in classes])
-        percs = counts / np.sum(counts) * 100
-
-        # Get class display names from a list, assuming class numbers start at 1
-        if self.class_names is not None and self.class_names:
-            class_names = [self.class_names[c - 1].text() if 1 <= c <= len(self.class_names) else str(c) for c in classes]
-
-        # Create label strings for the pie chart
-        pie_labels = [f'{count} ({perc:.1f}%)' for count, perc in zip(counts, percs)]
-
-        # Create a donut chart
-        class_list = [c for c in range(1, classes.max()+1)]
-        fig, ax = plt.subplots(figsize=(8, 4), subplot_kw=dict(aspect="equal"))
-        if self.labels_cmap is not None:
-            colors = [self.labels_cmap.map(i) for i in class_list if i in classes]
-        else:
-            cmap = plt.get_cmap('tab20', len(class_list))
-            colors = [cmap(i) for i in class_list if i in classes]
-        
-        # Use custom labels with count and percentage
-        wedges, _ = ax.pie(
-            counts,
-            labels=pie_labels,            # Your custom count + % labels
-            colors=colors,
-            startangle=90,
-            wedgeprops=dict(width=0.5),   # Donut shape
-            textprops=dict(color="black") # Label color
-        )
-
-        # Add a legend with clean class names (not repeated on pie)
-        ax.legend(
-            wedges,
-            class_names,
-            title="Classes",
-            loc="center left",
-            bbox_to_anchor=(1, 1)
-        )
-
-        # Final touches
-        ax.axis('equal')  # Keep chart circular
-        plt.title('Class Distribution')
-        plt.tight_layout()
-        plt.show()
 
     def _on_add_all_annot_layers(self):
         """Add annotation layers for all image layers selected in the layers widget (napari)."""
@@ -3496,6 +3429,95 @@ class ConvpaintWidget(QWidget):
         self._reset_predict_buttons()
         # self.save_model_btn.setEnabled(True)
         self._set_model_description()
+    
+    def _update_training_counts(self):
+        """Update the training counts (used with continuous_training/memory_mode) in the GUI."""
+        if self.cp_model is None:
+            return
+        pix = len(self.cp_model.table)
+        imgs = len(np.unique(self.cp_model.table['img_id']))
+        lbls = len(np.unique(self.cp_model.table['label']))
+        self.label_training_count.setText(f'{pix} pixels, {imgs} image{"s"*(imgs>1)}, {lbls} labels')
+
+    def _on_show_class_distribution(self, trained_data=False):
+        """Show the class distribution of the data used with continuous_training/memory_mode (saved in self.cp_model.table)
+        in a pie chart using the according cmaps.
+        
+        trained_data: If True, show the distribution of the data in the training table (i.e. used for training).
+                      If False, show the distribution of the data in the currently selected annotation layer.
+        """
+
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError:
+            warnings.warn('matplotlib is not installed. Cannot show class distribution.')
+            return
+
+        # Get the class distribution from the training table
+        if trained_data:
+            # If trained_data, get the labels from the training table (memory mode)
+            if self.cp_model is None or self.cp_model.table is None:
+                warnings.warn('No training data available. Cannot show class distribution.')
+                return
+            labels = self.cp_model.table['label'].values
+        else:
+            # Otherwise get the labels from the annotations layer selected in the layers widget (excluding unlabeled pixels)
+            labels = self.annotation_layer_selection_widget.value.data.flatten()
+            labels = labels[labels != 0]
+        if len(labels) == 0:
+            warnings.warn('No labels available. Cannot show class distribution.')
+            return
+        classes = np.unique(labels)
+        counts = np.array([np.sum(labels == c) for c in classes])
+        percs = counts / np.sum(counts) * 100
+
+        # Get class display names from a list, assuming class numbers start at 1
+        if self.class_names is not None and self.class_names:
+            class_names = [self.class_names[c - 1].text() if 1 <= c <= len(self.class_names) else str(c) for c in classes]
+
+        # Create label strings for the pie chart
+        pie_labels = [f'{count} ({perc:.1f}%)' for count, perc in zip(counts, percs)]
+
+        # Create a donut chart
+        class_list = [c for c in range(1, classes.max()+1)]
+        fig, ax = plt.subplots(figsize=(8, 4), subplot_kw=dict(aspect="equal"))
+        if self.labels_cmap is not None:
+            colors = [self.labels_cmap.map(i) for i in class_list if i in classes]
+        else:
+            cmap = plt.get_cmap('tab20', len(class_list))
+            colors = [cmap(i) for i in class_list if i in classes]
+        
+        # Use custom labels with count and percentage
+        wedges, _ = ax.pie(
+            counts,
+            labels=pie_labels,            # Your custom count + % labels
+            colors=colors,
+            startangle=90,
+            wedgeprops=dict(width=0.5),   # Donut shape
+            textprops=dict(color="black") # Label color
+        )
+
+        # Add a legend with clean class names (not repeated on pie)
+        ax.legend(
+            wedges,
+            class_names,
+            title="Classes",
+            loc="center left",
+            bbox_to_anchor=(1, 1)
+        )
+
+        # Final touches
+        ax.axis('equal')  # Keep chart circular
+        plt.title('Class Distribution')
+        plt.tight_layout()
+        plt.show()
+
+    def _reset_train_features(self):
+        """Reset the training features used with continuous_training/memory_mode."""
+        self.cp_model.reset_training()
+        self._update_training_counts()
+        # Save image_layer names and their corresponding annotation layers, to allow only extracting new features
+        self.features_annots = {}
 
     def _on_switch_axes(self):
         """Switch the first two axes of the input image."""
