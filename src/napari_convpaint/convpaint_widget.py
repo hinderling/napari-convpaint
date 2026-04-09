@@ -3028,7 +3028,12 @@ class ConvpaintWidget(QWidget):
         """Get the selected scaling factors for the FE."""
         scaling_text = self.fe_scaling_factors.currentText()
         if "shark" in scaling_text.lower():
+            initial_auto_flag = self.auto_add_layers
+            self.auto_add_layers = False # Prevent adding new layers for the shark video
             self._show_shark_easter_egg()
+            QTimer.singleShot(500, lambda: # Wait a bit before resetting the flag, to make sure the video is loaded before
+                              setattr(self, 'auto_add_layers', initial_auto_flag)
+                              )
             return None
         # Try to convert the text to a tuple of ints (e.g. "[1,2,3]" -> (1,2,3))
         try:
@@ -3055,7 +3060,7 @@ class ConvpaintWidget(QWidget):
         self.viewer.reset_view()
         from napari.settings import get_settings
         settings = get_settings()
-        settings.application.playback_fps = 300
+        settings.application.playback_fps = 100
         settings.application.playback_mode = "back_and_forth"
         try:
             with warnings.catch_warnings(action="ignore"): # Suppress deprecation warning about _qt_viewer
