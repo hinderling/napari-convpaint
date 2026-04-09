@@ -252,7 +252,7 @@ class ConvpaintWidget(QWidget):
         # "Smoothen output" spinbox
         self.spin_smoothen = QSpinBox()
         self.spin_smoothen.setMinimum(1)
-        self.spin_smoothen.setMaximum(50)
+        self.spin_smoothen.setMaximum(20)
         self.spin_smoothen.setValue(1)
         self.smoothen_label = QLabel('Smoothen output')
         self.acceleration_group.glayout.addWidget(self.smoothen_label, 3,0,1,1)
@@ -555,9 +555,8 @@ class ConvpaintWidget(QWidget):
         # === Show tooltips by default ===
 
         self._setup_init_tooltips()
-        # Set device tooltips separately, as we want to show these dynamically and permanently, even when the "Show tooltips" checkbox is unchecked
-        for w in [self.device_label, self.device_dropdown]:
-            w.setToolTip('Select device policy for feature extraction and classifier.')
+        # Set device dropdown tooltip separately, as we want to show these dynamically and permanently, even when the "Show tooltips" checkbox is unchecked
+        self.device_dropdown.setToolTip('Select device policy for feature extraction and classifier.')
 
     def _setup_init_tooltips(self):
 
@@ -594,9 +593,10 @@ class ConvpaintWidget(QWidget):
                                                'Disable for models that extract long range features (e.g. DINO).')
         self.check_tile_image.setToolTip('Tile image to reduce memory usage.\n' +
                                          'Use with care when using models that extract long range features (e.g. DINO).')
-        # Do not toggle device options, as we want to show tooltips dynamically and permanently
+        # Do not toggle device dropdown, as we want to show tooltips dynamically and permanently
         # for w in [self.device_label, self.device_dropdown]:
         #     w.setToolTip('Select device policy for feature extraction and classifier.')
+        self.device_label.setToolTip('Select device policy for feature extraction and classifier.')
         for w in [self.downsample_label, self.spin_downsample]:
              w.setToolTip('Reduce image size, e.g. for faster computing (output is rescaled to original size).\n' +
                             'Negative values will instead upscale the image by the absolute value.')
@@ -677,7 +677,7 @@ class ConvpaintWidget(QWidget):
                   self.add_layers_btn, self.radio_single_channel, self.radio_multi_channel, self.radio_rgb,
                   self.radio_no_normalize, self.radio_normalize_over_stack, self.radio_normalize_by_image,
                   self.train_classifier_btn, self.check_auto_seg, self.segment_btn, self.segment_all_btn,
-                  self.check_tile_annotations, self.check_tile_image, #self.device_label, self.device_dropdown,
+                  self.check_tile_annotations, self.check_tile_image, self.device_label, #self.device_dropdown,
                   self.downsample_label, self.spin_downsample, self.smoothen_label, self.spin_smoothen]:
             w.setToolTip('')
 
