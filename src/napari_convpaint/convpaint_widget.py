@@ -13,6 +13,7 @@ from napari_guitils.gui_structures import VHGroup, TabSet
 from pathlib import Path
 import numpy as np
 import warnings
+import tifffile
 import imageio.v2 as imageio
 
 # Imported inline to avoid heavy memory usage when the functions are not used:
@@ -568,7 +569,7 @@ class ConvpaintWidget(QWidget):
         # Create three groups for the Multifile tab to match other tabs' style
         self.multifile_files_group = VHGroup('Files', orientation='G')
         self.multifile_train_group = VHGroup('Train/Segment', orientation='G')
-        self.multifile_import_export_group = VHGroup('Import/Export', orientation='G')
+        self.multifile_import_export_group = VHGroup('Export/Import', orientation='G')
         self.multifile_settings_group = VHGroup('Settings', orientation='G')
 
         # Add groups to the Multifile tab
@@ -583,6 +584,8 @@ class ConvpaintWidget(QWidget):
         # --- Files group: folder selector + file list
         lbl_folder = QLabel('Folder:')
         self.multifile_path_edit = QtWidgets.QLineEdit()
+        # Make path read-only; folder is selected via the button only
+        self.multifile_path_edit.setReadOnly(True)
         self.multifile_select_btn = QPushButton('Select image folder')
         self.multifile_files_group.glayout.addWidget(lbl_folder, 0, 0, 1, 1)
         self.multifile_files_group.glayout.addWidget(self.multifile_path_edit, 0, 1, 1, 1)
@@ -603,8 +606,8 @@ class ConvpaintWidget(QWidget):
         self.btn_train_all_annot = QPushButton('Train on all annotated images')
         self.btn_segment_selected = QPushButton('Segment all (save to folder)')
 
-        self.multifile_train_group.glayout.addWidget(self.btn_train_all_annot, 0, 0, 1, 1)
-        self.multifile_train_group.glayout.addWidget(self.btn_segment_selected, 0, 1, 1, 1)
+        self.multifile_train_group.glayout.addWidget(self.btn_train_all_annot, 0, 0, 2, 1)
+        # self.multifile_train_group.glayout.addWidget(self.btn_segment_selected, 0, 1, 1, 1)
 
         # --- Import/Export group: action buttons (placeholders for now)
         self.btn_import_annotations = QPushButton('Import annotations')
@@ -612,8 +615,8 @@ class ConvpaintWidget(QWidget):
         self.btn_import_segmentations = QPushButton('Import segmentations')
 
         self.multifile_import_export_group.glayout.addWidget(self.btn_export_annotations, 0, 0, 1, 1)
-        self.multifile_import_export_group.glayout.addWidget(self.btn_import_segmentations, 0, 1, 1, 1)
-        self.multifile_import_export_group.glayout.addWidget(self.btn_import_annotations, 1, 0, 1, 1)
+        # self.multifile_import_export_group.glayout.addWidget(self.btn_import_segmentations, 0, 1, 1, 1)
+        self.multifile_import_export_group.glayout.addWidget(self.btn_import_annotations, 0, 1, 1, 1)
 
         # --- Settings group: checkboxes
         self.check_show_annotations = QCheckBox('Show annotations')
@@ -1024,6 +1027,8 @@ class ConvpaintWidget(QWidget):
             self.multifile_select_btn.clicked.connect(self._select_multifile_img_folder)
             self.multifile_list.cellDoubleClicked.connect(self._on_multifile_open_file)
             self.btn_train_all_annot.clicked.connect(self._on_train_on_multifile)
+            self.btn_import_annotations.clicked.connect(self._import_annotations)
+            self.btn_export_annotations.clicked.connect(self._export_annotations)
             self.viewer.layers.events.removed.connect(self._on_annotation_changed)
 
 
@@ -3803,26 +3808,31 @@ class ConvpaintWidget(QWidget):
         # If accepted, remove all existing layers before loading the folder contents.
         existing_layers = list(self.viewer.layers)
         if existing_layers and not getattr(self, '_multifile_warned', False):
+            # Warn
             names = '\n'.join([l.name for l in existing_layers])
             msg = (f"Opening a folder will remove all existing layers from the viewer:\n{names}\n\n"
+                   "It will also reset any in-memory annotations stored for the Multifile workflow.\n\n"
                    "Do you want to continue?")
             resp = QMessageBox.question(self, 'Remove existing layers?', msg, QMessageBox.Yes | QMessageBox.No)
             if resp != QMessageBox.Yes:
                 return
-            # user accepted; set warned flag and remove layers
             self._multifile_warned = True
+            
+        # User accepted; set warned flag and remove layers
+        for l in existing_layers:
             try:
-                for l in existing_layers:
-                    try:
-                        self.viewer.layers.remove(l)
-                    except Exception:
-                        pass
-            finally:
+                self.viewer.layers.remove(l)
+            except Exception:
                 pass
 
         folder = QFileDialog.getExistingDirectory(self, 'Select image folder', str(Path.cwd()))
         if not folder:
             return
+
+        # Reset in-memory annotations when opening a new folder
+        self._multifile_annotation_store = {}
+        # Reset import warning flag so user is asked again when importing
+        self._import_annotations_warned = False
 
         self.multifile_path_edit.setText(folder)
         p = Path(folder)
@@ -3845,6 +3855,15 @@ class ConvpaintWidget(QWidget):
             item_filename.setFlags(item_filename.flags() & ~Qt.ItemIsEditable)
             self.multifile_list.setItem(row, 0, item_annot)
             self.multifile_list.setItem(row, 1, item_filename)
+
+        # ensure any internal imported-annotation tracking is cleared for new folder
+        # try:
+        #     if not hasattr(self, '_multifile_annotation_store'):
+        #         self._multifile_annotation_store = {}
+        #     if not hasattr(self, '_multifile_annotation_imported'):
+        #         self._multifile_annotation_imported = set()
+        # except Exception:
+        #     pass
 
         # Automatically open the first image in the list (if any)
         if files:
@@ -3900,18 +3919,27 @@ class ConvpaintWidget(QWidget):
 
         self._add_empty_annot(event=None, force_add=True, from_multifile=True)
         # If we have a stored annotation for this filename, add its data to the labels layer
-        if filename in self._multifile_annotation_store:
+        if filename in getattr(self, '_multifile_annotation_store', {}):
             stored = self._multifile_annotation_store[filename]
             try:
-                self.viewer.layers[self.annot_prefix].data = stored.copy() # Add stored annotation to the (empty) annotation layer
+                if isinstance(stored, str):
+                    # stored as path -> read on demand but keep store as path
+                    try:
+                        arr = tifffile.imread(stored)
+                        self.viewer.layers[self.annot_prefix].data = np.asarray(arr)
+                    except Exception:
+                        pass
+                else:
+                    # ndarray in memory
+                    self.viewer.layers[self.annot_prefix].data = stored.copy()
                 # update table tick
-                self._set_multifile_annot_flag(filename, True)
+                self._set_multifile_annot_flag(filename)
             except Exception:
                 pass
         else: # No stored annotation; create an empty annotation (depending on settings)
             try:
                 # update table tick to false (no annotations yet)
-                self._set_multifile_annot_flag(filename, False)
+                self._set_multifile_annot_flag(filename)
             except Exception:
                 pass
 
@@ -3920,36 +3948,37 @@ class ConvpaintWidget(QWidget):
         # Case 1: layer removal event (viewer.layers.events.removed)
         if hasattr(event, "value"):
             layer = event.value
-
         # Case 2: layer-level event (e.g. set_data)
         elif hasattr(event, "source"):
             layer = event.source
+        else:
+            layer = None
 
         # Check that we are handling the correct layer in the correct context (multifile mode, annotation layer)
         if not self.store_annot or not layer or layer.name != self.annot_prefix:
             return
-        try:
-            fname = self._current_multifile_filename
-        except Exception:
-            fname = None
+        # Determine filename for current multifile image
+        fname = getattr(self, '_current_multifile_filename', None)
         if fname is None:
             return
+
         try:
             if layer is None:
                 return
             data = np.asarray(layer.data)
             has_annot = np.sum(data > 0) != 0
+            # Always store actual array data when user paints/changes annotations
             if has_annot:
                 self._multifile_annotation_store[fname] = data.copy()
             else:
-                if fname in self._multifile_annotation_store:
+                if hasattr(self, '_multifile_annotation_store') and fname in self._multifile_annotation_store:
                     del self._multifile_annotation_store[fname]
-            # update table flag
-            self._set_multifile_annot_flag(fname, has_annot)
+            # update table flag (type-based)
+            self._set_multifile_annot_flag(fname)
         except Exception:
             pass
 
-    def _set_multifile_annot_flag(self, filename, has_annot):
+    def _set_multifile_annot_flag(self, filename):
         """Update the Annotated column in the multifile table for a given filename."""
         try:
             for r in range(self.multifile_list.rowCount()):
@@ -3961,9 +3990,17 @@ class ConvpaintWidget(QWidget):
                         item_annot.setFlags(item_annot.flags() & ~Qt.ItemIsEditable)
                         item_annot.setTextAlignment(Qt.AlignCenter)
                         self.multifile_list.setItem(r, 0, item_annot)
-                    if has_annot:
+                    # Distinguish imported/exported (persistent) annotations from in-memory ones
+                    store = getattr(self, '_multifile_annotation_store', {})
+                    val = store.get(filename, None)
+                    if isinstance(val, str):
+                        # stored as path -> persistent (green)
                         item_annot.setText('✓')
                         item_annot.setForeground(QtGui.QBrush(QtGui.QColor('green')))
+                    elif val is not None:
+                        # in-memory ndarray -> yellow in brackets
+                        item_annot.setText('(✓)')
+                        item_annot.setForeground(QtGui.QBrush(QtGui.QColor('gold')))
                     else:
                         item_annot.setText('✗')
                         item_annot.setForeground(QtGui.QBrush(QtGui.QColor('red')))
@@ -4022,7 +4059,21 @@ class ConvpaintWidget(QWidget):
                 warnings.warn(f'Could not prepare image {p} for training. Skipping.')
                 continue
             img_prepared.append(prep)
-            annots.append(np.copy(self._multifile_annotation_store[fn]))
+            # If annotation in store is a path (string), read it now and cache the ndarray
+            stored = self._multifile_annotation_store.get(fn, None)
+            if isinstance(stored, str):
+                try:
+                    arr_annot = tifffile.imread(stored)
+                    self._multifile_annotation_store[fn] = np.asarray(arr_annot)
+                    annots.append(np.asarray(arr_annot))
+                except Exception:
+                    warnings.warn(f'Could not read stored annotation for {fn}. Skipping.')
+                    continue
+            elif stored is not None:
+                annots.append(np.copy(stored))
+            else:
+                warnings.warn(f'No annotation found for {fn}. Skipping.')
+                continue
 
         if len(img_prepared) == 0 or len(annots) == 0:
             warnings.warn('No valid image/annotation pairs available for training.')
@@ -4035,3 +4086,123 @@ class ConvpaintWidget(QWidget):
 
         # Delegate to core trainer
         self._train_multiple(filenames[:len(img_prepared)], img_prepared, annots)
+
+    def _import_annotations(self):
+        """Import annotation TIFFs from a folder and register them in the in-memory store.
+
+        Matches files named `<image_stem>_annotations.tif|tiff` against the filenames
+        listed in the multifile table (by stem). Imported annotations are recorded
+        as persistent (stored as path strings) and flagged green.
+        """
+        # If there are in-memory annotations, confirm clearing them (only ask once)
+        if hasattr(self, '_multifile_annotation_store') and self._multifile_annotation_store:
+            if not getattr(self, '_import_annotations_warned', False):
+                msg = 'Importing annotations will clear existing in-memory annotations. Continue?'
+                resp = QMessageBox.question(self, 'Clear in-memory annotations?', msg, QMessageBox.Yes | QMessageBox.No)
+                if resp != QMessageBox.Yes:
+                    return
+                self._import_annotations_warned = True
+
+        folder = QFileDialog.getExistingDirectory(self, 'Select annotations folder', str(Path.cwd()))
+        if not folder:
+            return
+        p = Path(folder)
+
+        # Clear existing in-memory annotations; we'll register imported ones as paths
+        self._multifile_annotation_store = {}
+        self._multifile_annotation_folder = str(p)
+
+        # Build mapping from image stem -> filename in table
+        table_map = {}
+        for r in range(self.multifile_list.rowCount()):
+            it = self.multifile_list.item(r, 1)
+            if it is None:
+                continue
+            fname = it.text()
+            stem = Path(fname).stem
+            table_map[stem] = fname
+
+        imported = 0
+        for f in p.iterdir():
+            if not f.is_file():
+                continue
+            if f.suffix.lower() not in ('.tif', '.tiff'):
+                continue
+            stem = f.stem
+            if not stem.endswith('_annotations'):
+                continue
+            img_stem = stem[:-len('_annotations')]
+            if img_stem not in table_map:
+                continue
+            target_fname = table_map[img_stem]
+            try:
+                # Register the file path (string) so it's considered persistent
+                self._multifile_annotation_store[target_fname] = str(f)
+                self._set_multifile_annot_flag(target_fname)
+                imported += 1
+            except Exception:
+                warnings.warn(f'Could not register annotation for {target_fname}.')
+
+        if imported:
+            show_info(f'Imported {imported} annotations')
+        else:
+            warnings.warn('No matching annotation files found for import.')
+
+    def _export_annotations(self):
+        """Export all annotations currently in memory to a chosen folder as TIFF files.
+
+        Files are named `<image_stem>_annotations.tif`. After successful export,
+        the corresponding table rows are marked as imported (green tick).
+        """
+        if not hasattr(self, '_multifile_annotation_store') or not self._multifile_annotation_store:
+            warnings.warn('No annotations in memory to export.')
+            return
+
+        folder = QFileDialog.getExistingDirectory(self, 'Select export folder', str(Path.cwd()))
+        if not folder:
+            return
+        out_dir = Path(folder)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        # Check for existing files and warn if any will be overwritten (always ask)
+        will_overwrite = False
+        for fname in list(self._multifile_annotation_store.keys()):
+            stem = Path(fname).stem
+            out_name = out_dir / f"{stem}_annotations.tif"
+            if out_name.exists():
+                will_overwrite = True
+                break
+        if will_overwrite:
+            msg = f"Some files in {out_dir} will be overwritten. Continue?"
+            resp = QMessageBox.question(self, 'Overwrite files?', msg, QMessageBox.Yes | QMessageBox.No)
+            if resp != QMessageBox.Yes:
+                return
+
+        exported = 0
+        for fname, annot in list(self._multifile_annotation_store.items()):
+            try:
+                stem = Path(fname).stem
+                out_name = out_dir / f"{stem}_annotations.tif"
+                # If store contains a string path, read the file first to get array (technically just copying the file)
+                if isinstance(annot, str):
+                    try:
+                        data = tifffile.imread(annot)
+                    except Exception:
+                        warnings.warn(f'Could not read stored annotation file {annot}. Skipping.')
+                        continue
+                else:
+                    data = np.asarray(annot)
+                tifffile.imwrite(str(out_name), data.astype(np.uint8))
+                # mark as persistent by storing the exported path string
+                self._multifile_annotation_store[fname] = str(out_name)
+                # remember latest annotation folder
+                self._multifile_annotation_folder = str(out_dir)
+                self._set_multifile_annot_flag(fname)
+                exported += 1
+            except Exception:
+                warnings.warn(f'Could not export annotation for {fname}.')
+
+        if exported:
+            show_info(f'Exported {exported} annotations to {out_dir}')
+        else:
+            warnings.warn('No annotations were exported.')
