@@ -1024,6 +1024,7 @@ class ConvpaintWidget(QWidget):
         if 'Multifile' in self.tab_names:
             self.multifile_select_btn.clicked.connect(self._select_multifile_img_folder)
             self.multifile_list.cellDoubleClicked.connect(self._on_multifile_open_file)
+            self.viewer.layers.events.removed.connect(self._on_annotation_changed)
 
 
 ### Visibility toggles for key bindings
@@ -2260,6 +2261,7 @@ class ConvpaintWidget(QWidget):
         self._multifile_annotation_store = {}
         # Current multifile-opened filename (when opened via Multifile UI)
         self._current_multifile_filename = None
+        self.store_annot = False
 
 ### Model Tab
 
@@ -2492,7 +2494,7 @@ class ConvpaintWidget(QWidget):
 
         return {"scale": leading_scale + tail_scale, "translate": leading_translate + tail_translate}
 
-    def _add_empty_annot(self, event=None, force_add=True):
+    def _add_empty_annot(self, event=None, force_add=True, from_multifile=False):
         """Add annotation layer to viewer. If the layer already exists,
         remove it (or rename and keep it if specified in self.keep_layers) and add a new one.
         If the widget is used as third party (self.third_party=True), no layer is added if it didn't exist before,
@@ -2568,12 +2570,9 @@ class ConvpaintWidget(QWidget):
         self.update_all_class_names_and_cmaps()
 
         # Track annotation data changes to keep in-memory store in sync (for Multifile)
-        try:
+        self.store_annot = from_multifile # Only store if the annot was added from Multifile, to avoid storing unnecessarily when not using Multifile
+        if from_multifile:
             new_annot_layer.events.set_data.connect(self._on_annotation_changed)
-        except Exception:
-            # Fallback if event not available
-            print("Could not connect to annotation layer data events (add_empty_annot).")
-            pass
 
     def _check_create_segmentation_layer(self):
         """Check if segmentation layer exists and create it if not."""
@@ -3841,7 +3840,7 @@ class ConvpaintWidget(QWidget):
         If there are existing layers, warn the user they will be removed and allow abort.
         After loading, reset Convpaint state to avoid side-effects.
         """
-        # get filename from table
+        # get filename from list/table
         try:
             item = self.multifile_list.item(row, 1)
             if item is None:
@@ -3853,7 +3852,11 @@ class ConvpaintWidget(QWidget):
             path = Path(folder) / filename
         except Exception:
             return
-        
+
+        # Temporarily disable auto-adding annotation layers    
+        original_auto = getattr(self, 'auto_add_layers', False)
+        setattr(self, 'auto_add_layers', False) 
+    
         # If there are existing layers in the viewer, remove them
         existing_layers = list(self.viewer.layers)
         if existing_layers:
@@ -3867,8 +3870,6 @@ class ConvpaintWidget(QWidget):
                 pass
         
         # load image data and add as a new layer
-        original_auto = getattr(self, 'auto_add_layers', False)
-        setattr(self, 'auto_add_layers', False) # Temporarily disable auto-adding annotation layers
         try:
             self.viewer.open(path, name=path.name)
         except Exception as e:
@@ -3878,73 +3879,65 @@ class ConvpaintWidget(QWidget):
         # Track current filename opened via Multifile
         self._current_multifile_filename = filename
 
-        # If we have a stored annotation for this filename, add it as labels layer
+        self._add_empty_annot(event=None, force_add=True, from_multifile=True)
+        # If we have a stored annotation for this filename, add its data to the labels layer
         if filename in self._multifile_annotation_store:
             stored = self._multifile_annotation_store[filename]
             try:
-                self.viewer.add_labels(data=stored.copy(), name=self.annot_prefix)
-                # connect data change handler
-                if self.annot_prefix in self.viewer.layers:
-                    try:
-                        self.viewer.layers[self.annot_prefix].events.set_data.connect(self._on_annotation_changed)
-                    except Exception:
-                        print("Could not connect annotation change handler for multifile annotations.")
-                        pass
+                self.viewer.layers[self.annot_prefix].data = stored.copy() # Add stored annotation to the (empty) annotation layer
                 # update table tick
                 self._set_multifile_annot_flag(filename, True)
             except Exception:
-                print("Could not add stored annotation for multifile image.")
                 pass
         else: # No stored annotation; create an empty annotation (depending on settings)
             try:
-                self._add_empty_annot(event=None, force_add=True)
-                # connecting handler for the newly added annotation layer is done in _add_empty_annot
                 # update table tick to false (no annotations yet)
                 self._set_multifile_annot_flag(filename, False)
-            finally:
+            except Exception:
                 pass
 
     def _on_annotation_changed(self, event=None):
         """Save annotation for current multifile image if present."""
-        print("Entering annotation changed handler")
+        # Case 1: layer removal event (viewer.layers.events.removed)
+        if hasattr(event, "value"):
+            layer = event.value
+
+        # Case 2: layer-level event (e.g. set_data)
+        elif hasattr(event, "source"):
+            layer = event.source
+
+        # Check that we are handling the correct layer in the correct context (multifile mode, annotation layer)
+        if not self.store_annot or not layer or layer.name != self.annot_prefix:
+            return
         try:
             fname = self._current_multifile_filename
         except Exception:
-            print("Could not get current multifile filename; annotation changes are not tracked.")
             fname = None
         if fname is None:
             return
         try:
-            labels_layer = self.annotation_layer_selection_widget.value
-            if labels_layer is None:
-                print("No annotation layer selected; annotation changes are not tracked.")
+            if layer is None:
                 return
-            data = np.asarray(labels_layer.data)
+            data = np.asarray(layer.data)
             has_annot = np.sum(data > 0) != 0
             if has_annot:
-                print("Has annotations, saving to store")
                 self._multifile_annotation_store[fname] = data.copy()
             else:
-                print("Has no annotations...")
                 if fname in self._multifile_annotation_store:
                     del self._multifile_annotation_store[fname]
             # update table flag
             self._set_multifile_annot_flag(fname, has_annot)
         except Exception:
-            print("Error while saving annotation changes for multifile image; annotation changes are not tracked.")
             pass
 
     def _set_multifile_annot_flag(self, filename, has_annot):
         """Update the Annotated column in the multifile table for a given filename."""
-        print("Entered the flagging function")
         try:
             for r in range(self.multifile_list.rowCount()):
                 it = self.multifile_list.item(r, 1)
                 if it is not None and it.text() == filename:
-                    print("Found the file in the table, updating the flag")
                     item_annot = self.multifile_list.item(r, 0) # The annot cell of the selected image
                     if item_annot is None: # No cell found; should not happen...
-                        print("No item found for the annotation flag; creating one.")
                         item_annot = QTableWidgetItem()
                         item_annot.setFlags(item_annot.flags() & ~Qt.ItemIsEditable)
                         item_annot.setTextAlignment(Qt.AlignCenter)
@@ -3957,5 +3950,4 @@ class ConvpaintWidget(QWidget):
                         item_annot.setForeground(QtGui.QBrush(QtGui.QColor('red')))
                     return
         except Exception:
-            print("ERROR IN FLAGGING")
             pass
