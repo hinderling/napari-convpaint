@@ -13,6 +13,7 @@ from napari_guitils.gui_structures import VHGroup, TabSet
 from pathlib import Path
 import numpy as np
 import warnings
+import imageio.v2 as imageio
 
 # Imported inline to avoid heavy memory usage when the functions are not used:
 # import torch
@@ -574,7 +575,7 @@ class ConvpaintWidget(QWidget):
         self.tabs.add_named_tab('Multifile', self.multifile_files_group.gbox, [0, 0, 8, 2])
         self.tabs.add_named_tab('Multifile', self.multifile_train_group.gbox, [8, 0, 3, 2])
         self.tabs.add_named_tab('Multifile', self.multifile_import_export_group.gbox, [11, 0, 1, 2])
-        self.tabs.add_named_tab('Multifile', self.multifile_settings_group.gbox, [12, 0, 1, 2])
+        # self.tabs.add_named_tab('Multifile', self.multifile_settings_group.gbox, [12, 0, 1, 2])
 
         # Align on top
         self.tabs.widget(self.tabs.tab_names.index('Multifile')).layout().setAlignment(Qt.AlignTop)
@@ -600,7 +601,7 @@ class ConvpaintWidget(QWidget):
 
         # --- Train/Segment group: action buttons (placeholders for now)
         self.btn_train_all_annot = QPushButton('Train on all annotated images')
-        self.btn_segment_selected = QPushButton('Segment all (save into folder)')
+        self.btn_segment_selected = QPushButton('Segment all (save to folder)')
 
         self.multifile_train_group.glayout.addWidget(self.btn_train_all_annot, 0, 0, 1, 1)
         self.multifile_train_group.glayout.addWidget(self.btn_segment_selected, 0, 1, 1, 1)
@@ -610,9 +611,9 @@ class ConvpaintWidget(QWidget):
         self.btn_export_annotations = QPushButton('Export annotations')
         self.btn_import_segmentations = QPushButton('Import segmentations')
 
-        self.multifile_import_export_group.glayout.addWidget(self.btn_import_annotations, 0, 0, 1, 1)
+        self.multifile_import_export_group.glayout.addWidget(self.btn_export_annotations, 0, 0, 1, 1)
         self.multifile_import_export_group.glayout.addWidget(self.btn_import_segmentations, 0, 1, 1, 1)
-        self.multifile_import_export_group.glayout.addWidget(self.btn_export_annotations, 1, 0, 1, 1)
+        self.multifile_import_export_group.glayout.addWidget(self.btn_import_annotations, 1, 0, 1, 1)
 
         # --- Settings group: checkboxes
         self.check_show_annotations = QCheckBox('Show annotations')
@@ -830,8 +831,6 @@ class ConvpaintWidget(QWidget):
         num_items = self.qcombo_fe_type.count()
         self.qcombo_fe_type.setMaxVisibleItems(num_items) # Make sure the dropdown shows all items
 
-
-
         # === CONNECTIONS ===
         # Add connections and initialize by setting default model and params
         self._add_connections()
@@ -1024,6 +1023,7 @@ class ConvpaintWidget(QWidget):
         if 'Multifile' in self.tab_names:
             self.multifile_select_btn.clicked.connect(self._select_multifile_img_folder)
             self.multifile_list.cellDoubleClicked.connect(self._on_multifile_open_file)
+            self.btn_train_all_annot.clicked.connect(self._on_train_on_multifile)
             self.viewer.layers.events.removed.connect(self._on_annotation_changed)
 
 
@@ -3589,22 +3589,42 @@ class ConvpaintWidget(QWidget):
         img_list = [self._get_data_channel_first(img) for img in img_list]
         annot_list = [annot.data for annot in annot_list]
 
-        # Start training
+        # Delegate core training to helper that can be reused
+        self._train_multiple(id_list, img_list, annot_list)
+
+    def _train_multiple(self, id_list, img_list, annot_list):
+        """Core training routine used by multiple callers.
+
+        id_list: list of str image ids/names
+        img_list: list of numpy arrays (prepared via _get_data_channel_first)
+        annot_list: list of numpy arrays (annotation masks)
+        """
+        if self.cp_model is None:
+            warnings.warn('No model set. Cannot train.')
+            return
+
+        if not id_list or not img_list or not annot_list:
+            warnings.warn('No images or annotations provided for training.')
+            return
+
+        if not (len(id_list) == len(img_list) == len(annot_list)):
+            warnings.warn('Image and annotation lists must have identical lengths.')
+            return
+
         with warnings.catch_warnings():
             warnings.simplefilter(action="ignore", category=FutureWarning)
             self.viewer.window._status_bar._toggle_activity_dock(True)
 
         with progress(total=0) as pbr:
-            pbr.set_description(f"Training")
+            pbr.set_description("Training")
             mem_mode = self.cont_training == "global"
             # Train; in this case, normalization is not skipped (but done in the ConvpaintModel)
-            in_channels = self._parse_in_channels(self.in_channels.text())
+            in_channels = self._parse_in_channels(self.input_channels)
             _ = self.cp_model.train(img_list, annot_list, memory_mode=mem_mode, img_ids=id_list,
                                     in_channels=in_channels, skip_norm=False,
-                                    fe_use_device=self.fe_device, clf_use_device=self.clf_device,
-                                    progress=pbr)
+                                    fe_use_device=self.fe_device, clf_use_device=self.clf_device)
             self._update_training_counts()
-    
+
         with warnings.catch_warnings():
             warnings.simplefilter(action="ignore", category=FutureWarning)
             self.viewer.window._status_bar._toggle_activity_dock(False)
@@ -3613,9 +3633,8 @@ class ConvpaintWidget(QWidget):
         self.current_model_path = 'trained, unsaved'
         self.trained = True
         self._reset_predict_buttons()
-        # self.save_model_btn.setEnabled(True)
         self._set_model_description()
-    
+
     def _update_training_counts(self):
         """Update the training counts (used with continuous_training/memory_mode) in the GUI."""
         if self.cp_model is None:
@@ -3951,3 +3970,68 @@ class ConvpaintWidget(QWidget):
                     return
         except Exception:
             pass
+
+    def _on_train_on_multifile(self):
+        """Train the model on all images that have annotations stored in memory (multifile store).
+
+        Ensures any current open multifile annotation is pushed to the in-memory store
+        before assembling lists and delegating to `_train_multiple`.
+        """
+        # Ensure current open annotation (if any) is saved to the store
+        fname = getattr(self, '_current_multifile_filename', None)
+        if fname is not None and hasattr(self, 'annot_prefix') and self.annot_prefix in self.viewer.layers:
+            try:
+                labels_layer = self.viewer.layers[self.annot_prefix]
+                # copy data to avoid referencing the live array
+                self._multifile_annotation_store[fname] = np.copy(labels_layer.data)
+            except Exception:
+                # best-effort push; continue regardless
+                pass
+
+        # Assemble lists from the in-memory store
+        if not hasattr(self, '_multifile_annotation_store') or not self._multifile_annotation_store:
+            warnings.warn('No annotations in memory to train on.')
+            return
+
+        folder_text = self.multifile_path_edit.text() if hasattr(self, 'multifile_path_edit') else ''
+        if not folder_text:
+            warnings.warn('Multifile path is not set. Cannot load images for training.')
+            return
+        folder = Path(folder_text)
+
+        filenames = list(self._multifile_annotation_store.keys())
+        img_prepared = []
+        annots = []
+        for fn in filenames:
+            p = folder / fn
+            try:
+                arr = imageio.imread(str(p))
+            except Exception:
+                warnings.warn(f'Could not read image {p}. Skipping.')
+                continue
+
+            # Lightweight wrapper with .data and .ndim to reuse _get_data_channel_first, which takes napari image layers (!) not arrays
+            class _ImgLike:
+                def __init__(self, data):
+                    self.data = data
+                    self.ndim = data.ndim
+
+            try:
+                prep = self._get_data_channel_first(_ImgLike(arr))
+            except Exception:
+                warnings.warn(f'Could not prepare image {p} for training. Skipping.')
+                continue
+            img_prepared.append(prep)
+            annots.append(np.copy(self._multifile_annotation_store[fn]))
+
+        if len(img_prepared) == 0 or len(annots) == 0:
+            warnings.warn('No valid image/annotation pairs available for training.')
+            return
+
+        # Ensure equal lengths
+        if len(img_prepared) != len(annots):
+            warnings.warn('Mismatch between loaded images and annotations. Aborting training.')
+            return
+
+        # Delegate to core trainer
+        self._train_multiple(filenames[:len(img_prepared)], img_prepared, annots)
