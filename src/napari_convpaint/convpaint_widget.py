@@ -2279,8 +2279,7 @@ class ConvpaintWidget(QWidget):
         # Multifile attributes
         self._multifile_warned = False # Whether the user has already seen the "remove existing layers" warning (for Multifile)
         self._multifile_annotation_store = {} # In-memory store for annotations keyed by filename
-        # recent folders used for multifile dialogs (most-recent-last); keep small history
-        self._multifile_recent_folders = []
+        self._multifile_last_folder = '' # Last used folder for images/annotations dialogs (used as default in folder pickers)
         self._multifile_update_annot_tick = True # Flag to adjust updating tick when opening images
         self._multifile_last_annot = None
         self._import_annotations_warned = False # Whether the user has already seen the "import annotations" warning (for Multifile)
@@ -3844,9 +3843,13 @@ class ConvpaintWidget(QWidget):
             except Exception:
                 pass
 
-        folder = QFileDialog.getExistingDirectory(self, 'Select image folder', str(Path.cwd()))
+        default_dir = str(Path(self._multifile_last_folder)) if getattr(self, '_multifile_last_folder', None) else str(Path.cwd())
+        folder = QFileDialog.getExistingDirectory(self, 'Select image folder', default_dir)
         if not folder:
             return
+
+        # Remember last used images folder for future dialogs
+        self._multifile_last_folder = str(Path(folder))
 
         # Reset in-memory annotations when opening a new folder
         self._multifile_annotation_store = {}
@@ -3859,15 +3862,17 @@ class ConvpaintWidget(QWidget):
         self.multifile_path_edit.setText(folder)
         p = Path(folder)
         try:
-            files = sorted([f.name for f in p.iterdir() if f.is_file()])
+            files = sorted([f for f in p.iterdir() if f.is_file()])
         except Exception:
             files = []
         self.multifile_list.setRowCount(0)
         for f in files:
+            fname = f.name
+            stem = f.stem
             # Filter out annotations and segmentations
-            file_suffix = f.split('_')[-1].lower() if '_' in f else ''
-            if file_suffix and (file_suffix in self.multifile_annot_suffixes or
-                                file_suffix in self.multifile_seg_suffixes):
+            stem_suffix = stem.split('_')[-1].lower() if '_' in stem else ''
+            if stem_suffix and (stem_suffix in self.multifile_annot_suffixes or
+                                stem_suffix in self.multifile_seg_suffixes):
                 continue
             # Add file to the list/table
             row = self.multifile_list.rowCount()
@@ -3878,7 +3883,7 @@ class ConvpaintWidget(QWidget):
             item_annot.setForeground(QtGui.QBrush(QtGui.QColor('red')))
             # make annotated flag non-editable
             item_annot.setFlags(item_annot.flags() & ~Qt.ItemIsEditable)
-            item_filename = QTableWidgetItem(f)
+            item_filename = QTableWidgetItem(fname)
             # make filename non-editable
             item_filename.setFlags(item_filename.flags() & ~Qt.ItemIsEditable)
             self.multifile_list.setItem(row, 0, item_annot)
@@ -4140,14 +4145,15 @@ class ConvpaintWidget(QWidget):
                     return
                 self._import_annotations_warned = True
 
-        folder = QFileDialog.getExistingDirectory(self, 'Select annotations folder', str(Path.cwd()))
+        default_dir = str(Path(self._multifile_last_folder)) if getattr(self, '_multifile_last_folder', None) else str(Path.cwd())
+        folder = QFileDialog.getExistingDirectory(self, 'Select annotations folder', default_dir)
         if not folder:
             return
         p = Path(folder)
 
         # Clear existing in-memory annotations; we'll register imported ones as paths
         self._multifile_annotation_store = {}
-        self._multifile_annotation_folder = str(p)
+        self._multifile_last_folder = str(p)
 
         # Clear current annotation layer if open (otherwise it will lead to confusion with imported annotations)
         if self.annot_tag in self.viewer.layers:
@@ -4203,10 +4209,13 @@ class ConvpaintWidget(QWidget):
             warnings.warn('No annotations in memory to export.')
             return
 
-        folder = QFileDialog.getExistingDirectory(self, 'Select export folder', str(Path.cwd()))
+        default_dir = str(Path(self._multifile_last_folder)) if getattr(self, '_multifile_last_folder', None) else str(Path.cwd())
+        folder = QFileDialog.getExistingDirectory(self, 'Select export folder', default_dir)
         if not folder:
             return
         out_dir = Path(folder)
+        # Remember last used annotations export folder
+        self._multifile_last_folder = str(out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
 
         # Check for existing files and warn if any will be overwritten (always ask)
@@ -4241,8 +4250,6 @@ class ConvpaintWidget(QWidget):
                 tifffile.imwrite(str(out_name), data.astype(np.uint8))
                 # mark as persistent by storing the exported path string
                 self._multifile_annotation_store[fname] = str(out_name)
-                # remember latest annotation folder
-                self._multifile_annotation_folder = str(out_dir)
                 self._set_multifile_annot_tick(fname)
                 exported += 1
             except Exception:
