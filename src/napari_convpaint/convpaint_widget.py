@@ -569,12 +569,14 @@ class ConvpaintWidget(QWidget):
         # Create three groups for the Multifile tab to match other tabs' style
         self.multifile_files_group = VHGroup('Files', orientation='G')
         self.multifile_train_group = VHGroup('Train/Segment', orientation='G')
+        self.multifile_reset_group = VHGroup('Clear/Reset', orientation='G')
         self.multifile_import_export_group = VHGroup('Export/Import', orientation='G')
         self.multifile_settings_group = VHGroup('Settings', orientation='G')
 
         # Add groups to the Multifile tab
         self.tabs.add_named_tab('Multifile', self.multifile_files_group.gbox, [0, 0, 8, 2])
-        self.tabs.add_named_tab('Multifile', self.multifile_train_group.gbox, [8, 0, 3, 2])
+        self.tabs.add_named_tab('Multifile', self.multifile_reset_group.gbox, [8, 0, 1, 2])
+        self.tabs.add_named_tab('Multifile', self.multifile_train_group.gbox, [9, 0, 2, 2])
         self.tabs.add_named_tab('Multifile', self.multifile_import_export_group.gbox, [11, 0, 1, 2])
         # self.tabs.add_named_tab('Multifile', self.multifile_settings_group.gbox, [12, 0, 1, 2])
 
@@ -601,6 +603,11 @@ class ConvpaintWidget(QWidget):
         self.multifile_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.multifile_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.multifile_files_group.glayout.addWidget(self.multifile_list, 1, 0, 1, 3)
+
+        self.multifile_clear_annotations_btn = QPushButton('Clear annotations for selected')
+        self.multifile_reset_group.glayout.addWidget(self.multifile_clear_annotations_btn, 2, 0, 1, 1)
+        self.multifile_reset_folder_btn = QPushButton('Reset folder (clear list)')
+        self.multifile_reset_group.glayout.addWidget(self.multifile_reset_folder_btn, 2, 1, 1, 1)
 
         # --- Train/Segment group: action buttons (placeholders for now)
         self.btn_train_all_annot = QPushButton('Train on all annotated images')
@@ -1026,6 +1033,8 @@ class ConvpaintWidget(QWidget):
         if 'Multifile' in self.tab_names:
             self.multifile_select_btn.clicked.connect(self._select_multifile_img_folder)
             self.multifile_list.cellDoubleClicked.connect(self._on_multifile_open_file)
+            self.multifile_clear_annotations_btn.clicked.connect(lambda: self._add_empty_annot(event=None, force_add=True, from_multifile=True))
+            self.multifile_reset_folder_btn.clicked.connect(lambda: self._reset_multifile_folder())
             self.btn_train_all_annot.clicked.connect(self._on_train_on_multifile)
             self.btn_import_annotations.clicked.connect(self._import_annotations)
             self.btn_export_annotations.clicked.connect(self._export_annotations)
@@ -2189,6 +2198,9 @@ class ConvpaintWidget(QWidget):
             self.class_names_layout.addWidget(self.import_class_btn, len(self.class_names)+2, 5, 1, 5)
             self.class_names_layout.addWidget(self.reset_class_names_btn, len(self.class_names)+3, 0, 1, 10)
             self.class_names_layout.addWidget(self.btn_class_distribution_annot, len(self.class_names)+4, 0, 1, 10)
+        
+        if 'Multifile' in self.tab_names:
+            self._reset_multifile_folder()
 
         # Re-apply device dropdown state after attributes reset potentially changed policies.
         self._reset_device_options()
@@ -2260,13 +2272,14 @@ class ConvpaintWidget(QWidget):
         self.cmap_flag = False # Flag to prevent infinite loops when changing colormaps
         self.labels_cmap = None # Colormap for the labels (annotations and segmentation)
         self._block_layer_select = True # Flag to block layer selection events temporarily
-        # Whether the user has already seen the "remove existing layers" warning (for Multifile)
-        self._multifile_warned = False
-        # In-memory store for annotations keyed by filename
-        self._multifile_annotation_store = {}
-        # Current multifile-opened filename (when opened via Multifile UI)
-        self._current_multifile_filename = None
-        self.store_annot = False
+        # Multifile attributes
+        self._multifile_warned = False # Whether the user has already seen the "remove existing layers" warning (for Multifile)
+        self._multifile_annotation_store = {} # In-memory store for annotations keyed by filename
+        self._multifile_update_annot_tick = True # Flag to adjust updating tick when opening images
+        self._multifile_last_annot = None
+        self._import_annotations_warned = False # Whether the user has already seen the "import annotations" warning (for Multifile)
+        self._current_multifile_filename = None # Current multifile-opened filename (when opened via Multifile UI)
+        self.store_annot = False # Flag whether to store annotations in the in-memory store (for Multifile)
 
 ### Model Tab
 
@@ -3831,11 +3844,11 @@ class ConvpaintWidget(QWidget):
 
         # Reset in-memory annotations when opening a new folder
         self._multifile_annotation_store = {}
+        # Set flag that shall update multifile annotation tick
+        self._multifile_update_annot_tick = True
+        self._multifile_last_annot = None
         # Reset import warning flag so user is asked again when importing
         self._import_annotations_warned = False
-        # Set flag that shall update multifile annotation tick
-        self._multifile_update_annot_flag = True
-        self._multifile_last_annot = None
 
         self.multifile_path_edit.setText(folder)
         p = Path(folder)
@@ -3859,21 +3872,24 @@ class ConvpaintWidget(QWidget):
             self.multifile_list.setItem(row, 0, item_annot)
             self.multifile_list.setItem(row, 1, item_filename)
 
-        # ensure any internal imported-annotation tracking is cleared for new folder
-        # try:
-        #     if not hasattr(self, '_multifile_annotation_store'):
-        #         self._multifile_annotation_store = {}
-        #     if not hasattr(self, '_multifile_annotation_imported'):
-        #         self._multifile_annotation_imported = set()
-        # except Exception:
-        #     pass
-
         # Automatically open the first image in the list (if any)
         if files:
             try:
                 self._on_multifile_open_file(0, 1)
             except Exception:
                 pass
+
+    def _reset_multifile_folder(self):
+        """Reset the multifile folder selection and clear the file list."""
+        self.multifile_path_edit.setText('')
+        self.multifile_list.setRowCount(0)
+        # Clear in-memory annotation store and imported tracking
+        self._multifile_warned = False
+        self._multifile_annotation_store = {}
+        self._import_annotations_warned = False
+        # Reset flag to update annotation tick
+        self._multifile_update_annot_tick = True
+        self._multifile_last_annot = None
 
     def _on_multifile_open_file(self, row, column):
         """Open the file at the given row in the viewer without making it the Convpaint 'image layer'.
@@ -3894,8 +3910,8 @@ class ConvpaintWidget(QWidget):
         except Exception:
             return
 
-        # Temporarily disable auto-adding annotation layers    
-        original_auto = getattr(self, 'auto_add_layers', False)
+        # Temporarily disable auto-adding annotation layers (we do it manually below)
+        original_auto = getattr(self, 'auto_add_layers', False) # Save old value to restore later
         setattr(self, 'auto_add_layers', False) 
     
         # If there are existing layers in the viewer, remove them
@@ -3921,8 +3937,8 @@ class ConvpaintWidget(QWidget):
         # Track current filename opened via Multifile
         self._current_multifile_filename = filename
 
-        # Set flag to not update flag when opening an image, also not through adding from file/memory (annot status cannot change here)
-        self._multifile_update_annot_flag = False
+        # Set flag to not update tick when opening an image, esp. not through adding from file/memory (annot status cannot change here)
+        self._multifile_update_annot_tick = False
         # Add a layer (will be filled if find data)
         self._add_empty_annot(event=None, force_add=True, from_multifile=True)
         # If we have a stored annotation for this filename, add its data to the labels layer
@@ -3943,7 +3959,7 @@ class ConvpaintWidget(QWidget):
                 pass
 
         # Reset flag to update annotation status on annotation changes (e.g. painting)
-        QTimer.singleShot(1000, lambda: setattr(self, '_multifile_update_annot_flag', True))
+        QTimer.singleShot(1000, lambda: setattr(self, '_multifile_update_annot_tick', True))
         QTimer.singleShot(1000, lambda: setattr(self, '_multifile_last_annot', self.viewer.layers[self.annot_prefix].data.copy()
                                                 if self.annot_prefix in self.viewer.layers else None))
 
@@ -3987,7 +4003,7 @@ class ConvpaintWidget(QWidget):
     def _set_multifile_annot_tick(self, filename):
         """Update the Annotated column in the multifile table for a given filename."""
         # Guard from changing flag when opening images or not making changes to annotations
-        if not self._multifile_update_annot_flag:
+        if not self._multifile_update_annot_tick:
             print("Skipping because of flag")
             return
         # Find row and adjust tick...
