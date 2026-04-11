@@ -3833,6 +3833,9 @@ class ConvpaintWidget(QWidget):
         self._multifile_annotation_store = {}
         # Reset import warning flag so user is asked again when importing
         self._import_annotations_warned = False
+        # Set flag that shall update multifile annotation tick
+        self._multifile_update_annot_flag = True
+        self._multifile_last_annot = None
 
         self.multifile_path_edit.setText(folder)
         p = Path(folder)
@@ -3912,11 +3915,15 @@ class ConvpaintWidget(QWidget):
             self.viewer.open(path, name=path.name)
         except Exception as e:
             QMessageBox.critical(self, 'Failed to open', f'Could not open {path}: {e}')
-        QTimer.singleShot(100, lambda: setattr(self, 'auto_add_layers', original_auto)) # Restore auto-adding annotation layers setting
+        # Restore auto-adding annotation layers setting
+        QTimer.singleShot(100, lambda: setattr(self, 'auto_add_layers', original_auto))
 
         # Track current filename opened via Multifile
         self._current_multifile_filename = filename
 
+        # Set flag to not update flag when opening an image, also not through adding from file/memory (annot status cannot change here)
+        self._multifile_update_annot_flag = False
+        # Add a layer (will be filled if find data)
         self._add_empty_annot(event=None, force_add=True, from_multifile=True)
         # If we have a stored annotation for this filename, add its data to the labels layer
         if filename in getattr(self, '_multifile_annotation_store', {}):
@@ -3932,16 +3939,13 @@ class ConvpaintWidget(QWidget):
                 else:
                     # ndarray in memory
                     self.viewer.layers[self.annot_prefix].data = stored.copy()
-                # update table tick
-                self._set_multifile_annot_flag(filename)
             except Exception:
                 pass
-        else: # No stored annotation; create an empty annotation (depending on settings)
-            try:
-                # update table tick to false (no annotations yet)
-                self._set_multifile_annot_flag(filename)
-            except Exception:
-                pass
+
+        # Reset flag to update annotation status on annotation changes (e.g. painting)
+        QTimer.singleShot(1000, lambda: setattr(self, '_multifile_update_annot_flag', True))
+        QTimer.singleShot(1000, lambda: setattr(self, '_multifile_last_annot', self.viewer.layers[self.annot_prefix].data.copy()
+                                                if self.annot_prefix in self.viewer.layers else None))
 
     def _on_annotation_changed(self, event=None):
         """Save annotation for current multifile image if present."""
@@ -3974,12 +3978,19 @@ class ConvpaintWidget(QWidget):
                 if hasattr(self, '_multifile_annotation_store') and fname in self._multifile_annotation_store:
                     del self._multifile_annotation_store[fname]
             # update table flag (type-based)
-            self._set_multifile_annot_flag(fname)
+            if not np.all(self._multifile_last_annot == data): # Check this only on changes, not on opening images
+                self._set_multifile_annot_tick(fname)
+            QTimer.singleShot(1000, lambda: setattr(self, '_multifile_last_annot', data.copy()))
         except Exception:
             pass
 
-    def _set_multifile_annot_flag(self, filename):
+    def _set_multifile_annot_tick(self, filename):
         """Update the Annotated column in the multifile table for a given filename."""
+        # Guard from changing flag when opening images or not making changes to annotations
+        if not self._multifile_update_annot_flag:
+            print("Skipping because of flag")
+            return
+        # Find row and adjust tick...
         try:
             for r in range(self.multifile_list.rowCount()):
                 it = self.multifile_list.item(r, 1)
@@ -4112,6 +4123,13 @@ class ConvpaintWidget(QWidget):
         self._multifile_annotation_store = {}
         self._multifile_annotation_folder = str(p)
 
+        # Clear current annotation layer if open
+        if self.annot_prefix in self.viewer.layers:
+            try:
+                self.viewer.layers.remove(self.viewer.layers[self.annot_prefix])
+            except Exception:
+                pass
+
         # Build mapping from image stem -> filename in table
         table_map = {}
         for r in range(self.multifile_list.rowCount()):
@@ -4129,16 +4147,16 @@ class ConvpaintWidget(QWidget):
             if f.suffix.lower() not in ('.tif', '.tiff'):
                 continue
             stem = f.stem
-            if not stem.endswith('_annotations'):
+            if not stem.endswith(f'_{self.annot_prefix}'):
                 continue
-            img_stem = stem[:-len('_annotations')]
+            img_stem = stem[:-len(f'_{self.annot_prefix}')]
             if img_stem not in table_map:
                 continue
             target_fname = table_map[img_stem]
             try:
                 # Register the file path (string) so it's considered persistent
                 self._multifile_annotation_store[target_fname] = str(f)
-                self._set_multifile_annot_flag(target_fname)
+                self._set_multifile_annot_tick(target_fname)
                 imported += 1
             except Exception:
                 warnings.warn(f'Could not register annotation for {target_fname}.')
@@ -4197,7 +4215,7 @@ class ConvpaintWidget(QWidget):
                 self._multifile_annotation_store[fname] = str(out_name)
                 # remember latest annotation folder
                 self._multifile_annotation_folder = str(out_dir)
-                self._set_multifile_annot_flag(fname)
+                self._set_multifile_annot_tick(fname)
                 exported += 1
             except Exception:
                 warnings.warn(f'Could not export annotation for {fname}.')
