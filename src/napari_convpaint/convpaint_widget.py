@@ -48,10 +48,14 @@ class ConvpaintWidget(QWidget):
         super().__init__(parent=parent)
         self.viewer = napari_viewer
 
+        # Set settings/values that never change
         self.third_party = third_party
         self.selected_channel = None
         self.spatial_dim_info_thresh = 1000000
         self.default_brush_size = 3
+        self.multifile_annot_suffixes = ["annot", "annotation", "annotations", "label", "labels", "scribble", "scribbles", "scrib"]
+        self.multifile_seg_suffixes = ["seg", "segmentation", "segmentations", "prediction", "predictions", "pred", "preds", "mask", "masks"]
+        # Set initial values for attributes that change and can be reset to defaults
         self._reset_attributes()
 
         ### Build the widget
@@ -570,7 +574,7 @@ class ConvpaintWidget(QWidget):
         self.multifile_files_group = VHGroup('Files', orientation='G')
         self.multifile_train_group = VHGroup('Train/Segment', orientation='G')
         self.multifile_reset_group = VHGroup('Clear/Reset', orientation='G')
-        self.multifile_import_export_group = VHGroup('Export/Import', orientation='G')
+        self.multifile_import_export_group = VHGroup('Import/Export', orientation='G')
         self.multifile_settings_group = VHGroup('Settings', orientation='G')
 
         # Add groups to the Multifile tab
@@ -611,7 +615,7 @@ class ConvpaintWidget(QWidget):
 
         # --- Train/Segment group: action buttons (placeholders for now)
         self.btn_train_all_annot = QPushButton('Train on all annotated images')
-        self.btn_segment_selected = QPushButton('Segment all (save to folder)')
+        self.btn_segment_selected = QPushButton('Segment selected (save to folder)')
 
         self.multifile_train_group.glayout.addWidget(self.btn_train_all_annot, 0, 0, 2, 1)
         # self.multifile_train_group.glayout.addWidget(self.btn_segment_selected, 0, 1, 1, 1)
@@ -626,8 +630,8 @@ class ConvpaintWidget(QWidget):
         self.multifile_import_export_group.glayout.addWidget(self.btn_import_annotations, 0, 1, 1, 1)
 
         # --- Settings group: checkboxes
-        self.check_show_annotations = QCheckBox('Show annotations')
-        self.check_show_segmentations = QCheckBox('Show segmentations')
+        self.check_show_annotations = QCheckBox('Open annotations')
+        self.check_show_segmentations = QCheckBox('Open segmentations')
         self.check_show_annotations.setChecked(True)
         self.check_show_segmentations.setChecked(True)
         self.multifile_settings_group.glayout.addWidget(self.check_show_annotations, 0, 0, 1, 1)
@@ -977,8 +981,8 @@ class ConvpaintWidget(QWidget):
             if self.annotation_layer_selection_widget.value is not None:
                 labels_layer = self.annotation_layer_selection_widget.value
                 labels_layer.events.colormap.connect(self._on_change_annot_cmap)
-            if self.seg_prefix in self.viewer.layers:
-                seg_layer = self.viewer.layers[self.seg_prefix]
+            if self.seg_tag in self.viewer.layers:
+                seg_layer = self.viewer.layers[self.seg_tag]
                 seg_layer.events.colormap.connect(self._on_change_seg_cmap)
             self.btn_class_distribution_annot.clicked.connect(lambda: self._on_show_class_distribution(trained_data=False))
         
@@ -1057,14 +1061,14 @@ class ConvpaintWidget(QWidget):
 
     def toggle_prediction(self, event=None):
         """Hide/unhide prediction layer."""
-        if not self.seg_prefix in self.viewer.layers:
+        if not self.seg_tag in self.viewer.layers:
             return
-        if self.viewer.layers[self.seg_prefix].visible == False:
-            self.viewer.layers[self.seg_prefix].visible = True
+        if self.viewer.layers[self.seg_tag].visible == False:
+            self.viewer.layers[self.seg_tag].visible = True
             self.viewer.layers.selection.active = None
-            self.viewer.layers.selection.active = self.viewer.layers[self.seg_prefix]
+            self.viewer.layers.selection.active = self.viewer.layers[self.seg_tag]
         else:
-            self.viewer.layers[self.seg_prefix].visible = False
+            self.viewer.layers[self.seg_tag].visible = False
 
     def set_annot_label_class(self, x, event=None):
         """Set the label class of the annotation layer."""
@@ -1094,8 +1098,8 @@ class ConvpaintWidget(QWidget):
         # Add default annot and seg layers if they exist
         if self.annotation_layer_selection_widget.value is not None:
             self.annot_layers.add(self.annotation_layer_selection_widget.value)
-        if self.seg_prefix in self.viewer.layers:
-            self.seg_layers.add(self.viewer.layers[self.seg_prefix])
+        if self.seg_tag in self.viewer.layers:
+            self.seg_layers.add(self.viewer.layers[self.seg_tag])
         # Update all class names and icons
         self.update_all_class_names_and_cmaps()
 
@@ -1328,13 +1332,13 @@ class ConvpaintWidget(QWidget):
         if self.cmap_flag:
             return
         if event is not None:
-            if self.seg_prefix not in self.viewer.layers or event.source != self.viewer.layers[self.seg_prefix]:
+            if self.seg_tag not in self.viewer.layers or event.source != self.viewer.layers[self.seg_tag]:
                 return
         # Make sure we are not in a loop
         self.cmap_flag = True
         # Update the colormap of all labels layers according to the segmentation layer
-        if self.seg_prefix in self.viewer.layers:
-            self._update_cmaps(source_layer=self.viewer.layers[self.seg_prefix])
+        if self.seg_tag in self.viewer.layers:
+            self._update_cmaps(source_layer=self.viewer.layers[self.seg_tag])
         # Turn off the flag to allow for new events
         self.cmap_flag = False
 
@@ -1579,14 +1583,14 @@ class ConvpaintWidget(QWidget):
         """Automatically select an annotation layer according to the prefix and image name."""
 
         # Set the name of the annotations accordingly
-        annot_name = f"{self.annot_prefix}_{self.selected_channel}"
+        annot_name = f"{self.annot_tag}_{self.selected_channel}"
         # Check if there are fitting labels layers present in the viewer
         found_layers = [layer.name for layer in self.viewer.layers # Take all layers
                         if isinstance(layer, napari.layers.Labels) # that are labels layers
                         and layer.name[:len(annot_name)] == annot_name] # and start with the prefix
-        if self.annot_prefix in self.viewer.layers and isinstance(self.viewer.layers[self.annot_prefix], napari.layers.Labels):
+        if self.annot_tag in self.viewer.layers and isinstance(self.viewer.layers[self.annot_tag], napari.layers.Labels):
             # If there is a layer with the name "annotations", set it as the annotation layer
-            annot_name = self.annot_prefix
+            annot_name = self.annot_tag
         elif len(found_layers) > 0:
             if len(found_layers) > 1:
                 show_info('Multiple annotation layers found. The first one (alphabetically) is chosen.')
@@ -1796,11 +1800,11 @@ class ConvpaintWidget(QWidget):
 
             # Update segmentation layer
             if data_dims in ['2D', '2D_RGB', '3D_multi']:
-                self.viewer.layers[self.seg_prefix].data = segmentation
+                self.viewer.layers[self.seg_tag].data = segmentation
             elif data_dims in ['3D_single', '4D', '3D_RGB']: # seg has no channel dim -> z is first
-                self.viewer.layers[self.seg_prefix].data[step] = segmentation
+                self.viewer.layers[self.seg_tag].data[step] = segmentation
             # Case `data_dims is None` and other invalid cases are already caught above, so we don't need an else statement here
-            self.viewer.layers[self.seg_prefix].refresh()
+            self.viewer.layers[self.seg_tag].refresh()
 
         # Add probabilities if enabled
         if self.add_probas:
@@ -1918,8 +1922,8 @@ class ConvpaintWidget(QWidget):
 
             # Add the slices to the segmentation and probabilities layers
             if self.add_seg:
-                self.viewer.layers[self.seg_prefix].data[step] = seg
-                self.viewer.layers[self.seg_prefix].refresh()
+                self.viewer.layers[self.seg_tag].data[step] = seg
+                self.viewer.layers[self.seg_tag].refresh()
             if self.add_probas:
                 self.viewer.layers[self.proba_prefix].data[..., step, :, :] = probas
                 self.viewer.layers[self.proba_prefix].refresh()
@@ -2248,8 +2252,8 @@ class ConvpaintWidget(QWidget):
         self.auto_add_layers = True # Automatically add layers when a new image is selected
         self.keep_layers = False # Keep old layers when adding new ones
         self.auto_select_annot = False # Automatically select annotation layer based on image name
-        self.annot_prefix = 'annotations' # Prefix for the annotation layer names
-        self.seg_prefix = 'segmentation' # Prefix for the segmentation layer names
+        self.annot_tag = 'annotations' # Prefix for the annotation layer names
+        self.seg_tag = 'segmentation' # Prefix for the segmentation layer names
         self.proba_prefix = 'probabilities' # Prefix for the class probabilities layer names
         self.features_prefix = 'features' # Prefix for the feature image layer name
         self.cont_training = "image" # Update features for subsequent training ("image" or "off" or "global")
@@ -2275,6 +2279,8 @@ class ConvpaintWidget(QWidget):
         # Multifile attributes
         self._multifile_warned = False # Whether the user has already seen the "remove existing layers" warning (for Multifile)
         self._multifile_annotation_store = {} # In-memory store for annotations keyed by filename
+        # recent folders used for multifile dialogs (most-recent-last); keep small history
+        self._multifile_recent_folders = []
         self._multifile_update_annot_tick = True # Flag to adjust updating tick when opening images
         self._multifile_last_annot = None
         self._import_annotations_warned = False # Whether the user has already seen the "import annotations" warning (for Multifile)
@@ -2529,7 +2535,7 @@ class ConvpaintWidget(QWidget):
         transform_kwargs = self._get_layer_transform_kwargs(img, num_spatial_dims=num_spatial, num_leading_dims=0)
 
         # Create a new annotation layer if it doesn't exist yet
-        annotation_exists = self.annot_prefix in self.viewer.layers
+        annotation_exists = self.annot_tag in self.viewer.layers
 
         if (not self.third_party) | (self.third_party & annotation_exists) | (force_add):
             # Create a temp named annotation layer, so we can select it before renaming the old one
@@ -2554,19 +2560,19 @@ class ConvpaintWidget(QWidget):
                     self._rename_annot_for_backup()
                 # Otherwise, just remove the old annotation layer
                 else:
-                    self.viewer.layers.remove(self.annot_prefix)
+                    self.viewer.layers.remove(self.annot_tag)
             # Create a copy of the temp layer with the original name (so we can select it)
             self.viewer.add_labels(
                 data=self.viewer.layers[temp_name].data,
-                name=self.annot_prefix,
+                name=self.annot_tag,
                 **transform_kwargs
                 )
-            new_annot_layer = self.viewer.layers[self.annot_prefix]
+            new_annot_layer = self.viewer.layers[self.annot_tag]
             # Select the new annotation layer in the dropdown
             if new_annot_layer in self.annotation_layer_selection_widget.choices:
                 self.annotation_layer_selection_widget.value = new_annot_layer
             else:
-                warnings.warn(f'The annotation layer {self.annot_prefix} could not be selected. ' +
+                warnings.warn(f'The annotation layer {self.annot_tag} could not be selected. ' +
                               'This might cause problems with the annotation layer creation.')
             # Remove the temp layer
             self.viewer.layers.remove(temp_name)
@@ -2578,7 +2584,7 @@ class ConvpaintWidget(QWidget):
             self.annot_layers.add(new_annot_layer)
 
         # Activate the annotation layer, select it in the dropdown and activate paint mode
-        if self.annot_prefix in self.viewer.layers:
+        if self.annot_tag in self.viewer.layers:
             self.viewer.layers.selection.active = new_annot_layer
             self.annotation_layer_selection_widget.value = new_annot_layer
             new_annot_layer.mode = 'paint'
@@ -2604,7 +2610,7 @@ class ConvpaintWidget(QWidget):
         transform_kwargs = self._get_layer_transform_kwargs(img, num_spatial_dims=num_spatial, num_leading_dims=0)
     
         # Create a new segmentation layer if it doesn't exist yet or we need a new one
-        seg_exists = self.seg_prefix in self.viewer.layers
+        seg_exists = self.seg_tag in self.viewer.layers
 
         # If we replace a current layer, we can backup the old one, and remove it
         if self.new_seg & seg_exists:
@@ -2613,20 +2619,20 @@ class ConvpaintWidget(QWidget):
                 self._rename_seg_for_backup()
             # Otherwise, just remove the old segmentation layer
             else:
-                self.viewer.layers.remove(self.seg_prefix)
+                self.viewer.layers.remove(self.seg_tag)
 
         # If there was no segmentation layer, or we need a new one, create it
         if (not seg_exists) or self.new_seg:
             self.viewer.add_labels(
                 data=np.zeros((layer_shape), dtype=np.uint8),
-                name=self.seg_prefix,
+                name=self.seg_tag,
                 **transform_kwargs
                 )
             # Save information about the segmentation layer to be able to rename it later
             self._set_old_seg_tag()
             
             # Add it to the list of layers where class names shall be updated
-            self.seg_layers.add(self.viewer.layers[self.seg_prefix])
+            self.seg_layers.add(self.viewer.layers[self.seg_tag])
             self.update_all_class_names_and_cmaps()
 
     def _check_create_probas_layer(self, num_classes):
@@ -2727,9 +2733,9 @@ class ConvpaintWidget(QWidget):
         """Name the annotation with a unique name according to its image,
         so it can be kept when adding a new with the standard name."""
         # Rename the layer to avoid overwriting it
-        if self.annot_prefix in self.viewer.layers:
+        if self.annot_tag in self.viewer.layers:
             full_name = self._get_unique_layer_name(self.old_annot_tag)
-            self.viewer.layers[self.annot_prefix].name = full_name
+            self.viewer.layers[self.annot_tag].name = full_name
             # Add it to the layers where class names shall be updated
             self.annot_layers.add(self.viewer.layers[full_name])
 
@@ -2737,9 +2743,9 @@ class ConvpaintWidget(QWidget):
         """Name the segmentation layer with a unique name according to its image,
         so it can be kept when adding a new with the standard name."""
         # Rename the layer to avoid overwriting it
-        if self.seg_prefix in self.viewer.layers:
+        if self.seg_tag in self.viewer.layers:
             full_name = self._get_unique_layer_name(self.old_seg_tag)
-            self.viewer.layers[self.seg_prefix].name = full_name
+            self.viewer.layers[self.seg_tag].name = full_name
             # Add it to the list of layers where class names shall be updated
             self.seg_layers.add(self.viewer.layers[full_name])
 
@@ -2788,12 +2794,12 @@ class ConvpaintWidget(QWidget):
     def _set_old_annot_tag(self):
         """Set the old annotation tag based on the current image layer and data dimensions.
         This is used to rename old annotation layers when creating new ones."""
-        self.old_annot_tag = f"{self.annot_prefix}_{self._get_old_data_tag()}"
+        self.old_annot_tag = f"{self.annot_tag}_{self._get_old_data_tag()}"
 
     def _set_old_seg_tag(self):
         """Set the old segmentation tag based on the current image layer and data dimensions.
         This is used to rename old segmentation layers when creating new ones."""
-        self.old_seg_tag = f"{self.seg_prefix}_{self._get_old_data_tag()}"
+        self.old_seg_tag = f"{self.seg_tag}_{self._get_old_data_tag()}"
 
     def _set_old_proba_tag(self):
         """Set the old probabilities tag based on the current image layer and data dimensions.
@@ -3562,7 +3568,7 @@ class ConvpaintWidget(QWidget):
             channel_mode_str = (self.radio_rgb.isChecked()*"RGB" +
                     self.radio_multi_channel.isChecked()*"multiCh" +
                     self.radio_single_channel.isChecked()*"singleCh")
-            layer_name = f'{self.annot_prefix}_{img.name}_{channel_mode_str}'
+            layer_name = f'{self.annot_tag}_{img.name}_{channel_mode_str}'
             layer_name = self._get_unique_layer_name(layer_name)
             data = np.zeros((layer_shape), dtype=np.uint8)
             # Create a new annotation layer with the unique name (copy image transforms)
@@ -3589,12 +3595,12 @@ class ConvpaintWidget(QWidget):
         layer_list.sort(key=lambda x: x.name)
         
         # Get the image and annotation layers based on the prefix
-        prefix_len = len(self.annot_prefix)
+        prefix_len = len(self.annot_tag)
         annot_list = [layer for layer in layer_list
-                      if layer.name[:prefix_len] == self.annot_prefix
+                      if layer.name[:prefix_len] == self.annot_tag
                       and isinstance(layer, napari.layers.Labels)]
         img_list = [layer for layer in layer_list
-                    if not layer.name[:prefix_len] == self.annot_prefix
+                    if not layer.name[:prefix_len] == self.annot_tag
                     and isinstance(layer, napari.layers.Image)]
 
         # NOTE: Checks are technically not necessary here, as it is done in the CPModel
@@ -3858,6 +3864,12 @@ class ConvpaintWidget(QWidget):
             files = []
         self.multifile_list.setRowCount(0)
         for f in files:
+            # Filter out annotations and segmentations
+            file_suffix = f.split('_')[-1].lower() if '_' in f else ''
+            if file_suffix and (file_suffix in self.multifile_annot_suffixes or
+                                file_suffix in self.multifile_seg_suffixes):
+                continue
+            # Add file to the list/table
             row = self.multifile_list.rowCount()
             self.multifile_list.insertRow(row)
             # Annotated column: red X for initial state (no annotations loaded)
@@ -3946,22 +3958,20 @@ class ConvpaintWidget(QWidget):
             stored = self._multifile_annotation_store[filename]
             try:
                 if isinstance(stored, str):
-                    # stored as path -> read on demand but keep store as path
-                    try:
-                        arr = tifffile.imread(stored)
-                        self.viewer.layers[self.annot_prefix].data = np.asarray(arr)
-                    except Exception:
-                        pass
+                    # Stored as path -> read on demand but keep store as path
+                    arr = self.read_labels_file(stored)
+                    if arr is not None:
+                        self.viewer.layers[self.annot_tag].data = arr
                 else:
                     # ndarray in memory
-                    self.viewer.layers[self.annot_prefix].data = stored.copy()
+                    self.viewer.layers[self.annot_tag].data = stored.copy()
             except Exception:
                 pass
 
         # Reset flag to update annotation status on annotation changes (e.g. painting)
         QTimer.singleShot(1000, lambda: setattr(self, '_multifile_update_annot_tick', True))
-        QTimer.singleShot(1000, lambda: setattr(self, '_multifile_last_annot', self.viewer.layers[self.annot_prefix].data.copy()
-                                                if self.annot_prefix in self.viewer.layers else None))
+        QTimer.singleShot(1000, lambda: setattr(self, '_multifile_last_annot', self.viewer.layers[self.annot_tag].data.copy()
+                                                if self.annot_tag in self.viewer.layers else None))
 
     def _on_annotation_changed(self, event=None):
         """Save annotation for current multifile image if present."""
@@ -3975,7 +3985,7 @@ class ConvpaintWidget(QWidget):
             layer = None
 
         # Check that we are handling the correct layer in the correct context (multifile mode, annotation layer)
-        if not self.store_annot or not layer or layer.name != self.annot_prefix:
+        if not self.store_annot or not layer or layer.name != self.annot_tag:
             return
         # Determine filename for current multifile image
         fname = getattr(self, '_current_multifile_filename', None)
@@ -4004,7 +4014,6 @@ class ConvpaintWidget(QWidget):
         """Update the Annotated column in the multifile table for a given filename."""
         # Guard from changing flag when opening images or not making changes to annotations
         if not self._multifile_update_annot_tick:
-            print("Skipping because of flag")
             return
         # Find row and adjust tick...
         try:
@@ -4043,9 +4052,9 @@ class ConvpaintWidget(QWidget):
         """
         # Ensure current open annotation (if any) is saved to the store
         fname = getattr(self, '_current_multifile_filename', None)
-        if fname is not None and hasattr(self, 'annot_prefix') and self.annot_prefix in self.viewer.layers:
+        if fname is not None and hasattr(self, 'annot_prefix') and self.annot_tag in self.viewer.layers:
             try:
-                labels_layer = self.viewer.layers[self.annot_prefix]
+                labels_layer = self.viewer.layers[self.annot_tag]
                 # copy data to avoid referencing the live array
                 self._multifile_annotation_store[fname] = np.copy(labels_layer.data)
             except Exception:
@@ -4090,9 +4099,10 @@ class ConvpaintWidget(QWidget):
             stored = self._multifile_annotation_store.get(fn, None)
             if isinstance(stored, str):
                 try:
-                    arr_annot = tifffile.imread(stored)
-                    self._multifile_annotation_store[fn] = np.asarray(arr_annot)
-                    annots.append(np.asarray(arr_annot))
+                    arr_annot = self.read_labels_file(stored)
+                    if arr_annot is not None:
+                        self._multifile_annotation_store[fn] = arr_annot
+                        annots.append(arr_annot)
                 except Exception:
                     warnings.warn(f'Could not read stored annotation for {fn}. Skipping.')
                     continue
@@ -4139,10 +4149,10 @@ class ConvpaintWidget(QWidget):
         self._multifile_annotation_store = {}
         self._multifile_annotation_folder = str(p)
 
-        # Clear current annotation layer if open
-        if self.annot_prefix in self.viewer.layers:
+        # Clear current annotation layer if open (otherwise it will lead to confusion with imported annotations)
+        if self.annot_tag in self.viewer.layers:
             try:
-                self.viewer.layers.remove(self.viewer.layers[self.annot_prefix])
+                self.viewer.layers.remove(self.viewer.layers[self.annot_tag])
             except Exception:
                 pass
 
@@ -4160,12 +4170,13 @@ class ConvpaintWidget(QWidget):
         for f in p.iterdir():
             if not f.is_file():
                 continue
-            if f.suffix.lower() not in ('.tif', '.tiff'):
-                continue
             stem = f.stem
-            if not stem.endswith(f'_{self.annot_prefix}'):
+            stem_suffix = stem.split('_')[-1].lower() if '_' in stem else ''
+            if not stem_suffix:
                 continue
-            img_stem = stem[:-len(f'_{self.annot_prefix}')]
+            img_stem = stem[:-len(f'_{stem_suffix}')]
+            if not stem_suffix in self.multifile_annot_suffixes:
+                continue
             if img_stem not in table_map:
                 continue
             target_fname = table_map[img_stem]
@@ -4185,7 +4196,7 @@ class ConvpaintWidget(QWidget):
     def _export_annotations(self):
         """Export all annotations currently in memory to a chosen folder as TIFF files.
 
-        Files are named `<image_stem>_annotations.tif`. After successful export,
+        Files are named `<image_stem>_<annotation_tag>.tif`. After successful export,
         the corresponding table rows are marked as imported (green tick).
         """
         if not hasattr(self, '_multifile_annotation_store') or not self._multifile_annotation_store:
@@ -4202,7 +4213,7 @@ class ConvpaintWidget(QWidget):
         will_overwrite = False
         for fname in list(self._multifile_annotation_store.keys()):
             stem = Path(fname).stem
-            out_name = out_dir / f"{stem}_annotations.tif"
+            out_name = out_dir / f"{stem}_{self.annot_tag}.tif"
             if out_name.exists():
                 will_overwrite = True
                 break
@@ -4216,16 +4227,17 @@ class ConvpaintWidget(QWidget):
         for fname, annot in list(self._multifile_annotation_store.items()):
             try:
                 stem = Path(fname).stem
-                out_name = out_dir / f"{stem}_annotations.tif"
+                out_name = out_dir / f"{stem}_{self.annot_tag}.tif"
                 # If store contains a string path, read the file first to get array (technically just copying the file)
                 if isinstance(annot, str):
                     try:
-                        data = tifffile.imread(annot)
+                        data = self.read_labels_file(annot)
                     except Exception:
                         warnings.warn(f'Could not read stored annotation file {annot}. Skipping.')
                         continue
-                else:
-                    data = np.asarray(annot)
+                    if data is None:
+                        warnings.warn(f'Could not read stored annotation file {annot}. Skipping.')
+                        continue
                 tifffile.imwrite(str(out_name), data.astype(np.uint8))
                 # mark as persistent by storing the exported path string
                 self._multifile_annotation_store[fname] = str(out_name)
@@ -4240,3 +4252,20 @@ class ConvpaintWidget(QWidget):
             show_info(f'Exported {exported} annotations to {out_dir}')
         else:
             warnings.warn('No annotations were exported.')
+
+    def read_labels_file(self, path):
+        """Read a labels file from the given path using tifffile or imageio as fallback."""
+        # If tiff file, open with tifffile
+        if path.lower().endswith(('.tif', '.tiff')):
+            try:
+                arr = tifffile.imread(path)
+                return np.asarray(arr)
+            except Exception:
+                pass
+        # For any other file type, try with imageio
+        elif path.lower().endswith(('.png', '.jpg', '.jpeg')):
+            try:
+                arr = imageio.imread(path)
+                return np.asarray(arr)
+            except Exception:
+                pass
