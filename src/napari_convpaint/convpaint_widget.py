@@ -599,9 +599,24 @@ class ConvpaintWidget(QWidget):
 
         self.multifile_list = QTableWidget()
         self.multifile_list.setColumnCount(2)
-        self.multifile_list.setHorizontalHeaderLabels(['Annotated', 'Filename'])
+        self.multifile_list.setHorizontalHeaderLabels(['Annot.', 'Image Filename'])
+        # Align the 'Image Filename' header label to the left for readability
+        try:
+            header_item = self.multifile_list.horizontalHeaderItem(1)
+            header_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        except Exception:
+            pass
         self.multifile_list.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.multifile_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.multifile_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        # Allow sorting by clicking the header
+        self.multifile_list.setSortingEnabled(True)
+        self.multifile_list.horizontalHeader().setSectionsClickable(True)
+        # Make rows a bit thinner by setting the default row height
+        try:
+            self.multifile_list.verticalHeader().setDefaultSectionSize(24)
+        except Exception:
+            pass
+        # Keep an explicit maximum height for the widget area
         self.multifile_list.setFixedHeight(340)
         # Make filename column stretch and annotated column autosize
         self.multifile_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
@@ -774,19 +789,19 @@ class ConvpaintWidget(QWidget):
         # Class names tab
         if 'Class names' in self.tab_names:
             for w in [self.add_class_btn, self.remove_class_btn,
-                      self.export_class_names_btn, 	self.import_class_names_btn,
-                      self.reset_class_names_btn, 	self.btn_class_distribution_annot]:
+                      self.export_class_names_btn, self.import_class_names_btn,
+                      self.reset_class_names_btn, self.btn_class_distribution_annot]:
                 w.setToolTip('')
 
         # Advanced tab
         if 'Advanced' in self.tab_names:
-            for w in [self.check_show_tooltips, 	self.check_auto_add_layers,
-                      self.check_keep_layers, 	self.btn_add_all_annot_layers,
-                      self.check_auto_select_annot,# 	self.text_annot_prefix,
-                      self.btn_train_on_selected,self.radio_img_training,self.radio_global_training,self.radio_single_training,# 	self.check_cont_training,
-                      self.btn_class_distribution_trained,self.btn_reset_training,self.check_use_dask,self.channels_label,
-                      self.text_input_channels,self.btn_switch_axes,self.check_add_seg,self.check_add_probas,self.btn_add_features,self.btn_add_features_stack,
-                      self.pca_label,self.text_features_pca,self.kmeans_label,self.text_features_kmeans]:
+            for w in [self.check_show_tooltips, self.check_auto_add_layers,
+                      self.check_keep_layers, self.btn_add_all_annot_layers,
+                      self.check_auto_select_annot, # 	self.text_annot_prefix,
+                      self.btn_train_on_selected, self.radio_img_training, self.radio_global_training, self.radio_single_training, # self.check_cont_training,
+                      self.btn_class_distribution_trained, self.btn_reset_training, self.check_use_dask, self.channels_label,
+                      self.text_input_channels, self.btn_switch_axes, self.check_add_seg, self.check_add_probas, self.btn_add_features, self.btn_add_features_stack,
+                      self.pca_label, self.text_features_pca, self.kmeans_label, self.text_features_kmeans]:
                 w.setToolTip('')
 
 ### ConvpaintModel instatiation and default population & calling connections, resetting model and key bindings
@@ -3956,10 +3971,10 @@ class ConvpaintWidget(QWidget):
 
         # Set flag to not update tick when opening an image, esp. not through adding from file/memory (annot status cannot change here)
         self._multifile_update_annot_tick = False
-        # Add a layer (will be filled if find data)
-        self._add_empty_annot(event=None, force_add=True, from_multifile=True)
         # If we have a stored annotation for this filename, add its data to the labels layer
         if filename in getattr(self, '_multifile_annotation_store', {}):
+            # Add a layer (will be filled with data)
+            self._add_empty_annot(event=None, force_add=True, from_multifile=True)
             stored = self._multifile_annotation_store[filename]
             try:
                 if isinstance(stored, str):
@@ -3972,6 +3987,8 @@ class ConvpaintWidget(QWidget):
                     self.viewer.layers[self.annot_tag].data = stored.copy()
             except Exception:
                 pass
+        elif original_auto: # Add without data, but only if the option is not turned off (Advanced tab)
+            self._add_empty_annot(event=None, force_add=True, from_multifile=True)
 
         # Reset flag to update annotation status on annotation changes (e.g. painting)
         QTimer.singleShot(1000, lambda: setattr(self, '_multifile_update_annot_tick', True))
