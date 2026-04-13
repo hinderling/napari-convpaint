@@ -556,101 +556,94 @@ class ConvpaintWidget(QWidget):
         # === MULTIFILE TAB ===
 
         if 'Multifile' in self.tab_names:
-            self._create_multifile_tab()
+            # Create three groups for the Multifile tab to match other tabs' style
+            self.multifile_files_group = VHGroup('Files', orientation='G')
+            self.multifile_train_group = VHGroup('Train/Segment', orientation='G')
+            self.multifile_reset_group = VHGroup('Clear/Close', orientation='G')
+            self.multifile_export_import_group = VHGroup('Export/Import', orientation='G')
+            self.multifile_settings_group = VHGroup('Settings', orientation='G')
 
+            # Add groups to the Multifile tab
+            self.tabs.add_named_tab('Multifile', self.multifile_files_group.gbox, [0, 0, 8, 2])
+            self.tabs.add_named_tab('Multifile', self.multifile_reset_group.gbox, [8, 0, 1, 2])
+            self.tabs.add_named_tab('Multifile', self.multifile_train_group.gbox, [9, 0, 2, 2])
+            self.tabs.add_named_tab('Multifile', self.multifile_export_import_group.gbox, [11, 0, 1, 2])
+            self.tabs.add_named_tab('Multifile', self.multifile_settings_group.gbox, [12, 0, 1, 2])
+
+            # Align on top
+            self.tabs.widget(self.tabs.tab_names.index('Multifile')).layout().setAlignment(Qt.AlignTop)
+
+            # --- Files group: folder selector + file list
+            lbl_folder = QLabel('Folder:')
+            self.multifile_path_edit = QtWidgets.QLineEdit()
+            # Make path read-only; folder is selected via the button only
+            self.multifile_path_edit.setReadOnly(True)
+            self.multifile_select_btn = QPushButton('Select image folder')
+            self.multifile_files_group.glayout.addWidget(lbl_folder, 0, 0, 1, 1)
+            self.multifile_files_group.glayout.addWidget(self.multifile_path_edit, 0, 1, 1, 1)
+            self.multifile_files_group.glayout.addWidget(self.multifile_select_btn, 0, 2, 1, 1)
+
+            self.multifile_list = QTableWidget()
+            self.multifile_list.setColumnCount(3)
+            self.multifile_list.setHorizontalHeaderLabels(['Annot.', 'Image Filename', 'Segm.'])
+            # Align the 'Image Filename' header label to the left for readability
+            try:
+                header_item = self.multifile_list.horizontalHeaderItem(1)
+                header_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            except Exception:
+                pass
+            self.multifile_list.setSelectionBehavior(QAbstractItemView.SelectRows)
+            self.multifile_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+            # Allow sorting by clicking the header
+            self.multifile_list.setSortingEnabled(True)
+            self.multifile_list.horizontalHeader().setSectionsClickable(True)
+            # Make rows a bit thinner by setting the default row height
+            try:
+                self.multifile_list.verticalHeader().setDefaultSectionSize(24)
+            except Exception:
+                pass
+            # Keep an explicit maximum height for the widget area
+            self.multifile_list.setFixedHeight(340)
+            # Make filename column stretch and annotated column autosize
+            self.multifile_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+            self.multifile_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+            self.multifile_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+            self.multifile_files_group.glayout.addWidget(self.multifile_list, 1, 0, 1, 3)
+
+            self.multifile_clear_annotations_btn = QPushButton('Clear annot. for opened')
+            self.multifile_reset_group.glayout.addWidget(self.multifile_clear_annotations_btn, 2, 0, 1, 1)
+            self.multifile_reset_folder_btn = QPushButton('Close folder')
+            self.multifile_reset_group.glayout.addWidget(self.multifile_reset_folder_btn, 2, 1, 1, 1)
+
+            # --- Train/Segment group: action buttons (placeholders for now)
+            self.multifile_train_all_annot_btn = QPushButton('Train on all annotated')
+            self.multifile_segment_selected_btn = QPushButton('Segment selected')
+
+            self.multifile_train_group.glayout.addWidget(self.multifile_train_all_annot_btn, 0, 0, 1, 1)
+            self.multifile_train_group.glayout.addWidget(self.multifile_segment_selected_btn, 0, 1, 1, 1)
+
+            # --- Import/Export group: action buttons (placeholders for now)
+            self.multifile_export_annot_btn = QPushButton('Export annotations')
+            self.multifile_import_annot_and_seg_btn = QPushButton('Import annot./segm.')
+
+            self.multifile_export_import_group.glayout.addWidget(self.multifile_export_annot_btn, 0, 0, 1, 1)
+            self.multifile_export_import_group.glayout.addWidget(self.multifile_import_annot_and_seg_btn, 0, 1, 1, 1)
+
+            # --- Settings group: checkboxes
+            self.lbl_import_open_labels = QLabel('Import and auto-open:')
+            self.multifile_settings_group.glayout.addWidget(self.lbl_import_open_labels, 0, 0, 1, 1)
+            self.check_open_import_annotations = QCheckBox('Annotations')
+            self.check_open_import_segmentations = QCheckBox('Segmentations')
+            self.check_open_import_annotations.setChecked(True)
+            self.check_open_import_segmentations.setChecked(True)
+            self.multifile_settings_group.glayout.addWidget(self.check_open_import_annotations, 0, 1, 1, 1)
+            self.multifile_settings_group.glayout.addWidget(self.check_open_import_segmentations, 0, 2, 1, 1)
+        
         # === Show tooltips by default ===
 
         self._setup_init_tooltips()
         # Set device dropdown tooltip separately, as we want to show these dynamically and permanently, even when the "Show tooltips" checkbox is unchecked
         self.device_dropdown.setToolTip('Select device policy for feature extraction and classifier.')
-
-    def _create_multifile_tab(self):
-        """Create the 'Multifile' tab UI. This only constructs widgets and
-        basic folder selection -> file listing behaviour; no background logic
-        is implemented here (per user request). Call this method when you
-        want the tab to be added to the interface.
-        """
-        # Create three groups for the Multifile tab to match other tabs' style
-        self.multifile_files_group = VHGroup('Files', orientation='G')
-        self.multifile_train_group = VHGroup('Train/Segment', orientation='G')
-        self.multifile_reset_group = VHGroup('Clear/Reset', orientation='G')
-        self.multifile_import_export_group = VHGroup('Import/Export', orientation='G')
-        self.multifile_settings_group = VHGroup('Settings', orientation='G')
-
-        # Add groups to the Multifile tab
-        self.tabs.add_named_tab('Multifile', self.multifile_files_group.gbox, [0, 0, 8, 2])
-        self.tabs.add_named_tab('Multifile', self.multifile_reset_group.gbox, [8, 0, 1, 2])
-        self.tabs.add_named_tab('Multifile', self.multifile_train_group.gbox, [9, 0, 2, 2])
-        self.tabs.add_named_tab('Multifile', self.multifile_import_export_group.gbox, [11, 0, 1, 2])
-        # self.tabs.add_named_tab('Multifile', self.multifile_settings_group.gbox, [12, 0, 1, 2])
-
-        # Align on top
-        self.tabs.widget(self.tabs.tab_names.index('Multifile')).layout().setAlignment(Qt.AlignTop)
-
-        # --- Files group: folder selector + file list
-        lbl_folder = QLabel('Folder:')
-        self.multifile_path_edit = QtWidgets.QLineEdit()
-        # Make path read-only; folder is selected via the button only
-        self.multifile_path_edit.setReadOnly(True)
-        self.multifile_select_btn = QPushButton('Select image folder')
-        self.multifile_files_group.glayout.addWidget(lbl_folder, 0, 0, 1, 1)
-        self.multifile_files_group.glayout.addWidget(self.multifile_path_edit, 0, 1, 1, 1)
-        self.multifile_files_group.glayout.addWidget(self.multifile_select_btn, 0, 2, 1, 1)
-
-        self.multifile_list = QTableWidget()
-        self.multifile_list.setColumnCount(2)
-        self.multifile_list.setHorizontalHeaderLabels(['Annot.', 'Image Filename'])
-        # Align the 'Image Filename' header label to the left for readability
-        try:
-            header_item = self.multifile_list.horizontalHeaderItem(1)
-            header_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        except Exception:
-            pass
-        self.multifile_list.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.multifile_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        # Allow sorting by clicking the header
-        self.multifile_list.setSortingEnabled(True)
-        self.multifile_list.horizontalHeader().setSectionsClickable(True)
-        # Make rows a bit thinner by setting the default row height
-        try:
-            self.multifile_list.verticalHeader().setDefaultSectionSize(24)
-        except Exception:
-            pass
-        # Keep an explicit maximum height for the widget area
-        self.multifile_list.setFixedHeight(340)
-        # Make filename column stretch and annotated column autosize
-        self.multifile_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.multifile_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.multifile_files_group.glayout.addWidget(self.multifile_list, 1, 0, 1, 3)
-
-        self.multifile_clear_annotations_btn = QPushButton('Clear annotations for selected')
-        self.multifile_reset_group.glayout.addWidget(self.multifile_clear_annotations_btn, 2, 0, 1, 1)
-        self.multifile_reset_folder_btn = QPushButton('Reset folder (clear list)')
-        self.multifile_reset_group.glayout.addWidget(self.multifile_reset_folder_btn, 2, 1, 1, 1)
-
-        # --- Train/Segment group: action buttons (placeholders for now)
-        self.btn_train_all_annot = QPushButton('Train on all annotated images')
-        self.btn_segment_selected = QPushButton('Segment selected (save to folder)')
-
-        self.multifile_train_group.glayout.addWidget(self.btn_train_all_annot, 0, 0, 2, 1)
-        # self.multifile_train_group.glayout.addWidget(self.btn_segment_selected, 0, 1, 1, 1)
-
-        # --- Import/Export group: action buttons (placeholders for now)
-        self.btn_import_annotations = QPushButton('Import annotations')
-        self.btn_export_annotations = QPushButton('Export annotations')
-        self.btn_import_segmentations = QPushButton('Import segmentations')
-
-        self.multifile_import_export_group.glayout.addWidget(self.btn_export_annotations, 0, 0, 1, 1)
-        # self.multifile_import_export_group.glayout.addWidget(self.btn_import_segmentations, 0, 1, 1, 1)
-        self.multifile_import_export_group.glayout.addWidget(self.btn_import_annotations, 0, 1, 1, 1)
-
-        # --- Settings group: checkboxes
-        self.check_show_annotations = QCheckBox('Open annotations')
-        self.check_show_segmentations = QCheckBox('Open segmentations')
-        self.check_show_annotations.setChecked(True)
-        self.check_show_segmentations.setChecked(True)
-        self.multifile_settings_group.glayout.addWidget(self.check_show_annotations, 0, 0, 1, 1)
-        self.multifile_settings_group.glayout.addWidget(self.check_show_segmentations, 0, 1, 1, 1)
 
     def _setup_init_tooltips(self):
 
@@ -759,6 +752,22 @@ class ConvpaintWidget(QWidget):
             for w in [self.kmeans_label, self.text_features_kmeans]:
                 w.setToolTip('Number of Kmeans clusters to use for the features image.\nSet to 0 to disable Kmeans.')
 
+        if 'Multifile' in self.tab_names:
+            self.multifile_select_btn.setToolTip('Select the folder containing the images to segment.\n' +
+                                                 'Annotation and segmentation files with a corresponding suffix will be ignored in that process.')
+            self.multifile_list.setToolTip('List of files in the selected folder. The "Annot." column indicates whether an annotation layer is present in memory (yellow check in brackets), '+
+                                           'saved to file (green checkmark) or absent (red cross).\n' +
+                                           'Click on the column header to sort by it. Double-click a file to open the image, annotations and segmentation (if present).')
+            self.multifile_clear_annotations_btn.setToolTip('Clear annotations for the opened image (add a new empty annotation layer).')
+            self.multifile_reset_folder_btn.setToolTip('Close all images from the selected folder and clear the file list.')
+            self.multifile_train_all_annot_btn.setToolTip('Train a model using all annotated images in the file list.')
+            self.multifile_segment_selected_btn.setToolTip('Segment all selected images in the file list. Choose a folder to save the segmentations in files.')
+            self.multifile_export_annot_btn.setToolTip('Export annotations of all opened images as files.')
+            self.multifile_import_annot_and_seg_btn.setToolTip('Import annotations and/or segmentations from files for all images.\n' +
+                                                               'Will scan the folder to detect annotations and segmentations belonging to the images and import both (unless specified in settings).')
+            for w in [self.lbl_import_open_labels, self.check_open_import_annotations, self.check_open_import_segmentations]:
+                w.setToolTip('When importing labels, include annotations/segmentations. Also, when opening an image, automatically open the corresponding layer(s).')
+
     def _remove_init_tooltips(self):
         # Remove tooltips for the tabs
         for tab_name in self.tabs.tab_names:
@@ -802,6 +811,14 @@ class ConvpaintWidget(QWidget):
                       self.btn_class_distribution_trained, self.btn_reset_training, self.check_use_dask, self.channels_label,
                       self.text_input_channels, self.btn_switch_axes, self.check_add_seg, self.check_add_probas, self.btn_add_features, self.btn_add_features_stack,
                       self.pca_label, self.text_features_pca, self.kmeans_label, self.text_features_kmeans]:
+                w.setToolTip('')
+
+        if 'Multifile' in self.tab_names:
+            for w in [self.multifile_select_btn, self.multifile_list, self.multifile_clear_annotations_btn,
+                      self.multifile_reset_folder_btn, self.multifile_train_all_annot_btn,
+                      self.multifile_segment_selected_btn, self.multifile_export_annot_btn,
+                      self.multifile_import_annot_and_seg_btn, self.lbl_import_open_labels,
+                      self.check_open_import_annotations, self.check_open_import_segmentations]:
                 w.setToolTip('')
 
 ### ConvpaintModel instatiation and default population & calling connections, resetting model and key bindings
@@ -935,8 +952,6 @@ class ConvpaintWidget(QWidget):
         self.train_classifier_btn.clicked.connect(self._on_train)
         self.check_auto_seg.stateChanged.connect(lambda: setattr(
             self, 'auto_seg', self.check_auto_seg.isChecked()))
-        # self.check_use_project.stateChanged.connect(self._on_create_multifile_tab)
-        # self.train_classifier_on_project_btn.clicked.connect(self._on_train_on_project)
 
         # Segment
         self.segment_btn.clicked.connect(self._on_predict)
@@ -1052,11 +1067,16 @@ class ConvpaintWidget(QWidget):
         if 'Multifile' in self.tab_names:
             self.multifile_select_btn.clicked.connect(self._select_multifile_img_folder)
             self.multifile_list.cellDoubleClicked.connect(self._on_multifile_open_file)
-            self.multifile_clear_annotations_btn.clicked.connect(lambda: self._add_empty_annot(event=None, force_add=True, from_multifile=True))
-            self.multifile_reset_folder_btn.clicked.connect(lambda: self._reset_multifile_folder())
-            self.btn_train_all_annot.clicked.connect(self._on_train_on_multifile)
-            self.btn_import_annotations.clicked.connect(self._import_annotations)
-            self.btn_export_annotations.clicked.connect(self._export_annotations)
+            self.multifile_clear_annotations_btn.clicked.connect(self._multifile_clear_annot)
+            self.multifile_reset_folder_btn.clicked.connect(self._reset_multifile_folder)
+            self.multifile_train_all_annot_btn.clicked.connect(self._on_train_on_multifile)
+            self.multifile_segment_selected_btn.clicked.connect(self._on_segment_selected_multifile)
+            self.multifile_import_annot_and_seg_btn.clicked.connect(self._import_annot_and_seg)
+            self.multifile_export_annot_btn.clicked.connect(self._export_annotations)
+            self.check_open_import_annotations.stateChanged.connect(lambda: setattr(
+                self, 'multifile_import_open_annotations', self.check_open_import_annotations.isChecked()))
+            self.check_open_import_segmentations.stateChanged.connect(lambda: setattr(
+                self, 'multifile_import_open_segmentations', self.check_open_import_segmentations.isChecked()))
             self.viewer.layers.events.removed.connect(self._on_annotation_changed)
 
 
@@ -2220,6 +2240,8 @@ class ConvpaintWidget(QWidget):
         
         if 'Multifile' in self.tab_names:
             self._reset_multifile_folder()
+            self.multifile_settings_group.check_open_import_annotations.setChecked(self.multifile_import_open_annotations)
+            self.multifile_settings_group.check_open_import_segmentations.setChecked(self.multifile_import_open_segmentations)
 
         # Re-apply device dropdown state after attributes reset potentially changed policies.
         self._reset_device_options()
@@ -2293,13 +2315,16 @@ class ConvpaintWidget(QWidget):
         self._block_layer_select = True # Flag to block layer selection events temporarily
         # Multifile attributes
         self._multifile_warned = False # Whether the user has already seen the "remove existing layers" warning (for Multifile)
-        self._multifile_annotation_store = {} # In-memory store for annotations keyed by filename
+        self._multifile_annotation_store = {} # Store for in-memory and saved annotations keyed by filename
+        self._multifile_segmentation_store = {} # Store for saved segmentations keyed by filename
         self._multifile_last_folder = '' # Last used folder for images/annotations dialogs (used as default in folder pickers)
         self._multifile_update_annot_tick = True # Flag to adjust updating tick when opening images
         self._multifile_last_annot = None
         self._import_annotations_warned = False # Whether the user has already seen the "import annotations" warning (for Multifile)
         self._current_multifile_filename = None # Current multifile-opened filename (when opened via Multifile UI)
         self.store_annot = False # Flag whether to store annotations in the in-memory store (for Multifile)
+        self.multifile_import_open_annotations = True # Whether to open annotations when opening images via Multifile
+        self.multifile_import_open_segmentations = True # Whether to open segmentations when opening images via Multifile
 
 ### Model Tab
 
@@ -3114,8 +3139,6 @@ class ConvpaintWidget(QWidget):
             warnings.warn(f'Unsupported data dimensions {data_dims}. Annotation and segmentation layers might not be created with the correct shape.')
             return img_shape
 
-        
-
     def _check_large_image(self, img):
         """Check if the image is very large and should be tiled."""
         data_dims = self._get_data_dims(img)
@@ -3562,74 +3585,6 @@ class ConvpaintWidget(QWidget):
         # self.annotation_layer_selection_widget.choices = [(layer.name, layer) for layer in annot_layer_list]
         # return annot_layer_list
 
-
-### ADVANCED TAB
-
-    def _on_add_all_annot_layers(self):
-        """Add annotation layers for all image layers selected in the layers widget (napari)."""
-
-        # Get the selected image layers in the order they are in the widget
-        img_layer_list = [layer for layer in self.viewer.layers
-                          if layer in self.viewer.layers.selection]
-        chosen_in_dropdwon = self._get_selected_img()
-        # If the layer chosen in the dropdown is selected, move it first, so its annotation is added first
-        if chosen_in_dropdwon is not None and chosen_in_dropdwon.name in img_layer_list:
-            img_layer_list.remove(chosen_in_dropdwon)
-            img_layer_list.insert(0, chosen_in_dropdwon)
-
-        for img in img_layer_list:
-            layer_shape = self._get_annot_shape(img)
-            channel_mode_str = (self.radio_rgb.isChecked()*"RGB" +
-                    self.radio_multi_channel.isChecked()*"multiCh" +
-                    self.radio_single_channel.isChecked()*"singleCh")
-            layer_name = f'{self.annot_tag}_{img.name}_{channel_mode_str}'
-            layer_name = self._get_unique_layer_name(layer_name)
-            data = np.zeros((layer_shape), dtype=np.uint8)
-            # Create a new annotation layer with the unique name (copy image transforms)
-            num_spatial = len(layer_shape)
-            kwargs = self._get_layer_transform_kwargs(img, num_spatial_dims=num_spatial, num_leading_dims=0)
-            self.viewer.add_labels(data=data, name=layer_name, **kwargs)
-            labels_layer = self.viewer.layers[layer_name]
-            # Set the annotation layer to paint mode
-            labels_layer.mode = 'paint'
-            labels_layer.brush_size = self.default_brush_size
-            # Connect colormap events in new layers
-            labels_layer.events.colormap.connect(self._on_change_annot_cmap)
-            # Add it to the list of layers where class names shall be updated
-            self.annot_layers.add(labels_layer)
-        
-        # sync class names and cmaps
-        self.update_all_class_names_and_cmaps()
-
-    def _on_train_on_selected(self):
-        """Train the model on the image and annotation layers currently selected in the layers widget (napari)."""
-
-        # Get selected layers (arbitrary order) and sort them by their names
-        layer_list = list(self.viewer.layers.selection)
-        layer_list.sort(key=lambda x: x.name)
-        
-        # Get the image and annotation layers based on the prefix
-        prefix_len = len(self.annot_tag)
-        annot_list = [layer for layer in layer_list
-                      if layer.name[:prefix_len] == self.annot_tag
-                      and isinstance(layer, napari.layers.Labels)]
-        img_list = [layer for layer in layer_list
-                    if not layer.name[:prefix_len] == self.annot_tag
-                    and isinstance(layer, napari.layers.Image)]
-
-        # NOTE: Checks are technically not necessary here, as it is done in the CPModel
-        if len(annot_list) == 0 or len(img_list) == 0 or len(annot_list) != len(img_list):
-            warnings.warn('Please select images and corresponding annotation layers')
-            return
-        
-        # Create lists of images and annotations
-        id_list = [img.name for img in img_list]
-        img_list = [self._get_data_channel_first(img) for img in img_list]
-        annot_list = [annot.data for annot in annot_list]
-
-        # Delegate core training to helper that can be reused
-        self._train_multiple(id_list, img_list, annot_list)
-
     def _train_multiple(self, id_list, img_list, annot_list):
         """Core training routine used by multiple callers.
 
@@ -3672,6 +3627,75 @@ class ConvpaintWidget(QWidget):
         self.trained = True
         self._reset_predict_buttons()
         self._set_model_description()
+
+### ADVANCED TAB
+
+    def _on_add_all_annot_layers(self):
+        """Add annotation layers for all image layers selected in the layers widget (napari).
+        Has been deprecated in favor of the "Multifile" Tab."""
+
+        # Get the selected image layers in the order they are in the widget
+        img_layer_list = [layer for layer in self.viewer.layers
+                          if layer in self.viewer.layers.selection]
+        chosen_in_dropdwon = self._get_selected_img()
+        # If the layer chosen in the dropdown is selected, move it first, so its annotation is added first
+        if chosen_in_dropdwon is not None and chosen_in_dropdwon.name in img_layer_list:
+            img_layer_list.remove(chosen_in_dropdwon)
+            img_layer_list.insert(0, chosen_in_dropdwon)
+
+        for img in img_layer_list:
+            layer_shape = self._get_annot_shape(img)
+            channel_mode_str = (self.radio_rgb.isChecked()*"RGB" +
+                    self.radio_multi_channel.isChecked()*"multiCh" +
+                    self.radio_single_channel.isChecked()*"singleCh")
+            layer_name = f'{self.annot_tag}_{img.name}_{channel_mode_str}'
+            layer_name = self._get_unique_layer_name(layer_name)
+            data = np.zeros((layer_shape), dtype=np.uint8)
+            # Create a new annotation layer with the unique name (copy image transforms)
+            num_spatial = len(layer_shape)
+            kwargs = self._get_layer_transform_kwargs(img, num_spatial_dims=num_spatial, num_leading_dims=0)
+            self.viewer.add_labels(data=data, name=layer_name, **kwargs)
+            labels_layer = self.viewer.layers[layer_name]
+            # Set the annotation layer to paint mode
+            labels_layer.mode = 'paint'
+            labels_layer.brush_size = self.default_brush_size
+            # Connect colormap events in new layers
+            labels_layer.events.colormap.connect(self._on_change_annot_cmap)
+            # Add it to the list of layers where class names shall be updated
+            self.annot_layers.add(labels_layer)
+        
+        # sync class names and cmaps
+        self.update_all_class_names_and_cmaps()
+
+    def _on_train_on_selected(self):
+        """Train the model on the image and annotation layers currently selected in the layers widget (napari).
+        Has been deprecated in favor of the "Multifile" Tab."""
+
+        # Get selected layers (arbitrary order) and sort them by their names
+        layer_list = list(self.viewer.layers.selection)
+        layer_list.sort(key=lambda x: x.name)
+        
+        # Get the image and annotation layers based on the prefix
+        prefix_len = len(self.annot_tag)
+        annot_list = [layer for layer in layer_list
+                      if layer.name[:prefix_len] == self.annot_tag
+                      and isinstance(layer, napari.layers.Labels)]
+        img_list = [layer for layer in layer_list
+                    if not layer.name[:prefix_len] == self.annot_tag
+                    and isinstance(layer, napari.layers.Image)]
+
+        # NOTE: Checks are technically not necessary here, as it is done in the CPModel
+        if len(annot_list) == 0 or len(img_list) == 0 or len(annot_list) != len(img_list):
+            warnings.warn('Please select images and corresponding annotation layers')
+            return
+        
+        # Create lists of images and annotations
+        id_list = [img.name for img in img_list]
+        img_list = [self._get_data_channel_first(img) for img in img_list]
+        annot_list = [annot.data for annot in annot_list]
+
+        # Delegate core training to helper that can be reused
+        self._train_multiple(id_list, img_list, annot_list)
 
     def _update_training_counts(self):
         """Update the training counts (used with continuous_training/memory_mode) in the GUI."""
@@ -3866,8 +3890,9 @@ class ConvpaintWidget(QWidget):
         # Remember last used images folder for future dialogs
         self._multifile_last_folder = str(Path(folder))
 
-        # Reset in-memory annotations when opening a new folder
+        # Initialize annotations/segmentations when opening a new folder (resetting in-memory annotations)
         self._multifile_annotation_store = {}
+        self._multifile_segmentation_store = {}
         # Set flag that shall update multifile annotation tick
         self._multifile_update_annot_tick = True
         self._multifile_last_annot = None
@@ -3892,17 +3917,23 @@ class ConvpaintWidget(QWidget):
             # Add file to the list/table
             row = self.multifile_list.rowCount()
             self.multifile_list.insertRow(row)
-            # Annotated column: red X for initial state (no annotations loaded)
+            # Annotations column: red X for initial state (no annotations loaded)
             item_annot = QTableWidgetItem('✗')
             item_annot.setTextAlignment(Qt.AlignCenter)
             item_annot.setForeground(QtGui.QBrush(QtGui.QColor('red')))
-            # make annotated flag non-editable
+            # Segmentations column: red X for initial state (no segmentations loaded)
+            item_seg = QTableWidgetItem('✗')
+            item_seg.setTextAlignment(Qt.AlignCenter)
+            item_seg.setForeground(QtGui.QBrush(QtGui.QColor('red')))
+            # make annotated and segmented flags non-editable
             item_annot.setFlags(item_annot.flags() & ~Qt.ItemIsEditable)
+            item_seg.setFlags(item_seg.flags() & ~Qt.ItemIsEditable)
             item_filename = QTableWidgetItem(fname)
             # make filename non-editable
             item_filename.setFlags(item_filename.flags() & ~Qt.ItemIsEditable)
             self.multifile_list.setItem(row, 0, item_annot)
             self.multifile_list.setItem(row, 1, item_filename)
+            self.multifile_list.setItem(row, 2, item_seg)
 
         # Automatically open the first image in the list (if any)
         if files:
@@ -3910,6 +3941,18 @@ class ConvpaintWidget(QWidget):
                 self._on_multifile_open_file(0, 1)
             except Exception:
                 pass
+    
+    def _multifile_clear_annot(self):
+        """Clear the annotation for the current multifile image, both in the viewer and in the in-memory store."""
+        # Clear annotation layer data
+        if self.annot_tag in self.viewer.layers:
+            self.viewer.layers[self.annot_tag].data = np.zeros_like(self.viewer.layers[self.annot_tag].data)
+        # Clear in-memory annotation store for current file
+        fname = getattr(self, '_current_multifile_filename', None)
+        if fname and fname in getattr(self, '_multifile_annotation_store', {}):
+            del self._multifile_annotation_store[fname]
+        # Update annotation status tick in the file list
+        self._update_multifile_annot_tick(fname)
 
     def _reset_multifile_folder(self):
         """Reset the multifile folder selection and clear the file list."""
@@ -3918,6 +3961,7 @@ class ConvpaintWidget(QWidget):
         # Clear in-memory annotation store and imported tracking
         self._multifile_warned = False
         self._multifile_annotation_store = {}
+        self._multifile_segmentation_store = {}
         self._import_annotations_warned = False
         # Reset flag to update annotation tick
         self._multifile_update_annot_tick = True
@@ -3971,6 +4015,19 @@ class ConvpaintWidget(QWidget):
 
         # Set flag to not update tick when opening an image, esp. not through adding from file/memory (annot status cannot change here)
         self._multifile_update_annot_tick = False
+
+        # Add/open annotations and segmentations
+        if self.multifile_import_open_annotations:
+            self._multifile_open_annot(filename, auto_add=original_auto)
+        if self.multifile_import_open_segmentations:
+            self._multifile_open_segmentation(filename)
+
+        # Reset flag to update annotation status on annotation changes (e.g. painting)
+        QTimer.singleShot(1000, lambda: setattr(self, '_multifile_update_annot_tick', True))
+        QTimer.singleShot(1000, lambda: setattr(self, '_multifile_last_annot', self.viewer.layers[self.annot_tag].data.copy()
+                                                if self.annot_tag in self.viewer.layers else None))
+
+    def _multifile_open_annot(self, filename, auto_add=True):
         # If we have a stored annotation for this filename, add its data to the labels layer
         if filename in getattr(self, '_multifile_annotation_store', {}):
             # Add a layer (will be filled with data)
@@ -3987,13 +4044,11 @@ class ConvpaintWidget(QWidget):
                     self.viewer.layers[self.annot_tag].data = stored.copy()
             except Exception:
                 pass
-        elif original_auto: # Add without data, but only if the option is not turned off (Advanced tab)
+        elif auto_add: # Add without data, but only if the option is not turned off (Advanced tab)
             self._add_empty_annot(event=None, force_add=True, from_multifile=True)
 
-        # Reset flag to update annotation status on annotation changes (e.g. painting)
-        QTimer.singleShot(1000, lambda: setattr(self, '_multifile_update_annot_tick', True))
-        QTimer.singleShot(1000, lambda: setattr(self, '_multifile_last_annot', self.viewer.layers[self.annot_tag].data.copy()
-                                                if self.annot_tag in self.viewer.layers else None))
+    def _multifile_open_segmentation(self, filename):
+        pass
 
     def _on_annotation_changed(self, event=None):
         """Save annotation for current multifile image if present."""
@@ -4027,13 +4082,13 @@ class ConvpaintWidget(QWidget):
                     del self._multifile_annotation_store[fname]
             # update table flag (type-based)
             if not np.all(self._multifile_last_annot == data): # Check this only on changes, not on opening images
-                self._set_multifile_annot_tick(fname)
+                self._update_multifile_annot_tick(fname)
             QTimer.singleShot(1000, lambda: setattr(self, '_multifile_last_annot', data.copy()))
         except Exception:
             pass
 
-    def _set_multifile_annot_tick(self, filename):
-        """Update the Annotated column in the multifile table for a given filename."""
+    def _update_multifile_annot_tick(self, filename):
+        """Update the Annotations column in the multifile table for a given filename."""
         # Guard from changing flag when opening images or not making changes to annotations
         if not self._multifile_update_annot_tick:
             return
@@ -4146,7 +4201,10 @@ class ConvpaintWidget(QWidget):
         # Delegate to core trainer
         self._train_multiple(filenames[:len(img_prepared)], img_prepared, annots)
 
-    def _import_annotations(self):
+    def _on_segment_selected_multifile(self):
+        pass
+
+    def _import_annot_and_seg(self):
         """Import annotation TIFFs from a folder and register them in the in-memory store.
 
         Matches files named `<image_stem>_annotations.tif|tiff` against the filenames
@@ -4206,7 +4264,7 @@ class ConvpaintWidget(QWidget):
             try:
                 # Register the file path (string) so it's considered persistent
                 self._multifile_annotation_store[target_fname] = str(f)
-                self._set_multifile_annot_tick(target_fname)
+                self._update_multifile_annot_tick(target_fname)
                 imported += 1
             except Exception:
                 warnings.warn(f'Could not register annotation for {target_fname}.')
@@ -4267,7 +4325,7 @@ class ConvpaintWidget(QWidget):
                 tifffile.imwrite(str(out_name), data.astype(np.uint8))
                 # mark as persistent by storing the exported path string
                 self._multifile_annotation_store[fname] = str(out_name)
-                self._set_multifile_annot_tick(fname)
+                self._update_multifile_annot_tick(fname)
                 exported += 1
             except Exception:
                 warnings.warn(f'Could not export annotation for {fname}.')
