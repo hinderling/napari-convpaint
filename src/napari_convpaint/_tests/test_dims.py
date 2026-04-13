@@ -141,7 +141,8 @@ def test_RGBA(make_napari_viewer, capsys):
 
     # Convpaint should handle it as RGB (stripping alpha)
     my_widget.cp_model.set_params(channel_mode='rgb')
-    data_dims = my_widget._get_data_dims(my_widget._get_selected_img())
+    img = my_widget._get_selected_img()
+    data_dims = my_widget._get_data_dims(img.data, img.ndim)
     assert data_dims == '2D_RGB', f"Expected '2D_RGB' but got '{data_dims}'"
 
     # Annotations should be 2D
@@ -149,8 +150,7 @@ def test_RGBA(make_napari_viewer, capsys):
     assert viewer.layers['annotations'].data.ndim == 2
 
     # Channel-first data should have 3 channels (alpha stripped)
-    img = my_widget._get_selected_img()
-    data_cf = my_widget._get_data_channel_first(img)
+    data_cf = my_widget._get_data_channel_first(img.data, img.ndim)
     assert data_cf.shape == (3, side_len, side_len), f"Expected (3, {side_len}, {side_len}) but got {data_cf.shape}"
 
     # Stats should work with 3 channels

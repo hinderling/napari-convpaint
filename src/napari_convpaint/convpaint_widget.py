@@ -4570,6 +4570,8 @@ class ConvpaintWidget(QWidget):
                     if data is None:
                         warnings.warn(f'Could not read stored annotation file {annot}. Skipping.')
                         continue
+                else:
+                    data = np.asarray(annot)
                 tifffile.imwrite(str(out_name), data.astype(np.uint8))
                 # mark as persistent by storing the exported path string
                 self._multifile_annotation_store[fname] = str(out_name)
