@@ -742,7 +742,7 @@ class ConvpaintWidget(QWidget):
             for w in [self.channels_label, self.text_input_channels]:
                 w.setToolTip('Comma-separated list of channels to use for training and segmentation.\n' +
                              'Leave empty to use all channels.')
-            self.btn_switch_axes.setToolTip('Switch first two axes of the input image (to match the convention to have channels first).')
+            self.btn_switch_axes.setToolTip('Switch first two axes of a 4D input image (to match the convention to have channels first).')
             self.check_add_seg.setToolTip('Add a layer with the predicted segmentation as output (= highest class probability).')
             self.check_add_probas.setToolTip('Add a layer with class probabilities as output.')
             self.btn_add_features.setToolTip('Add a layer with the features extracted for the current plane.')
@@ -1547,7 +1547,8 @@ class ConvpaintWidget(QWidget):
         """Assign the layer to segment and update data radio buttons accordingly"""
 
         # Check if the selected image has compatible dimensions
-        data_dims = self._get_data_dims(self._get_selected_img())
+        img = self._get_selected_img()
+        data_dims = self._get_data_dims(img.data, img.ndim) if img is not None else None
         if data_dims not in self.supported_data_dims:
             warnings.warn(
                 f'Non-supported image dimensions {data_dims}. Only '
@@ -1806,7 +1807,8 @@ class ConvpaintWidget(QWidget):
             pbr.set_description(f"Prediction")
             
             # Check dimensionality
-            data_dims = self._get_data_dims(self._get_selected_img())
+            img = self._get_selected_img()
+            data_dims = self._get_data_dims(img.data, img.ndim) if img is not None else None
             if data_dims not in self.supported_data_dims:
                 warnings.warn(f'Non-supported image dimensions {data_dims}. Prediction not performed.')
                 return
@@ -1869,7 +1871,8 @@ class ConvpaintWidget(QWidget):
             pbr.set_description(f"Feature extraction")
 
             # Check dimensionality
-            data_dims = self._get_data_dims(self._get_selected_img())
+            img = self._get_selected_img()
+            data_dims = self._get_data_dims(img.data, img.ndim) if img is not None else None
             if data_dims not in self.supported_data_dims:
                 warnings.warn(f'Non-supported image dimensions {data_dims}. Feature extraction not performed.')
                 return
@@ -1913,7 +1916,7 @@ class ConvpaintWidget(QWidget):
         img = self._get_selected_img(check=True)
 
         # Check dimensionality
-        data_dims = self._get_data_dims(img)
+        data_dims = self._get_data_dims(img.data, img.ndim) if img is not None else None
         if data_dims not in ['3D_single', '3D_RGB', '4D']:
             warnings.warn(f'Image stack has wrong dimensionality ({data_dims}) for predicting stacks. Prediction not performed.')
             return
@@ -1975,7 +1978,7 @@ class ConvpaintWidget(QWidget):
         img = self._get_selected_img(check=True)
 
         # Check dimensionality
-        data_dims = self._get_data_dims(img)
+        data_dims = self._get_data_dims(img.data, img.ndim) if img is not None else None
         if data_dims not in ['3D_single', '3D_RGB', '4D']:
             warnings.warn(f'Image stack has wrong dimensionality ({data_dims}) for processing stacks. Feature extraction not performed.')
             return
@@ -2103,7 +2106,8 @@ class ConvpaintWidget(QWidget):
         new_param = new_model.get_params()
         
         # Check if the new multichannel setting is incompatible with data
-        data_dims = self._get_data_dims(self._get_selected_img())
+        img = self._get_selected_img()
+        data_dims = self._get_data_dims(img.data, img.ndim) if img is not None else None
         channel_mode = new_param.channel_mode
         if data_dims in ['2D'] and channel_mode in ['rgb', 'multi']:
             warnings.warn(f'The loaded model works with {channel_mode} data, but the data is {data_dims}. ' +
@@ -2233,15 +2237,15 @@ class ConvpaintWidget(QWidget):
             # Re-add the buttons below the class names
             self.class_names_layout.addWidget(self.add_class_btn, len(self.class_names)+1, 0, 1, 5)
             self.class_names_layout.addWidget(self.remove_class_btn, len(self.class_names)+1, 5, 1, 5)
-            self.class_names_layout.addWidget(self.export_class_btn, len(self.class_names)+2, 0, 1, 5)
-            self.class_names_layout.addWidget(self.import_class_btn, len(self.class_names)+2, 5, 1, 5)
+            self.class_names_layout.addWidget(self.export_class_names_btn, len(self.class_names)+2, 0, 1, 5)
+            self.class_names_layout.addWidget(self.import_class_names_btn, len(self.class_names)+2, 5, 1, 5)
             self.class_names_layout.addWidget(self.reset_class_names_btn, len(self.class_names)+3, 0, 1, 10)
             self.class_names_layout.addWidget(self.btn_class_distribution_annot, len(self.class_names)+4, 0, 1, 10)
         
         if 'Multifile' in self.tab_names:
             self._reset_multifile_folder()
-            self.multifile_settings_group.check_open_import_annotations.setChecked(self.multifile_import_open_annotations)
-            self.multifile_settings_group.check_open_import_segmentations.setChecked(self.multifile_import_open_segmentations)
+            self.check_open_import_annotations.setChecked(self.multifile_import_open_annotations)
+            self.check_open_import_segmentations.setChecked(self.multifile_import_open_segmentations)
 
         # Re-apply device dropdown state after attributes reset potentially changed policies.
         self._reset_device_options()
@@ -2422,7 +2426,8 @@ class ConvpaintWidget(QWidget):
         # Get default non-FE params from temp model and update the GUI (also setting the params)
         fe_defaults = self.temp_fe_defaults
         adjusted_params = [] # List of adjusted parameters for raising a warning
-        data_dims = self._get_data_dims(self._get_selected_img())
+        img = self._get_selected_img()
+        data_dims = self._get_data_dims(img.data, img.ndim) if img is not None else None
         # Multichannel
         if ((fe_defaults.channel_mode is not None) and
             (new_param.channel_mode != fe_defaults.channel_mode)):
@@ -2891,7 +2896,8 @@ class ConvpaintWidget(QWidget):
             for x in self.norm_buttons: x.setEnabled(False)
             return
         
-        data_dims = self._get_data_dims(self._get_selected_img())
+        img = self._get_selected_img()
+        data_dims = self._get_data_dims(img.data, img.ndim) if img is not None else None
         if data_dims not in self.supported_data_dims:
             warnings.warn(f'Non-supported image dimensions {data_dims}. Normalization buttons not updated.')
             return
@@ -2916,8 +2922,8 @@ class ConvpaintWidget(QWidget):
         """Enable or disable predict buttons based on the current state."""
         # An image layer needs to be selected
         if self.image_layer_selection_widget.value is not None:
-            data = self._get_selected_img()
-            data_dims = self._get_data_dims(data)
+            img = self._get_selected_img()
+            data_dims = self._get_data_dims(img.data, img.ndim) if img is not None else None
             if data_dims not in self.supported_data_dims:
                 warnings.warn(f'Non-supported image dimensions {data_dims}. Predict buttons disabled.')
                 self.segment_btn.setEnabled(False)
@@ -3127,7 +3133,7 @@ class ConvpaintWidget(QWidget):
 
     def _get_annot_shape(self, img):
         """Get shape of annotations and segmentation layers to create."""
-        data_dims = self._get_data_dims(img)
+        data_dims = self._get_data_dims(img.data, img.ndim) if img is not None else None
         img_shape = img.data.shape
         if data_dims in ['2D_RGB', '2D']:
             return img_shape[0:2]
@@ -3141,7 +3147,7 @@ class ConvpaintWidget(QWidget):
 
     def _check_large_image(self, img):
         """Check if the image is very large and should be tiled."""
-        data_dims = self._get_data_dims(img)
+        data_dims = self._get_data_dims(img.data, img.ndim) if img is not None else None
         img_shape = img.data.shape
         if data_dims in ['2D', '2D_RGB']:
             xy_plane = img_shape[0] * img_shape[1]
@@ -3310,28 +3316,28 @@ class ConvpaintWidget(QWidget):
         except Exception as e:
             warnings.warn(f"Could not play shark video. Play it manually if you want :)")
 
-    def _get_data_channel_first(self, img):
+    def _get_data_channel_first(self, data, num_dims):
         """Get data from selected channel. If RGB/RGBA, move channel axis to first
         position and strip alpha channel if present (keep only first 3 channels)."""
-        if img is None:
+        if data is None or num_dims is None:
             return None
-        data_dims = self._get_data_dims(img)
+        data_dims = self._get_data_dims(data, num_dims)
         if data_dims in ['2D_RGB', '3D_RGB']:
-            data = img.data[..., :3]  # Strip alpha channel if RGBA
-            img = np.moveaxis(data, -1, 0)
+            data = data[..., :3]  # Strip alpha channel if RGBA
+            return np.moveaxis(data, -1, 0)
         elif data_dims in ['2D', '3D_single', '3D_multi', '4D']:
-            img = img.data
+            return data
         else:
             warnings.warn(f'Unsupported data dimensions {data_dims}. Data is returned without moving channel axis to first position if needed.')
-            img = img.data
-        return img
+            return data
 
     def _get_data_channel_first_norm(self, img):
         """Get data from selected channel. Output has channel (if present) in 
         first position and is normalized."""
 
         # Get data from selected layer, with channels first if present
-        image_stack = self._get_data_channel_first(img) # 2D, 3D or 4D array, with C first if present
+        # 2D, 3D or 4D array, with C first if present
+        image_stack = self._get_data_channel_first(img.data, img.ndim) if img is not None else None
 
         # Import heavy image utilities lazily to avoid import-time cost
         from .utils import normalize_image, normalize_image_percentile, normalize_image_imagenet
@@ -3353,7 +3359,7 @@ class ConvpaintWidget(QWidget):
                 
         elif fe_norm == 'percentile':
             if norm_scope == 2: # normalize over stack
-                data_dims = self._get_data_dims(img)
+                data_dims = self._get_data_dims(img.data, img.ndim) if img is not None else None
                 if data_dims in ["4D", "3D_multi", "2D_RGB", "3D_RGB"]: # Channels dimension present
                     num_ignored_dims = 1 # ignore channels dimension, but norm over stack if present
                 elif data_dims in ["2D", "3D_single"]: # No channels dimension present
@@ -3392,7 +3398,7 @@ class ConvpaintWidget(QWidget):
             "Using default normalization instead.")
             use_default = True
         norm_scope = self.cp_model.get_param("normalize")
-        data_dims = self._get_data_dims(img)
+        data_dims = self._get_data_dims(img.data, img.ndim) if img is not None else None
 
         # If we use default normalization, compute image stats if not already done
         if use_default and (self.image_mean is None or self.image_std is None):
@@ -3401,7 +3407,7 @@ class ConvpaintWidget(QWidget):
         # Get image data and stats depending on the data dim and norm mode
         if fe_norm != "percentile":
             # For default and imagenet norm, we want unnormalized data to apply normalization only on the current plane
-            img = self._get_data_channel_first(img)
+            img = self._get_data_channel_first(img.data, img.ndim) if img is not None else None
         else: # "percentile"
             # For percentile norm, we want already normalized data to avoid artifacts when normalizing only the current plane
             img = self._get_data_channel_first_norm(img)
@@ -3467,7 +3473,7 @@ class ConvpaintWidget(QWidget):
             return
 
         # Assure to have channels dimension first, get the data_dims and normalization mode
-        data_dims = self._get_data_dims(img)
+        data_dims = self._get_data_dims(img.data, img.ndim) if img is not None else None
 
         # If image has unsupported dimensions, set stats to None and warn
         if data_dims not in self.supported_data_dims:
@@ -3477,7 +3483,7 @@ class ConvpaintWidget(QWidget):
 
         # Compute image stats depending on the normalization mode
 
-        data = self._get_data_channel_first(img)
+        data = self._get_data_channel_first(img.data, img.ndim) if img is not None else None
         norm_scope = self.cp_model.get_param("normalize")
         if norm_scope == 2: # normalize over stack --> only keep channels dimension
             if data_dims in ["4D", "3D_multi", "2D_RGB", "3D_RGB"]: # Channels dimension present
@@ -3499,13 +3505,12 @@ class ConvpaintWidget(QWidget):
                 image=data, ignore_n_first_dims=c_z_channels) # ignore all but the plane/spatial dimensions
             # --> 2D (1,1) or 3D (single, multi -> Z/C,1,1) or 2D_RGB (C,1,1) or 4D/3D_RGB (C,Z,1,1)
 
-    def _get_data_dims(self, img):
+    def _get_data_dims(self, data, num_dims):
         """Get data dimensionality. Also perform checks on the data dimensions.
         Returns '2D', '2D_RGB', '3D_RGB', '3D_multi', '3D_single' or '4D'."""
 
-        if img is None:
+        if data is None or num_dims is None:
             return None
-        num_dims = img.ndim
         # Sanity check for number of dimensions
         if (num_dims == 1 or num_dims > 4):
             warnings.warn(f'Image has {num_dims} dimensions, but only 2D-4D images are supported.')
@@ -3514,27 +3519,27 @@ class ConvpaintWidget(QWidget):
         # 2D can be either single channel or RGB/RGBA (in which case the underlying data is in fact 3D with 3-4 channels as last dim)
         if num_dims == 2:
             if self.cp_model.get_param("channel_mode") == "rgb":
-                if img.data.shape[-1] in (3, 4):
+                if data.shape[-1] in (3, 4):
                     return '2D_RGB'
                 else:
                     warnings.warn('Image is 2D, but does not have 3 or 4 channels as last dimension. Setting channel_mode to "single".')
-                    self.cp_model.set_param("channel_mode", "single")
+                    self.cp_model.set_param("channel_mode", "single", ignore_warnings=True)
                     return '2D'
             elif self.cp_model.get_param("channel_mode") == "single":
                 return '2D'
             else: # multi channel not possible in 2D
-                warnings.warn('Image is 2D, but channel_mode is "multi". Setting channel_mode to "single".')
-                self.cp_model.set_param("channel_mode", "single")
+                warnings.warn('Image is 2D, but channel_mode was "multi". Setting channel_mode to "single".')
+                self.cp_model.set_param("channel_mode", "single", ignore_warnings=True)
                 return '2D'
 
         # 3D can be single channel, multi channel or RGB/RGBA (in which case the underlying data is in fact 4D with 3-4 channels as last dim)
         if num_dims == 3:
             if self.cp_model.get_param("channel_mode") == "rgb":
-                if img.data.shape[-1] in (3, 4):
+                if data.shape[-1] in (3, 4):
                     return '3D_RGB'
                 else:
                     warnings.warn('Image is 3D, but does not have 3 or 4 channels as last dimension. Setting channel_mode to "multi".')
-                    self.cp_model.set_param("channel_mode", "multi")
+                    self.cp_model.set_param("channel_mode", "multi", ignore_warnings=True)
                     return '3D_multi'
             if self.cp_model.get_param("channel_mode") == "multi":
                 return '3D_multi'
@@ -3544,8 +3549,8 @@ class ConvpaintWidget(QWidget):
         # 4D can only be multi channel
         if num_dims == 4:
             if self.cp_model.get_param("channel_mode") == "single":
-                warnings.warn('Image has 4 dimensions, but channel_mode is "single". Setting channel_mode to "multi".')
-                self.cp_model.set_param("channel_mode", "multi")
+                warnings.warn('Image has 4 dimensions, but channel_mode was "single". Setting channel_mode to "multi".')
+                self.cp_model.set_param("channel_mode", "multi", ignore_warnings=True)
             return '4D'
         
     def _approve_annotation_layer_shape(self, annot, img):
@@ -3585,7 +3590,7 @@ class ConvpaintWidget(QWidget):
         # self.annotation_layer_selection_widget.choices = [(layer.name, layer) for layer in annot_layer_list]
         # return annot_layer_list
 
-    def _train_multiple(self, id_list, img_list, annot_list):
+    def _train_multiple(self, img_list, annot_list, id_list):
         """Core training routine used by multiple callers.
 
         id_list: list of str image ids/names
@@ -3677,12 +3682,12 @@ class ConvpaintWidget(QWidget):
         
         # Get the image and annotation layers based on the prefix
         prefix_len = len(self.annot_tag)
-        annot_list = [layer for layer in layer_list
-                      if layer.name[:prefix_len] == self.annot_tag
-                      and isinstance(layer, napari.layers.Labels)]
         img_list = [layer for layer in layer_list
                     if not layer.name[:prefix_len] == self.annot_tag
                     and isinstance(layer, napari.layers.Image)]
+        annot_list = [layer for layer in layer_list
+                      if layer.name[:prefix_len] == self.annot_tag
+                      and isinstance(layer, napari.layers.Labels)]
 
         # NOTE: Checks are technically not necessary here, as it is done in the CPModel
         if len(annot_list) == 0 or len(img_list) == 0 or len(annot_list) != len(img_list):
@@ -3690,12 +3695,13 @@ class ConvpaintWidget(QWidget):
             return
         
         # Create lists of images and annotations
-        id_list = [img.name for img in img_list]
-        img_list = [self._get_data_channel_first(img) for img in img_list]
+        arr_list = [self._get_data_channel_first(img.data, img.ndim) if img is not None else None
+                    for img in img_list]
         annot_list = [annot.data for annot in annot_list]
+        id_list = [img.name for img in img_list]
 
         # Delegate core training to helper that can be reused
-        self._train_multiple(id_list, img_list, annot_list)
+        self._train_multiple(arr_list, annot_list, id_list)
 
     def _update_training_counts(self):
         """Update the training counts (used with continuous_training/memory_mode) in the GUI."""
@@ -3792,7 +3798,7 @@ class ConvpaintWidget(QWidget):
     def _on_switch_axes(self):
         """Switch the first two axes of the input image."""
         in_img = self._get_selected_img(check=True)
-        data_dims = self._get_data_dims(in_img)
+        data_dims = self._get_data_dims(in_img.data, in_img.ndim) if in_img is not None else None
         if in_img is None:
             warnings.warn('No image layer selected')
             return
@@ -4023,8 +4029,8 @@ class ConvpaintWidget(QWidget):
             self._multifile_open_segmentation(filename)
 
         # Reset flag to update annotation status on annotation changes (e.g. painting)
-        QTimer.singleShot(1000, lambda: setattr(self, '_multifile_update_annot_tick', True))
-        QTimer.singleShot(1000, lambda: setattr(self, '_multifile_last_annot', self.viewer.layers[self.annot_tag].data.copy()
+        QTimer.singleShot(300, lambda: setattr(self, '_multifile_update_annot_tick', True))
+        QTimer.singleShot(300, lambda: setattr(self, '_multifile_last_annot', self.viewer.layers[self.annot_tag].data.copy()
                                                 if self.annot_tag in self.viewer.layers else None))
 
     def _multifile_open_annot(self, filename, auto_add=True):
@@ -4083,7 +4089,7 @@ class ConvpaintWidget(QWidget):
             # update table flag (type-based)
             if not np.all(self._multifile_last_annot == data): # Check this only on changes, not on opening images
                 self._update_multifile_annot_tick(fname)
-            QTimer.singleShot(1000, lambda: setattr(self, '_multifile_last_annot', data.copy()))
+            QTimer.singleShot(300, lambda: setattr(self, '_multifile_last_annot', data.copy()))
         except Exception:
             pass
 
@@ -4153,6 +4159,7 @@ class ConvpaintWidget(QWidget):
         img_prepared = []
         annots = []
         for fn in filenames:
+            # 1. Open the image
             p = folder / fn
             try:
                 arr = imageio.imread(str(p))
@@ -4160,18 +4167,15 @@ class ConvpaintWidget(QWidget):
                 warnings.warn(f'Could not read image {p}. Skipping.')
                 continue
 
-            # Lightweight wrapper with .data and .ndim to reuse _get_data_channel_first, which takes napari image layers (!) not arrays
-            class _ImgLike:
-                def __init__(self, data):
-                    self.data = data
-                    self.ndim = data.ndim
-
+            # 2. Prepare it
             try:
-                prep = self._get_data_channel_first(_ImgLike(arr))
+                prep = self._get_data_channel_first(arr, arr.ndim)  if arr is not None else None
             except Exception:
                 warnings.warn(f'Could not prepare image {p} for training. Skipping.')
                 continue
             img_prepared.append(prep)
+
+            # 3. Get annotations
             # If annotation in store is a path (string), read it now and cache the ndarray
             stored = self._multifile_annotation_store.get(fn, None)
             if isinstance(stored, str):
@@ -4183,23 +4187,27 @@ class ConvpaintWidget(QWidget):
                 except Exception:
                     warnings.warn(f'Could not read stored annotation for {fn}. Skipping.')
                     continue
+            # If it's already an ndarray in memory, use it directly
             elif stored is not None:
                 annots.append(np.copy(stored))
             else:
                 warnings.warn(f'No annotation found for {fn}. Skipping.')
                 continue
-
+        
+        # Double-check that after reading annots we still have image/annot pairs ...
         if len(img_prepared) == 0 or len(annots) == 0:
             warnings.warn('No valid image/annotation pairs available for training.')
             return
 
-        # Ensure equal lengths
+        # ... and a matching number of them
         if len(img_prepared) != len(annots):
             warnings.warn('Mismatch between loaded images and annotations. Aborting training.')
             return
 
+        # Train on all images
+
         # Delegate to core trainer
-        self._train_multiple(filenames[:len(img_prepared)], img_prepared, annots)
+        self._train_multiple(img_prepared, annots, filenames[:len(img_prepared)])
 
     def _on_segment_selected_multifile(self):
         pass
