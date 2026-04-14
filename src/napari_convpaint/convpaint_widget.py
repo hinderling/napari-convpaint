@@ -3912,18 +3912,26 @@ class ConvpaintWidget(QWidget):
     def _select_multifile_img_folder(self):
 
         # If there are existing layers in the viewer, warn the user once and allow abort.
-        # If accepted, remove all existing layers before loading the folder contents.
         existing_layers = list(self.viewer.layers)
-        if existing_layers and not getattr(self, '_multifile_warned', False):
-            # Warn
-            names = '\n'.join([l.name for l in existing_layers])
-            msg = (f"Opening a folder will remove all existing layers from the viewer:\n{names}\n\n"
-                   "It will also reset any in-memory annotations stored for the Multifile workflow.\n\n"
-                   "Do you want to continue?")
-            resp = QMessageBox.question(self, 'Remove existing layers?', msg, QMessageBox.Yes | QMessageBox.No)
-            if resp != QMessageBox.Yes:
-                return
-            self._multifile_warned = True
+        if self._multifile_annotation_store:
+            unsaved = [fname for fname, stored in self._multifile_annotation_store.items()
+                    if not isinstance(stored, str)]
+        else:
+            unsaved = []
+        if not getattr(self, '_multifile_warned', False):
+            msg = ""
+            if existing_layers:
+                # Warn the user about removing existing layers
+                msg += f'The viewer currently contains {len(existing_layers)} layer(s) that will be removed if you reset the folder.\n'
+            if unsaved:
+                msg += (f'The following files have unsaved annotations that will be lost if you reset the folder:\n' +
+                       '\n'.join(unsaved) + '\n')
+            if existing_layers or unsaved:
+                msg += "\nDo you want to continue?"
+                resp = QMessageBox.question(self, 'Discard annots in memory and/or existing layers?', msg, QMessageBox.Yes | QMessageBox.No)
+                if resp != QMessageBox.Yes:
+                    return
+                self._multifile_warned = True
             
         # User accepted; set warned flag and remove layers
         for l in existing_layers:
@@ -4049,6 +4057,18 @@ class ConvpaintWidget(QWidget):
 
     def _reset_multifile_folder(self):
         """Reset the multifile folder selection and clear the file list."""
+        # Check for unsaved annots (those that are saved as arrays, not strings, and have yellow tick), and warn if any
+        if self._multifile_annotation_store:
+            unsaved = [fname for fname, stored in self._multifile_annotation_store.items()
+                       if not isinstance(stored, str)]
+            if unsaved:
+                msg = (f'The following files have unsaved annotations that will be lost if you reset the folder:\n' +
+                       '\n'.join(unsaved) + '\n' +
+                       '\nDo you want to continue?')
+                resp = QMessageBox.question(self, 'Unsaved annotations', msg, QMessageBox.Yes | QMessageBox.No)
+                if resp != QMessageBox.Yes:
+                    return
+
         self.multifile_path_edit.setText('')
         self.multifile_list.setRowCount(0)
         # Clear in-memory annotation store and imported tracking
