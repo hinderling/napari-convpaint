@@ -4363,6 +4363,12 @@ class ConvpaintWidget(QWidget):
             warnings.warn('No trained model available for segmentation.')
             return
         
+        # If the user has selected probabilities as outputs, notify them that this is not (yet) supported and segmentations will be created and saved instead
+        if self.add_probas:
+            show_info('You selected class probabilities as output. This is not yet supported in the Multifile workflow. Segmentations will be created and saved instead.')
+        elif not self.add_seg:
+            show_info('You have not selected segmentations or probabilities as output. Segmentations will be created and saved by default.')
+        
         # Ask for output folder
         default_dir = str(Path(self._multifile_last_folder)) if getattr(self, '_multifile_last_folder', None) else str(Path.cwd())
         folder = QFileDialog.getExistingDirectory(self, 'Select output folder for segmentations', default_dir)
