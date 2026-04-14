@@ -1022,10 +1022,16 @@ class ConvpaintModel:
             annotations = self._register_and_update_annots(
                 annotations, img_ids, params_for_extract.image_downsample
             )
-            num_new = np.sum([ann > 0 for ann in annotations])
+            num_new = sum(np.sum(ann > 0) for ann in annotations)
             if num_new == 0:
                 warnings.warn("No new annotations. Train with existing features.")
                 return [], [], [], [], params_for_extract.image_downsample
+            # Filter out the data where annots are totally empty
+            else:
+                data = [d for d, ann in zip(data, annotations) if np.sum(ann > 0) > 0]
+                annotations = [ann for ann in annotations if np.sum(ann > 0) > 0]
+                if img_ids is not None:
+                    img_ids = [img_id for img_id, ann in zip(img_ids, annotations) if np.sum(ann > 0) > 0]
             coords = [utils.get_coordinates_image(d) for d in data]
         else:
             coords = [None for _ in data]  # No coordinates if not in memory mode

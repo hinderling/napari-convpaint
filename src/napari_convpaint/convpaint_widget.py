@@ -4262,13 +4262,14 @@ class ConvpaintWidget(QWidget):
         Ensures any current open multifile annotation is pushed to the in-memory store
         before assembling lists and delegating to `_train_multiple`.
         """
-        # Ensure current open annotation (if any) is saved to the store
+        # Ensure current open annotation (if any, and if it has annotations) is saved to the store
         fname = getattr(self, '_current_multifile_filename', None)
         if fname is not None and self.annot_tag in self.viewer.layers:
             try:
                 labels_layer = self.viewer.layers[self.annot_tag]
-                # copy data to avoid referencing the live array
-                self._multifile_annotation_store[fname] = np.copy(labels_layer.data)
+                has_annot = np.sum(labels_layer.data > 0) != 0
+                if has_annot:
+                    self._multifile_annotation_store[fname] = np.copy(labels_layer.data)
             except Exception:
                 # best-effort push; continue regardless
                 pass
@@ -4519,13 +4520,13 @@ class ConvpaintWidget(QWidget):
             stem = f.stem
             if '_' not in stem:
                 continue
-            stem_suffix = stem.split('_')[-1].lower()
+            stem_suffix = stem.split('_')[-1].lower() # e.g. "annotations"
             if not stem_suffix:
                 continue
             img_stem = stem[:-len(f'_' + stem_suffix)] if stem.endswith('_' + stem_suffix) else stem
             if img_stem not in table_map:
                 continue
-            target = table_map[img_stem]
+            target = table_map[img_stem] # Image filename (incl. extension) as listed in the table
             # Consider both the singular configured suffix and the known list of suffixes
             is_annot = stem_suffix == getattr(self, 'multifile_annot_suffix', '')
             is_seg = stem_suffix == getattr(self, 'multifile_seg_suffix', '')
