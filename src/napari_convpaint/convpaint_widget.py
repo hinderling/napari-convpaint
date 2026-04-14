@@ -580,7 +580,7 @@ class ConvpaintWidget(QWidget):
             self.multifile_path_edit = QtWidgets.QLineEdit()
             # Make path read-only; folder is selected via the button only
             self.multifile_path_edit.setReadOnly(True)
-            self.multifile_select_btn = QPushButton('Select image folder')
+            self.multifile_select_btn = QPushButton('Open image folder')
             self.multifile_files_group.glayout.addWidget(lbl_folder, 0, 0, 1, 1)
             self.multifile_files_group.glayout.addWidget(self.multifile_path_edit, 0, 1, 1, 1)
             self.multifile_files_group.glayout.addWidget(self.multifile_select_btn, 0, 2, 1, 1)
@@ -612,10 +612,12 @@ class ConvpaintWidget(QWidget):
             self.multifile_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
             self.multifile_files_group.glayout.addWidget(self.multifile_list, 1, 0, 1, 3)
 
-            self.multifile_clear_annotations_btn = QPushButton('Clear annot. for selected')
+            self.multifile_clear_annotations_btn = QPushButton('Clear selected annot.')
             self.multifile_reset_group.glayout.addWidget(self.multifile_clear_annotations_btn, 2, 0, 1, 1)
             self.multifile_reset_folder_btn = QPushButton('Close folder')
             self.multifile_reset_group.glayout.addWidget(self.multifile_reset_folder_btn, 2, 1, 1, 1)
+            self.multifile_clear_segmentations_btn = QPushButton('Clear selected segm.')
+            self.multifile_reset_group.glayout.addWidget(self.multifile_clear_segmentations_btn, 2, 2, 1, 1)
 
             # --- Train/Segment group: action buttons (placeholders for now)
             self.multifile_train_all_annot_btn = QPushButton('Train on all annotated')
@@ -771,6 +773,7 @@ class ConvpaintWidget(QWidget):
                                            'Click on the column header to sort by it. Double-click a file to open the image, annotations and segmentation (if present).')
             self.multifile_clear_annotations_btn.setToolTip('Clear annotations for the selected images (if opened, add a new empty annotation layer).')
             self.multifile_reset_folder_btn.setToolTip('Close all images from the selected folder and clear the file list.')
+            self.multifile_clear_segmentations_btn.setToolTip('Clear segmentations for the selected images (if opened, remove the segmentation layer).')
             self.multifile_train_all_annot_btn.setToolTip('Train a model using all annotated images in the file list.')
             self.multifile_segment_selected_btn.setToolTip('Segment all selected images in the file list. Choose a folder to save the segmentations in files.')
             self.multifile_export_annot_btn.setToolTip('Export annotations of all opened images as files.')
@@ -780,7 +783,7 @@ class ConvpaintWidget(QWidget):
                 w.setToolTip('When importing labels, include annotations/segmentations. Also, when opening an image, automatically open the corresponding layer(s).')
             for w in [self.lbl_multifile_suffixes, self.multifile_annotations_suffix_txt, self.multifile_segmentation_suffix_txt]:
                 w.setToolTip('Suffixes to identify annotation and segmentation files in the folder. Will be used for export and for recognizing annotations and segmentations at imports.\n' +
-                             ' Important convention: the filename must be in the form [image name]_[suffix].[ext], where [suffix] is the specified suffix and [ext] is the file extension (e.g. .tif).')
+                             'Important convention: the filename must be in the form [image name]_[suffix].[ext], where [suffix] is the specified suffix and [ext] is the file extension (e.g. .tif).')
 
     def _remove_init_tooltips(self):
         # Remove tooltips for the tabs
@@ -829,7 +832,7 @@ class ConvpaintWidget(QWidget):
 
         if 'Multifile' in self.tab_names:
             for w in [self.multifile_select_btn, self.multifile_list, self.multifile_clear_annotations_btn,
-                      self.multifile_reset_folder_btn, self.multifile_train_all_annot_btn,
+                      self.multifile_clear_segmentations_btn, self.multifile_reset_folder_btn, self.multifile_train_all_annot_btn,
                       self.multifile_segment_selected_btn, self.multifile_export_annot_btn,
                       self.multifile_import_annot_and_seg_btn, self.lbl_import_open_labels,
                       self.check_open_import_annotations, self.check_open_import_segmentations,
@@ -1084,6 +1087,7 @@ class ConvpaintWidget(QWidget):
             self.multifile_list.cellDoubleClicked.connect(self._on_multifile_open_file)
             self.multifile_clear_annotations_btn.clicked.connect(self._multifile_clear_annot)
             self.multifile_reset_folder_btn.clicked.connect(self._reset_multifile_folder)
+            self.multifile_clear_segmentations_btn.clicked.connect(self._multifile_clear_seg)
             self.multifile_train_all_annot_btn.clicked.connect(self._on_train_on_multifile)
             self.multifile_segment_selected_btn.clicked.connect(self._on_segment_selected_multifile)
             self.multifile_import_annot_and_seg_btn.clicked.connect(self._import_annot_and_seg)
@@ -3972,11 +3976,9 @@ class ConvpaintWidget(QWidget):
                 self._on_multifile_open_file(0, 1)
             except Exception:
                 pass
-    
-    def _multifile_clear_annot(self):
-        """Clear the annotation for the selected multifile images, in the in-memory store.
-        If one of the images is currently open in the viewer, also clear the annotation layer."""
-        # Get selected rows
+
+    def _multifile_get_selected(self):
+        """Get row selected in the image list."""
         try:
             sel = self.multifile_list.selectionModel().selectedRows()
             if not sel:
@@ -3985,8 +3987,17 @@ class ConvpaintWidget(QWidget):
             rows = [s.row() for s in sel]
         except Exception:
             warnings.warn('Could not determine selected files.')
+            return None
+        return rows
+
+    def _multifile_clear_annot(self):
+        """Clear the annotation for the selected multifile images, in the in-memory store.
+        If one of the images is currently open in the viewer, also clear the annotation layer."""
+
+        rows = self._multifile_get_selected()
+        if rows is None:
             return
-        
+
         for row in rows:
             fname = self.multifile_list.item(row, 1).text()
             img_opened = fname == getattr(self, '_current_multifile_filename', None)
@@ -3999,6 +4010,26 @@ class ConvpaintWidget(QWidget):
                 del self._multifile_annotation_store[fname]
             # Update annotation status tick in the file list
             self._update_multifile_annot_tick(fname)
+
+    def _multifile_clear_seg(self):
+        """Clear the segmentation for the selected multifile images, in the in-memory store.
+        If one of the images is currently open in the viewer, also remove the segmentation layer."""
+        rows = self._multifile_get_selected()
+        if rows is None:
+            return
+        
+        for row in rows:
+            fname = self.multifile_list.item(row, 1).text()
+            img_opened = fname == getattr(self, '_current_multifile_filename', None)
+            # Clear segmentation layer data
+            seg_opened = self.seg_tag in self.viewer.layers
+            if img_opened and seg_opened:
+                self.viewer.layers[self.seg_tag].data = np.zeros_like(self.viewer.layers[self.seg_tag].data)
+            # Clear in-memory segmentation store for current file
+            if fname and fname in getattr(self, '_multifile_segmentation_store', {}):
+                del self._multifile_segmentation_store[fname]
+            # Update segmentation status tick in the file list
+            self._update_multifile_seg_tick(fname)
 
     def _reset_multifile_folder(self):
         """Reset the multifile folder selection and clear the file list."""
@@ -4058,6 +4089,7 @@ class ConvpaintWidget(QWidget):
 
         # Track current filename opened via Multifile
         self._current_multifile_filename = filename
+        self._current_multifile_row = row
         # Update bold state in file list to indicate opened file
         try:
             self._update_multifile_opened_bold(filename)
@@ -4519,22 +4551,23 @@ class ConvpaintWidget(QWidget):
             warnings.warn('No matching annotation or segmentation files found for import.')
             return
 
-        # Ask user once with a concise summary
-        parts = []
-        if total_annots:
-            parts.append(f'{total_annots} annotation file(s) to import')
-        if total_segs:
-            parts.append(f'{total_segs} segmentation file(s) to import')
-        if will_overwrite_annots:
-            parts.append(f'{len(will_overwrite_annots)} annotation(s) will overwrite existing')
-        if will_overwrite_segs:
-            parts.append(f'{len(will_overwrite_segs)} segmentation(s) will overwrite existing')
-        if amb_count:
-            parts.append(f'{amb_count} image(s) have multiple matching files and will be skipped')
-        msg = 'Found: ' + '; '.join(parts) + '. Proceed?'
-        resp = QMessageBox.question(self, 'Import annotations/segmentations?', msg, QMessageBox.Yes | QMessageBox.No)
-        if resp != QMessageBox.Yes:
-            return
+        # Ask user with one concise summary, if anything unclear (overwrites, ambiguities, totals)
+        if will_overwrite_annots or will_overwrite_segs or amb_count:
+            parts = []
+            if total_annots:
+                parts.append(f'{total_annots} annotation file(s) to import')
+            if total_segs:
+                parts.append(f'{total_segs} segmentation file(s) to import')
+            if will_overwrite_annots:
+                parts.append(f'{len(will_overwrite_annots)} annotation(s) will overwrite existing')
+            if will_overwrite_segs:
+                parts.append(f'{len(will_overwrite_segs)} segmentation(s) will overwrite existing')
+            if amb_count:
+                parts.append(f'{amb_count} image(s) have multiple matching files and will be skipped')
+            msg = 'Found: ' + '; '.join(parts) + '. Proceed?'
+            resp = QMessageBox.question(self, 'Import annotations/segmentations?', msg, QMessageBox.Yes | QMessageBox.No)
+            if resp != QMessageBox.Yes:
+                return
 
         # Perform import for single candidates
         imported_annots = 0
@@ -4565,11 +4598,11 @@ class ConvpaintWidget(QWidget):
         else:
             warnings.warn('No files were imported.')
 
-        # Finally re-open the selected image, so we get back the correct annotation if applicable...
+        # Finally re-open the current image, so we get back the correct annotation if applicable...
         try:
-            sel = self.multifile_list.selectionModel().selectedRows()
-            if sel:
-                self._on_multifile_open_file(sel[0].row(), 1)
+            current_row = self._current_multifile_row
+            if current_row is not None:
+                self._on_multifile_open_file(current_row, 1)
         except Exception:
             pass
 
