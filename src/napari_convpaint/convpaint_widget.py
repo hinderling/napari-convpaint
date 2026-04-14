@@ -514,6 +514,7 @@ class ConvpaintWidget(QWidget):
 
             # Input channels option
             self.text_input_channels = QtWidgets.QLineEdit()
+            self.text_input_channels.setStyleSheet("font-size: 12px;")
             self.text_input_channels.setPlaceholderText('e.g. 0,1,2 or 0,1')
             self.channels_label = QLabel('Input channels (empty = all)')
             self.advanced_input_group.glayout.addWidget(self.channels_label, 0, 0, 1, 2)
@@ -542,6 +543,7 @@ class ConvpaintWidget(QWidget):
 
             # PCA option for the features
             self.text_features_pca = QtWidgets.QLineEdit()
+            self.text_features_pca.setStyleSheet("font-size: 12px;")
             self.text_features_pca.setPlaceholderText('e.g. 3 or 5')
             self.text_features_pca.setText(self.features_pca_components)
             self.pca_label = QLabel('PCA components (0 = off)')
@@ -549,6 +551,7 @@ class ConvpaintWidget(QWidget):
             self.advanced_unsupervised_group.glayout.addWidget(self.text_features_pca, 0, 2, 1, 2)
             # Kmeans option for the features
             self.text_features_kmeans = QtWidgets.QLineEdit()
+            self.text_features_kmeans.setStyleSheet("font-size: 12px;")
             self.text_features_kmeans.setPlaceholderText('e.g. 3 or 5')
             self.text_features_kmeans.setText(self.features_kmeans_clusters)
             self.kmeans_label = QLabel('Kmeans clusters (0 = off)')
@@ -643,10 +646,12 @@ class ConvpaintWidget(QWidget):
             self.multifile_settings_group.glayout.addWidget(self.check_open_import_annotations, 0, 1, 1, 1)
             self.multifile_settings_group.glayout.addWidget(self.check_open_import_segmentations, 0, 2, 1, 1)
 
-            self.lbl_multifile_suffixes = QLabel('Suffixes:')
+            self.lbl_multifile_suffixes = QLabel('Suffixes (annot. | segm.):')
             self.multifile_settings_group.glayout.addWidget(self.lbl_multifile_suffixes, 1, 0, 1, 1)
             self.multifile_annotations_suffix_txt = QtWidgets.QLineEdit()
+            self.multifile_annotations_suffix_txt.setStyleSheet("font-size: 12px;")
             self.multifile_segmentation_suffix_txt = QtWidgets.QLineEdit()
+            self.multifile_segmentation_suffix_txt.setStyleSheet("font-size: 12px;")
             self.multifile_annotations_suffix_txt.setText('annotations')
             self.multifile_segmentation_suffix_txt.setText('segmentation')
             self.multifile_settings_group.glayout.addWidget(self.multifile_annotations_suffix_txt, 1, 1, 1, 1)
@@ -1208,6 +1213,7 @@ class ConvpaintWidget(QWidget):
 
         # Create a new class name
         new_name = QtWidgets.QLineEdit()
+        new_name.setStyleSheet("font-size: 12px;")
         self.class_names.append(new_name)
         class_num = len(self.class_names)  # Class number is the length of the list
         # Add the new name to the layout
