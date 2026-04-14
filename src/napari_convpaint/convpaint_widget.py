@@ -41,7 +41,7 @@ class ConvpaintWidget(QWidget):
     """
 
 ### Define the basic structure of the widget
-    
+
     def __init__(self, napari_viewer, parent=None, third_party=False):
 
         ### Initialize the widget state
@@ -53,7 +53,7 @@ class ConvpaintWidget(QWidget):
         self.selected_channel = None
         self.spatial_dim_info_thresh = 1000000
         self.default_brush_size = 3
-        self.multifile_annot_suffixes = ["annot", "annotation", "annotations", "label", "labels", "scribble", "scribbles", "scrib"]
+        self.multifile_annot_suffixes = ["annot", "annotation", "annotations", "scribble", "scribbles", "scrib"]
         self.multifile_seg_suffixes = ["seg", "segmentation", "segmentations", "prediction", "predictions", "pred", "preds", "mask", "masks"]
         # Set initial values for attributes that change and can be reset to defaults
         self._reset_attributes()
