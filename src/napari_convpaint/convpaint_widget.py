@@ -15,6 +15,7 @@ import numpy as np
 import warnings
 import tifffile
 import imageio.v2 as imageio
+from collections import defaultdict
 
 # Imported inline to avoid heavy memory usage when the functions are not used:
 # import torch
@@ -53,6 +54,7 @@ class ConvpaintWidget(QWidget):
         self.selected_channel = None
         self.spatial_dim_info_thresh = 1000000
         self.default_brush_size = 3
+        # suffixes for opening images in multifile, to exclude potential annotation/segmentation files
         self.multifile_annot_suffixes = ["annot", "annotation", "annotations", "scribble", "scribbles", "scrib"]
         self.multifile_seg_suffixes = ["seg", "segmentation", "segmentations", "prediction", "predictions", "pred", "preds", "mask", "masks"]
         # Set initial values for attributes that change and can be reset to defaults
@@ -633,11 +635,20 @@ class ConvpaintWidget(QWidget):
             self.lbl_import_open_labels = QLabel('Import and auto-open:')
             self.multifile_settings_group.glayout.addWidget(self.lbl_import_open_labels, 0, 0, 1, 1)
             self.check_open_import_annotations = QCheckBox('Annotations')
-            self.check_open_import_segmentations = QCheckBox('Segmentations')
+            self.check_open_import_segmentations = QCheckBox('Segmentation')
             self.check_open_import_annotations.setChecked(True)
             self.check_open_import_segmentations.setChecked(True)
             self.multifile_settings_group.glayout.addWidget(self.check_open_import_annotations, 0, 1, 1, 1)
             self.multifile_settings_group.glayout.addWidget(self.check_open_import_segmentations, 0, 2, 1, 1)
+
+            self.lbl_multifile_suffixes = QLabel('Suffixes:')
+            self.multifile_settings_group.glayout.addWidget(self.lbl_multifile_suffixes, 1, 0, 1, 1)
+            self.multifile_annotations_suffix_txt = QtWidgets.QLineEdit()
+            self.multifile_segmentation_suffix_txt = QtWidgets.QLineEdit()
+            self.multifile_annotations_suffix_txt.setText('annotations')
+            self.multifile_segmentation_suffix_txt.setText('segmentation')
+            self.multifile_settings_group.glayout.addWidget(self.multifile_annotations_suffix_txt, 1, 1, 1, 1)
+            self.multifile_settings_group.glayout.addWidget(self.multifile_segmentation_suffix_txt, 1, 2, 1, 1)
         
         # === Show tooltips by default ===
 
@@ -767,6 +778,9 @@ class ConvpaintWidget(QWidget):
                                                                'Will scan the folder to detect annotations and segmentations belonging to the images and import both (unless specified in settings).')
             for w in [self.lbl_import_open_labels, self.check_open_import_annotations, self.check_open_import_segmentations]:
                 w.setToolTip('When importing labels, include annotations/segmentations. Also, when opening an image, automatically open the corresponding layer(s).')
+            for w in [self.lbl_multifile_suffixes, self.multifile_annotations_suffix_txt, self.multifile_segmentation_suffix_txt]:
+                w.setToolTip('Suffixes to identify annotation and segmentation files in the folder. Will be used for export and for recognizing annotations and segmentations at imports.\n' +
+                             ' Important convention: the filename must be in the form [image name]_[suffix].[ext], where [suffix] is the specified suffix and [ext] is the file extension (e.g. .tif).')
 
     def _remove_init_tooltips(self):
         # Remove tooltips for the tabs
@@ -818,7 +832,8 @@ class ConvpaintWidget(QWidget):
                       self.multifile_reset_folder_btn, self.multifile_train_all_annot_btn,
                       self.multifile_segment_selected_btn, self.multifile_export_annot_btn,
                       self.multifile_import_annot_and_seg_btn, self.lbl_import_open_labels,
-                      self.check_open_import_annotations, self.check_open_import_segmentations]:
+                      self.check_open_import_annotations, self.check_open_import_segmentations,
+                      self.lbl_multifile_suffixes, self.multifile_annotations_suffix_txt, self.multifile_segmentation_suffix_txt]:
                 w.setToolTip('')
 
 ### ConvpaintModel instatiation and default population & calling connections, resetting model and key bindings
@@ -1077,6 +1092,11 @@ class ConvpaintWidget(QWidget):
                 self, 'multifile_import_open_annotations', self.check_open_import_annotations.isChecked()))
             self.check_open_import_segmentations.stateChanged.connect(lambda: setattr(
                 self, 'multifile_import_open_segmentations', self.check_open_import_segmentations.isChecked()))
+            self.multifile_annotations_suffix_txt.textChanged.connect(lambda: setattr(
+                self, 'multifile_annot_suffix', self.multifile_annotations_suffix_txt.text()))
+            self.multifile_segmentation_suffix_txt.textChanged.connect(lambda: setattr(
+                self, 'multifile_seg_suffix', self.multifile_segmentation_suffix_txt.text()))
+
             self.viewer.layers.events.removed.connect(self._on_annotation_changed)
 
 
@@ -2246,6 +2266,8 @@ class ConvpaintWidget(QWidget):
             self._reset_multifile_folder()
             self.check_open_import_annotations.setChecked(self.multifile_import_open_annotations)
             self.check_open_import_segmentations.setChecked(self.multifile_import_open_segmentations)
+            self.multifile_annotations_suffix_txt.setText(self.multifile_annot_suffix)
+            self.multifile_segmentation_suffix_txt.setText(self.multifile_seg_suffix)
 
         # Re-apply device dropdown state after attributes reset potentially changed policies.
         self._reset_device_options()
@@ -2329,6 +2351,8 @@ class ConvpaintWidget(QWidget):
         self.store_annot = False # Flag whether to store annotations in the in-memory store (for Multifile)
         self.multifile_import_open_annotations = True # Whether to open annotations when opening images via Multifile
         self.multifile_import_open_segmentations = True # Whether to open segmentations when opening images via Multifile
+        self.multifile_annot_suffix = 'annotations' # Suffix for annotation files in Multifile
+        self.multifile_seg_suffix = 'segmentation' # Suffix for segmentation files in
 
 ### Model Tab
 
@@ -3917,6 +3941,7 @@ class ConvpaintWidget(QWidget):
             stem = f.stem
             # Filter out annotations and segmentations
             stem_suffix = stem.split('_')[-1].lower() if '_' in stem else ''
+            # Note: here we use a wider selection of suffixes to ignore...
             if stem_suffix and (stem_suffix in self.multifile_annot_suffixes or
                                 stem_suffix in self.multifile_seg_suffixes):
                 continue
@@ -4207,7 +4232,7 @@ class ConvpaintWidget(QWidget):
         """
         # Ensure current open annotation (if any) is saved to the store
         fname = getattr(self, '_current_multifile_filename', None)
-        if fname is not None and hasattr(self, 'annot_prefix') and self.annot_tag in self.viewer.layers:
+        if fname is not None and self.annot_tag in self.viewer.layers:
             try:
                 labels_layer = self.viewer.layers[self.annot_tag]
                 # copy data to avoid referencing the live array
@@ -4400,6 +4425,11 @@ class ConvpaintWidget(QWidget):
         else:
             warnings.warn('No images were segmented.')
 
+        # If segmented the opened image, open its segmentation
+        current_open = getattr(self, '_current_multifile_filename', None)
+        if current_open in filenames and self.multifile_import_open_segmentations:
+            self._multifile_open_segmentation(current_open)
+
     def _import_annot_and_seg(self):
         """Import annotation TIFFs from a folder and register them in the in-memory store.
 
@@ -4431,15 +4461,7 @@ class ConvpaintWidget(QWidget):
         # Remember last used folder for future dialogs
         self._multifile_last_folder = str(in_dir)
 
-        # Clear existing in-memory annotations/segmentations; we'll register imported ones as paths
-        if self.multifile_import_open_annotations:
-            self._multifile_annotation_store = {}
-            self._reset_all_annot_ticks()
-        if self.multifile_import_open_segmentations:
-            self._multifile_segmentation_store = {}
-            self._reset_all_seg_ticks()
-
-        # Clear current annotation layer if open (otherwise it will lead to confusion with imported annotations)
+        # Clear current annotation layer if open (otherwise it might show stale data)
         if self.annot_tag in self.viewer.layers:
             try:
                 self.viewer.layers.remove(self.viewer.layers[self.annot_tag])
@@ -4456,41 +4478,92 @@ class ConvpaintWidget(QWidget):
             stem = Path(fname).stem
             table_map[stem] = fname
 
-        imported_annots = 0
-        imported_segs = 0
+        # Collect candidate files for each target filename (allow for multiple extensions)
+        cand_annots = defaultdict(list)
+        cand_segs = defaultdict(list)
         for f in in_dir.iterdir():
             if not f.is_file():
                 continue
             stem = f.stem
-            stem_suffix = stem.split('_')[-1].lower() if '_' in stem else ''
+            if '_' not in stem:
+                continue
+            stem_suffix = stem.split('_')[-1].lower()
             if not stem_suffix:
                 continue
-            img_stem = stem[:-len(f'_{stem_suffix}')]
+            img_stem = stem[:-len(f'_' + stem_suffix)] if stem.endswith('_' + stem_suffix) else stem
             if img_stem not in table_map:
                 continue
-            target_fname = table_map[img_stem]
-            # Register all annots that are present, if the preference is set
-            if self.multifile_import_open_annotations and stem_suffix in self.multifile_annot_suffixes:
-                try:
-                    # Register the file path (string) so it's considered persistent
-                    self._multifile_annotation_store[target_fname] = str(f)
-                    self._update_multifile_annot_tick(target_fname)
-                    imported_annots += 1
-                except Exception:
-                    warnings.warn(f'Could not register annotation for {target_fname}.')
-            # Register all segmentations that are present, if the preference is set
-            elif self.multifile_import_open_segmentations and stem_suffix in self.multifile_seg_suffixes:
-                try:
-                    self._multifile_segmentation_store[target_fname] = str(f)
-                    self._update_multifile_seg_tick(target_fname)
-                    imported_segs += 1
-                except Exception:
-                    warnings.warn(f'Could not register segmentation for {target_fname}.')
+            target = table_map[img_stem]
+            # Consider both the singular configured suffix and the known list of suffixes
+            is_annot = stem_suffix == getattr(self, 'multifile_annot_suffix', '')
+            is_seg = stem_suffix == getattr(self, 'multifile_seg_suffix', '')
+            if is_annot and self.multifile_import_open_annotations:
+                cand_annots[target].append(f)
+            if is_seg and self.multifile_import_open_segmentations:
+                cand_segs[target].append(f)
+
+        # Decide which candidates are ambiguous (multiple files for same image) and which will overwrite
+        ambiguous_annots = [t for t, lst in cand_annots.items() if len(lst) > 1]
+        ambiguous_segs = [t for t, lst in cand_segs.items() if len(lst) > 1]
+        single_annots = {t: lst[0] for t, lst in cand_annots.items() if len(lst) == 1}
+        single_segs = {t: lst[0] for t, lst in cand_segs.items() if len(lst) == 1}
+
+        will_overwrite_annots = [t for t in single_annots.keys() if t in getattr(self, '_multifile_annotation_store', {})]
+        will_overwrite_segs = [t for t in single_segs.keys() if t in getattr(self, '_multifile_segmentation_store', {})]
+
+        total_annots = len(single_annots)
+        total_segs = len(single_segs)
+        amb_count = len(ambiguous_annots) + len(ambiguous_segs)
+
+        if total_annots == 0 and total_segs == 0:
+            warnings.warn('No matching annotation or segmentation files found for import.')
+            return
+
+        # Ask user once with a concise summary
+        parts = []
+        if total_annots:
+            parts.append(f'{total_annots} annotation file(s) to import')
+        if total_segs:
+            parts.append(f'{total_segs} segmentation file(s) to import')
+        if will_overwrite_annots:
+            parts.append(f'{len(will_overwrite_annots)} annotation(s) will overwrite existing')
+        if will_overwrite_segs:
+            parts.append(f'{len(will_overwrite_segs)} segmentation(s) will overwrite existing')
+        if amb_count:
+            parts.append(f'{amb_count} image(s) have multiple matching files and will be skipped')
+        msg = 'Found: ' + '; '.join(parts) + '. Proceed?'
+        resp = QMessageBox.question(self, 'Import annotations/segmentations?', msg, QMessageBox.Yes | QMessageBox.No)
+        if resp != QMessageBox.Yes:
+            return
+
+        # Perform import for single candidates
+        imported_annots = 0
+        imported_segs = 0
+        for target, path in single_annots.items():
+            try:
+                self._multifile_annotation_store[target] = str(path)
+                self._update_multifile_annot_tick(target)
+                imported_annots += 1
+            except Exception:
+                warnings.warn(f'Could not register annotation for {target}.')
+
+        for target, path in single_segs.items():
+            try:
+                self._multifile_segmentation_store[target] = str(path)
+                self._update_multifile_seg_tick(target)
+                imported_segs += 1
+            except Exception:
+                warnings.warn(f'Could not register segmentation for {target}.')
+
+        # Notify about ambiguous/skipped targets (report once)
+        if amb_count:
+            show_info(f'Skipped {amb_count} image(s) that had multiple matching files (check input folder):' +
+                      f'{", ".join(ambiguous_annots + ambiguous_segs)}')
 
         if imported_annots or imported_segs:
             show_info(f'Imported {imported_annots} annotations and {imported_segs} segmentations')
         else:
-            warnings.warn('No matching annotation or segmentation files found for import.')
+            warnings.warn('No files were imported.')
 
         # Finally re-open the selected image, so we get back the correct annotation if applicable...
         try:
@@ -4545,7 +4618,7 @@ class ConvpaintWidget(QWidget):
         will_overwrite = False
         for fname in list(self._multifile_annotation_store.keys()):
             stem = Path(fname).stem
-            out_name = out_dir / f"{stem}_{self.annot_tag}.tif"
+            out_name = out_dir / f"{stem}_{self.multifile_annot_suffix}.tif"
             if out_name.exists():
                 will_overwrite = True
                 break
@@ -4559,7 +4632,7 @@ class ConvpaintWidget(QWidget):
         for fname, annot in list(self._multifile_annotation_store.items()):
             try:
                 stem = Path(fname).stem
-                out_name = out_dir / f"{stem}_{self.annot_tag}.tif"
+                out_name = out_dir / f"{stem}_{self.multifile_annot_suffix}.tif"
                 # If store contains a string path, read the file first to get array (technically just copying the file)
                 if isinstance(annot, str):
                     try:
