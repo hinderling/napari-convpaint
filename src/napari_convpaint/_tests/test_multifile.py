@@ -71,15 +71,28 @@ def test_multifile_opens_different_image_types(make_napari_viewer, tmp_path, mon
         assert w._current_multifile_filename == fname
 
 
-def test_multifile_training_combines_classes_across_files(make_napari_viewer, tmp_path, monkeypatch):
-    """Annotate class 1 on img1 and class 2 on img2. After multifile training,
-    predicting img3 produces both classes.
+def _make_striped_rgb(rng):
+    """128x128 RGB image with three horizontal stripes of distinct colors.
+
+    Same color palette and layout across images so per-image normalization
+    produces the same scales; small noise keeps features non-degenerate.
+    Stripes: rows 0:40 red, 40:80 green, 80:128 blue.
     """
-    np.random.seed(0)
-    # Three images with a bright square at center on a noisy background.
-    im1, _ = generate_synthetic_square((128, 128), (40, 40))
-    im2, _ = generate_synthetic_square((128, 128), (40, 40))
-    im3, _ = generate_synthetic_square((128, 128), (40, 40))
+    im = rng.integers(0, 25, (128, 128, 3), dtype=np.uint8)
+    im[0:40, :, 0] += 180    # red stripe
+    im[40:80, :, 1] += 180   # green stripe
+    im[80:128, :, 2] += 180  # blue stripe
+    return im
+
+
+def test_multifile_training_combines_classes_across_files(make_napari_viewer, tmp_path, monkeypatch):
+    """Annotate class 1 on the red stripe of img1 and class 2 on the green stripe
+    of img2. After multifile training, predicting img3 must contain both classes.
+    """
+    rng = np.random.default_rng(0)
+    im1 = _make_striped_rgb(rng)
+    im2 = _make_striped_rgb(rng)
+    im3 = _make_striped_rgb(rng)
     tifffile.imwrite(tmp_path / 'img1.tif', im1)
     tifffile.imwrite(tmp_path / 'img2.tif', im2)
     tifffile.imwrite(tmp_path / 'img3.tif', im3)
@@ -89,12 +102,12 @@ def test_multifile_training_combines_classes_across_files(make_napari_viewer, tm
 
     w._select_multifile_img_folder()
 
-    # img1: class 1 only, in the noisy background
+    # img1: class 1 annotated inside the red stripe
     annot1 = np.zeros((128, 128), dtype=np.uint8)
-    annot1[10:15, 10:30] = 1
-    # img2: class 2 only, inside the square (center)
+    annot1[10:30, 10:120] = 1
+    # img2: class 2 annotated inside the green stripe
     annot2 = np.zeros((128, 128), dtype=np.uint8)
-    annot2[60:68, 60:68] = 2
+    annot2[50:70, 10:120] = 2
     w._multifile_annotation_store['img1.tif'] = annot1
     w._multifile_annotation_store['img2.tif'] = annot2
 
@@ -119,6 +132,9 @@ def test_multifile_training_combines_classes_across_files(make_napari_viewer, tm
     assert 1 in unique and 2 in unique, (
         f"Expected both classes 1 and 2 in prediction, got {unique}"
     )
+    # Class 1 should dominate the red stripe, class 2 the green stripe
+    assert (seg[0:40, :] == 1).mean() > 0.5, "Class 1 did not dominate the red stripe"
+    assert (seg[40:80, :] == 2).mean() > 0.5, "Class 2 did not dominate the green stripe"
 
     # Segmentation store was updated and tick switched to persistent (green)
     assert w._multifile_segmentation_store.get('img3.tif') == str(seg_file)
