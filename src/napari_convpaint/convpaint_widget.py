@@ -1102,7 +1102,17 @@ class ConvpaintWidget(QWidget):
                 self, 'multifile_seg_suffix', self.multifile_segmentation_suffix_txt.text()))
 
             self.viewer.layers.events.removed.connect(self._on_annotation_changed)
+            # self.viewer.window.qt_viewer.canvas.events.mouse_release.connect(self._on_annotation_changed)
+            self.viewer.mouse_drag_callbacks.append(self._on_mouse_event)
 
+    def _on_mouse_event(self, viewer, event):
+        yield
+        while event.type == "mouse_press":
+            yield
+        if self.annot_tag in self.viewer.layers:
+            layer = self.viewer.layers.selection.active
+            if layer is not None and layer.name == self.annot_tag:
+                self._on_annotation_changed(None)
 
 ### Visibility toggles for key bindings
 
@@ -4021,10 +4031,10 @@ class ConvpaintWidget(QWidget):
         for row in rows:
             fname = self.multifile_list.item(row, 1).text()
             img_opened = fname == getattr(self, '_current_multifile_filename', None)
-            # Clear segmentation layer data
+            # Remove segmentation layer
             seg_opened = self.seg_tag in self.viewer.layers
             if img_opened and seg_opened:
-                self.viewer.layers[self.seg_tag].data = np.zeros_like(self.viewer.layers[self.seg_tag].data)
+                self.viewer.layers.remove(self.viewer.layers[self.seg_tag])
             # Clear in-memory segmentation store for current file
             if fname and fname in getattr(self, '_multifile_segmentation_store', {}):
                 del self._multifile_segmentation_store[fname]
@@ -4106,8 +4116,8 @@ class ConvpaintWidget(QWidget):
             QTimer.singleShot(100, lambda: self._multifile_open_segmentation(filename))
 
         # Reset flag to update annotation status on annotation changes (e.g. painting)
-        QTimer.singleShot(300, lambda: setattr(self, '_multifile_update_annot_tick', True))
-        QTimer.singleShot(300, lambda: setattr(self, '_multifile_last_annot', self.viewer.layers[self.annot_tag].data.copy()
+        QTimer.singleShot(250, lambda: setattr(self, '_multifile_update_annot_tick', True))
+        QTimer.singleShot(250, lambda: setattr(self, '_multifile_last_annot', self.viewer.layers[self.annot_tag].data.copy()
                                                 if self.annot_tag in self.viewer.layers else None))
 
     def _multifile_open_annot(self, filename, auto_add=True):
@@ -4148,13 +4158,14 @@ class ConvpaintWidget(QWidget):
     def _on_annotation_changed(self, event=None):
         """Save annotation for current multifile image if present."""
         # Case 1: layer removal event (viewer.layers.events.removed)
-        if hasattr(event, "value"):
+        if hasattr(event, "value") and hasattr(event.value, "name"):
             layer = event.value
         # Case 2: layer-level event (e.g. set_data)
-        elif hasattr(event, "source"):
+        elif hasattr(event, "source") and hasattr(event.source, "name"):
             layer = event.source
+        # Case 3: mouse release event after painting in annotations layer (checked outside...)
         else:
-            layer = None
+            layer = self.viewer.layers.selection.active
 
         # Check that we are handling the correct layer in the correct context (multifile mode, annotation layer)
         if not self.store_annot or not layer or layer.name != self.annot_tag:
@@ -4176,11 +4187,16 @@ class ConvpaintWidget(QWidget):
                 if hasattr(self, '_multifile_annotation_store') and fname in self._multifile_annotation_store:
                     del self._multifile_annotation_store[fname]
             # update table flag (type-based)
-            if not np.all(self._multifile_last_annot == data): # Check this only on changes, not on opening images
-                self._update_multifile_annot_tick(fname)
-            QTimer.singleShot(300, lambda: setattr(self, '_multifile_last_annot', data.copy()))
+            QTimer.singleShot(250, lambda: self._maybe_update_annot_tick(data, fname))
+            QTimer.singleShot(500, lambda: setattr(self, '_multifile_last_annot', data.copy()))
         except Exception:
             pass
+
+    def _maybe_update_annot_tick(self, data, filename):
+        """Same as _update_multifile_annot_tick but only if the annotation data has actually changed. Defined separately, so we can call it with a delay."""
+        if (self._multifile_last_annot.shape != data.shape or # If the file changed (check this first as with different shapes we cannot compare values)
+            not np.all(self._multifile_last_annot == data)): # If the annotation data changed
+            self._update_multifile_annot_tick(filename)
 
     def _update_multifile_annot_tick(self, filename):
         """Update the Annotations column in the multifile table for a given filename."""
