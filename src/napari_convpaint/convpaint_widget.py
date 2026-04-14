@@ -2346,7 +2346,7 @@ class ConvpaintWidget(QWidget):
         self._multifile_last_folder = '' # Last used folder for images/annotations dialogs (used as default in folder pickers)
         self._multifile_update_annot_tick = True # Flag to adjust updating tick when opening images
         self._multifile_last_annot = None
-        self.multifile_import_warned = False # Whether the user has already seen the "import annotations" warning (for Multifile)
+        # self.multifile_import_warned = False # Whether the user has already seen the "import annotations" warning (for Multifile)
         self._current_multifile_filename = None # Current multifile-opened filename (when opened via Multifile UI)
         self.store_annot = False # Flag whether to store annotations in the in-memory store (for Multifile)
         self.multifile_import_open_annotations = True # Whether to open annotations when opening images via Multifile
@@ -3927,7 +3927,7 @@ class ConvpaintWidget(QWidget):
         self._multifile_update_annot_tick = True
         self._multifile_last_annot = None
         # Reset import warning flag so user is asked again when importing
-        self.multifile_import_warned = False
+        # self.multifile_import_warned = False
 
         self.multifile_path_edit.setText(folder)
         p = Path(folder)
@@ -4008,7 +4008,7 @@ class ConvpaintWidget(QWidget):
         self._multifile_warned = False
         self._multifile_annotation_store = {}
         self._multifile_segmentation_store = {}
-        self.multifile_import_warned = False
+        # self.multifile_import_warned = False
         # Reset flag to update annotation tick
         self._multifile_update_annot_tick = True
         self._multifile_last_annot = None
@@ -4069,9 +4069,9 @@ class ConvpaintWidget(QWidget):
 
         # Add/open annotations and segmentations
         if self.multifile_import_open_annotations:
-            self._multifile_open_annot(filename, auto_add=original_auto)
+            QTimer.singleShot(100, lambda: self._multifile_open_annot(filename, auto_add=original_auto))
         if self.multifile_import_open_segmentations:
-            self._multifile_open_segmentation(filename)
+            QTimer.singleShot(100, lambda: self._multifile_open_segmentation(filename))
 
         # Reset flag to update annotation status on annotation changes (e.g. painting)
         QTimer.singleShot(300, lambda: setattr(self, '_multifile_update_annot_tick', True))
@@ -4433,24 +4433,24 @@ class ConvpaintWidget(QWidget):
     def _import_annot_and_seg(self):
         """Import annotation TIFFs from a folder and register them in the in-memory store.
 
-        Matches files named `<image_stem>_annotations.tif|tiff` against the filenames
+        Matches files named `<image_stem>_<suffix>.tif|tiff` against the filenames
         listed in the multifile table (by stem). Imported annotations are recorded
         as persistent (stored as path strings) and flagged green.
         """
         # If there are annotations or segmentations in the stores, confirm clearing them (only ask once)
-        if not getattr(self, 'multifile_import_warned', False):
-            annots_conflict = (self.multifile_import_open_annotations and
-                               hasattr(self, '_multifile_annotation_store') and
-                               self._multifile_annotation_store)
-            seg_conflicts = (self.multifile_import_open_segmentations and
-                             hasattr(self, '_multifile_segmentation_store') and
-                             self._multifile_segmentation_store)
-            if annots_conflict or seg_conflicts:
-                msg = 'Importing annotations/segmentations might replace existing data in Convpaint. Continue?'
-                resp = QMessageBox.question(self, 'Replace existing data?', msg, QMessageBox.Yes | QMessageBox.No)
-                if resp != QMessageBox.Yes:
-                    return
-                self.multifile_import_warned = True
+        # if not getattr(self, 'multifile_import_warned', False):
+        #     annots_conflict = (self.multifile_import_open_annotations and
+        #                        hasattr(self, '_multifile_annotation_store') and
+        #                        self._multifile_annotation_store)
+        #     seg_conflicts = (self.multifile_import_open_segmentations and
+        #                      hasattr(self, '_multifile_segmentation_store') and
+        #                      self._multifile_segmentation_store)
+        #     if annots_conflict or seg_conflicts:
+        #         msg = 'Importing annotations/segmentations might replace existing data in Convpaint. Continue?'
+        #         resp = QMessageBox.question(self, 'Replace existing data?', msg, QMessageBox.Yes | QMessageBox.No)
+        #         if resp != QMessageBox.Yes:
+        #             return
+        #         self.multifile_import_warned = True
 
         # Ask for input folder
         default_dir = str(Path(self._multifile_last_folder)) if getattr(self, '_multifile_last_folder', None) else str(Path.cwd())
@@ -4598,7 +4598,7 @@ class ConvpaintWidget(QWidget):
     def _export_annotations(self):
         """Export all annotations currently in memory to a chosen folder as TIFF files.
 
-        Files are named `<image_stem>_<annotation_tag>.tif`. After successful export,
+        Files are named `<image_stem>_<suffix>.tif`. After successful export,
         the corresponding table rows are marked as imported (green tick).
         """
         if not hasattr(self, '_multifile_annotation_store') or not self._multifile_annotation_store:
