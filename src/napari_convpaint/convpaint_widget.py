@@ -560,8 +560,8 @@ class ConvpaintWidget(QWidget):
             # Add groups to the Multifile tab
             self.tabs.add_named_tab('Multifile', self.multifile_files_group.gbox, [0, 0, 8, 2])
             self.tabs.add_named_tab('Multifile', self.multifile_reset_group.gbox, [8, 0, 1, 2])
-            self.tabs.add_named_tab('Multifile', self.multifile_train_group.gbox, [9, 0, 2, 2])
-            self.tabs.add_named_tab('Multifile', self.multifile_export_import_group.gbox, [11, 0, 1, 2])
+            self.tabs.add_named_tab('Multifile', self.multifile_train_group.gbox, [9, 0, 1, 2])
+            self.tabs.add_named_tab('Multifile', self.multifile_export_import_group.gbox, [10, 0, 1, 2])
             self.tabs.add_named_tab('Multifile', self.multifile_settings_group.gbox, [12, 0, 1, 2])
 
             # Align on top
@@ -605,18 +605,20 @@ class ConvpaintWidget(QWidget):
             self.multifile_files_group.glayout.addWidget(self.multifile_list, 1, 0, 1, 3)
 
             self.multifile_clear_annotations_btn = QPushButton('Clear selected annot.')
-            self.multifile_reset_group.glayout.addWidget(self.multifile_clear_annotations_btn, 2, 0, 1, 1)
+            self.multifile_reset_group.glayout.addWidget(self.multifile_clear_annotations_btn, 1, 0, 1, 1)
             self.multifile_reset_folder_btn = QPushButton('Close folder')
-            self.multifile_reset_group.glayout.addWidget(self.multifile_reset_folder_btn, 2, 1, 1, 1)
+            self.multifile_reset_group.glayout.addWidget(self.multifile_reset_folder_btn, 1, 1, 1, 1)
             self.multifile_clear_segmentations_btn = QPushButton('Clear selected segm.')
-            self.multifile_reset_group.glayout.addWidget(self.multifile_clear_segmentations_btn, 2, 2, 1, 1)
+            self.multifile_reset_group.glayout.addWidget(self.multifile_clear_segmentations_btn, 1, 2, 1, 1)
 
             # --- Train/Segment group: action buttons (placeholders for now)
-            self.multifile_train_all_annot_btn = QPushButton('Train on all annotated')
+            self.multifile_train_all_annot_btn = QPushButton('Train on annotated')
+            self.multifile_preview_btn = QPushButton('Preview segmentation')
             self.multifile_segment_selected_btn = QPushButton('Segment selected')
 
             self.multifile_train_group.glayout.addWidget(self.multifile_train_all_annot_btn, 0, 0, 1, 1)
-            self.multifile_train_group.glayout.addWidget(self.multifile_segment_selected_btn, 0, 1, 1, 1)
+            self.multifile_train_group.glayout.addWidget(self.multifile_preview_btn, 0, 1, 1, 1)
+            self.multifile_train_group.glayout.addWidget(self.multifile_segment_selected_btn, 0, 2, 1, 1)
 
             # --- Import/Export group: action buttons (placeholders for now)
             self.multifile_export_annot_btn = QPushButton('Export annotations')
@@ -769,7 +771,8 @@ class ConvpaintWidget(QWidget):
             self.multifile_reset_folder_btn.setToolTip('Close all images from the selected folder and clear the file list.')
             self.multifile_clear_segmentations_btn.setToolTip('Clear segmentations for the selected images (if opened, remove the segmentation layer).')
             self.multifile_train_all_annot_btn.setToolTip('Train a model using all annotated images in the file list.')
-            self.multifile_segment_selected_btn.setToolTip('Segment all selected images in the file list. Choose a folder to save the segmentations in files.')
+            self.multifile_preview_btn.setToolTip('Preview the segmentation on the opened image in the viewer without saving it to files.')
+            self.multifile_segment_selected_btn.setToolTip('Segment all selected images in the file list. Choose a folder to save the segmentations to files.')
             self.multifile_export_annot_btn.setToolTip('Export annotations of all opened images as files.')
             self.multifile_import_annot_and_seg_btn.setToolTip('Import annotations and/or segmentations from files for all images.\n' +
                                                                'Will scan the folder to detect annotations and segmentations belonging to the images and import both (unless specified in settings).')
@@ -827,7 +830,7 @@ class ConvpaintWidget(QWidget):
         if 'Multifile' in self.tab_names:
             for w in [self.multifile_select_btn, self.multifile_list, self.multifile_clear_annotations_btn,
                       self.multifile_clear_segmentations_btn, self.multifile_reset_folder_btn, self.multifile_train_all_annot_btn,
-                      self.multifile_segment_selected_btn, self.multifile_export_annot_btn,
+                      self.multifile_preview_btn, self.multifile_segment_selected_btn, self.multifile_export_annot_btn,
                       self.multifile_import_annot_and_seg_btn, self.lbl_import_open_labels,
                       self.check_open_import_annotations, self.check_open_import_segmentations,
                       self.lbl_multifile_suffixes, self.multifile_annotations_suffix_txt, self.multifile_segmentation_suffix_txt]:
@@ -1081,6 +1084,7 @@ class ConvpaintWidget(QWidget):
             self.multifile_reset_folder_btn.clicked.connect(self._reset_multifile_folder)
             self.multifile_clear_segmentations_btn.clicked.connect(self._multifile_clear_seg)
             self.multifile_train_all_annot_btn.clicked.connect(self._on_train_on_multifile)
+            self.multifile_preview_btn.clicked.connect(self._on_predict) # Use normal prediciton method as preview in Multifile ...
             self.multifile_segment_selected_btn.clicked.connect(self._on_segment_selected_multifile)
             self.multifile_import_annot_and_seg_btn.clicked.connect(self._import_annot_and_seg)
             self.multifile_export_annot_btn.clicked.connect(self._export_annotations)
@@ -3908,6 +3912,8 @@ class ConvpaintWidget(QWidget):
             # Note: here we use a wider selection of suffixes to ignore...
             if stem_suffix and (stem_suffix in self.multifile_annot_suffixes or
                                 stem_suffix in self.multifile_seg_suffixes):
+                continue
+            if fname[0] == '.': # ignore hidden files
                 continue
             # Add file to the list/table
             row = self.multifile_list.rowCount()
