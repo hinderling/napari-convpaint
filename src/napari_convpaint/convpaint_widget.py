@@ -69,11 +69,11 @@ class ConvpaintWidget(QWidget):
         self.setLayout(self.main_layout)
 
         # Create and add tabs
-        self.tab_names = ['Home', 'Model options']
+        self.tab_names = ['Home', 'Models']
         self.tab_names += ['Classes']
         self.tab_names += ['Advanced']
         self.tab_names += ['Multifile']
-        tab_layouts = [None if name not in ['Model options', 'Multifile'] else QGridLayout() for name in self.tab_names]
+        tab_layouts = [None if name not in ['Models', 'Multifile'] else QGridLayout() for name in self.tab_names]
         self.tabs = TabSet(self.tab_names, tab_layouts=tab_layouts) # [None, None, QGridLayout()])
         tab_bar = self.tabs.tabBar()
         tab_bar.setSizePolicy(tab_bar.sizePolicy().horizontalPolicy(), tab_bar.sizePolicy().verticalPolicy())
@@ -99,7 +99,7 @@ class ConvpaintWidget(QWidget):
         self.main_layout.addWidget(self.tabs)
         
         # Align rows in some tabs on top
-        for tab_name in ['Home', 'Model options', 'Advanced']:
+        for tab_name in ['Home', 'Models', 'Advanced']:
             if tab_name in self.tabs.tab_names:
                 self.tabs.widget(self.tabs.tab_names.index(tab_name)).layout().setAlignment(Qt.AlignTop)
 
@@ -275,10 +275,10 @@ class ConvpaintWidget(QWidget):
         self.classifier_params_group = VHGroup('Classifier (CatBoost)', orientation='G')
 
         # Add groups to the tab
-        self.tabs.add_named_tab('Model options', self.current_model_group.gbox, [0, 0, 1, 2])
-        self.tabs.add_named_tab('Model options', self.fe_group.gbox, [2, 0, 8, 2])
-        self.tabs.add_named_tab('Model options', self.classifier_params_group.gbox, [10, 0, 3, 2])
-        self.tabs.setTabEnabled(self.tabs.tab_names.index('Model options'), True)
+        self.tabs.add_named_tab('Models', self.current_model_group.gbox, [0, 0, 1, 2])
+        self.tabs.add_named_tab('Models', self.fe_group.gbox, [2, 0, 8, 2])
+        self.tabs.add_named_tab('Models', self.classifier_params_group.gbox, [10, 0, 3, 2])
+        self.tabs.setTabEnabled(self.tabs.tab_names.index('Models'), True)
         
         # Current model
         self.model_description2 = QLabel('None')
@@ -667,7 +667,7 @@ class ConvpaintWidget(QWidget):
 
         # Set tooltip for the tabs
         self.tabs.setTabToolTip(self.tabs.tab_names.index('Home'), 'Main controls for Convpaint: select layers, train model and segment images. Adjust image processing and acceleration options.')
-        self.tabs.setTabToolTip(self.tabs.tab_names.index('Model options'), 'Select the feature extraction model and adjust classifier parameters.')
+        self.tabs.setTabToolTip(self.tabs.tab_names.index('Models'), 'Select the feature extraction model and adjust classifier parameters.')
         if 'Classes' in self.tab_names:
             self.tabs.setTabToolTip(self.tabs.tab_names.index('Classes'), 'Set the names of the classes for the annotation and segmentation layer. Display class distribution.' +
                                     'This is optional but can help with keeping track of the classes, especially when using more than 3 classes.')
@@ -709,7 +709,7 @@ class ConvpaintWidget(QWidget):
              w.setToolTip('Smoothen output with a filter of this size.\n' +
                             'Increasing this value can reduce noise in the output and make details less prominent.')
 
-        # Model options tab
+        # Models tab
         self.qcombo_fe_type.setToolTip('Select architecture of feature extraction model.')
         self.fe_layer_selection.setToolTip('Select the layers of the feature extraction model (if applicable) to use for training and segmentation.\n' +
                                            'Select a range by dragging or using shift, choose multiple with ctrl/cmd.\n' +
@@ -806,7 +806,7 @@ class ConvpaintWidget(QWidget):
                   self.downsample_label, self.spin_downsample, self.smoothen_label, self.spin_smoothen]:
             w.setToolTip('')
 
-        # Model options tab
+        # Models tab
         for w in [self.qcombo_fe_type, self.fe_layer_selection, self.scalings_label, self.fe_scaling_factors,
                   self.interpolation_label, self.spin_interpolation_order, self.check_use_min_features,
                   # self.check_use_gpu,
@@ -883,7 +883,7 @@ class ConvpaintWidget(QWidget):
         self.cp_model = self._cpm_class()
         # Get default parameters to set in widget
         self.default_cp_param = self._cpm_class.get_default_params()
-        # Use variables of main model as temp variables for the model options tab, as it is the one model used at that time
+        # Use variables of main model as temp variables for the Models tab, as it is the one model used at that time
         self.temp_fe_description = self.cp_model.get_fe_description()
         lks = self.cp_model.get_fe_layer_keys()
         self.temp_fe_layer_keys = lks.copy() if lks is not None else None
@@ -992,7 +992,7 @@ class ConvpaintWidget(QWidget):
         self.check_tile_image.stateChanged.connect(lambda:
             self.cp_model.set_param('tile_image', self.check_tile_image.isChecked(), ignore_warnings=True))
 
-        # === MODEL OPTIONS TAB ===
+        # === MODELS TAB ===
 
         # Feature extractor
         self.qcombo_fe_type.currentIndexChanged.connect(self._on_fe_selected)
