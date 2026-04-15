@@ -215,17 +215,6 @@ class ConvpaintWidget(QWidget):
         self.check_auto_seg = QCheckBox('Auto segment')
         self.check_auto_seg.setChecked(self.auto_seg)
         self.train_group.glayout.addWidget(self.check_auto_seg, 0,1,1,1)
-        # Project checkbox
-        # self.check_use_project = QCheckBox('Project mode (multiple files)')
-        # self.check_use_project.setToolTip('Activate Project tab to use multiple files for training the classifier')
-        # self.check_use_project.setChecked(False)
-        # self.train_group.glayout.addWidget(self.check_use_project, 1,0,1,1)
-        # Project button
-        # self.train_classifier_on_project_btn = QPushButton('Train on Project')
-        # self.train_classifier_on_project_btn.setToolTip('Train on all images loaded in Project tab')
-        # self.train_group.glayout.addWidget(self.train_classifier_on_project_btn, 2,0,1,2)
-        # if init_project is False:
-        #     self.train_classifier_on_project_btn.setEnabled(False)
         self.segment_btn = QPushButton('Segment image')
         self.segment_btn.setEnabled(False)
         self.train_group.glayout.addWidget(self.segment_btn, 1,0,1,1)
@@ -855,8 +844,6 @@ class ConvpaintWidget(QWidget):
             return
 
         self._post_init_done = True
-
-        from qtpy.QtCore import QTimer
 
         # Defer slightly to let Qt finish rendering
         QTimer.singleShot(0, self._late_init)
@@ -1779,56 +1766,6 @@ class ConvpaintWidget(QWidget):
         if self.auto_seg:
             self._on_predict()
 
-    def _on_train_on_project(self):
-        """Train classifier on all annotations in project.
-        !!!! Need to double-check if normalization is done correctly for projects !!!!"""
-
-        num_files = len(self.project_widget.params.file_paths)
-        if num_files == 0:
-            raise Exception('No files found')
-
-        with warnings.catch_warnings():
-            warnings.simplefilter(action="ignore", category=FutureWarning)
-            self.viewer.window._status_bar._toggle_activity_dock(True)
-        
-        self.viewer.layers.events.removed.disconnect(self._on_reset_convpaint)
-        with progress(total=0) as pbr:
-            pbr.set_description(f"Training")
-            self.current_model_path = 'in training'
-            # all_features, all_targets = [], []
-            all_imgs, all_annots = [], []
-            in_channels = self._parse_in_channels(self.input_channels)
-            for ind in range(num_files):
-                self.project_widget.file_list.setCurrentRow(ind)
-                image_stack_norm = self._get_data_channel_first_norm()
-                annots = self.annotation_layer_selection_widget.value.data
-                all_imgs.append(image_stack_norm)
-                all_annots.append(annots)
-                # in_channels = self._parse_in_channels(self.input_channels)
-                # features, targets = self.cp_model.get_features_current_layers(image_stack_norm, annots, in_channels=in_channels)
-                # if features is None:
-                    # continue
-                # all_features.append(features)
-                # all_targets.append(targets)
-            self.cp_model.train(all_imgs, all_annots, in_channels=in_channels, skip_norm=True,
-                                fe_use_device=self.fe_device, clf_use_device=self.clf_device)
-            # all_features = np.concatenate(all_features, axis=0)
-            # all_targets = np.concatenate(all_targets, axis=0)
-
-            # self.cp_model._clf_train(all_features, all_targets)
-
-            self.current_model_path = 'trained, unsaved'
-            self.trained = True
-            self._reset_predict_buttons()
-            # self.save_model_btn.setEnabled(True)
-            self._set_model_description()
-
-        with warnings.catch_warnings():
-            warnings.simplefilter(action="ignore", category=FutureWarning)
-            self.viewer.window._status_bar._toggle_activity_dock(False)
-
-        self.viewer.layers.events.removed.connect(self._on_reset_convpaint)
-
     # Predict
 
     def _on_predict(self, event=None):
@@ -2186,8 +2123,6 @@ class ConvpaintWidget(QWidget):
         self._reset_device_options()
         self.flag_fe_as_set()
         self.flag_clf_as_set()
-        # Delay the flagging of the FE as set, so it is not reverted --> probably not even necessary
-        # QTimer.singleShot(100, lambda: self.flag_fe_as_set())
 
     # Image Processing
 
