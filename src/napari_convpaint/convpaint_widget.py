@@ -4128,6 +4128,9 @@ class ConvpaintWidget(QWidget):
         # Case 3: mouse release event after painting in annotations layer (checked outside...)
         else:
             layer = self.viewer.layers.selection.active
+        # Check if the layer has been deducted correctly
+        if layer is None:
+            return
 
         # Check that we are handling the correct layer in the correct context (multifile mode, annotation layer)
         if not self.store_annot or not layer or layer.name != self.annot_tag:
@@ -4138,27 +4141,27 @@ class ConvpaintWidget(QWidget):
             return
 
         try:
-            if layer is None:
-                return
             data = np.asarray(layer.data)
-            has_annot = np.sum(data > 0) != 0
-            # Always store actual array data when user paints/changes annotations
-            if has_annot:
-                self._multifile_annotation_store[fname] = data.copy()
-            else:
-                if hasattr(self, '_multifile_annotation_store') and fname in self._multifile_annotation_store:
-                    del self._multifile_annotation_store[fname]
-            # update table flag (type-based)
-            QTimer.singleShot(250, lambda: self._maybe_update_annot_tick(data, fname))
+            QTimer.singleShot(250, lambda: self._maybe_update_annots(data, fname))
             QTimer.singleShot(500, lambda: setattr(self, '_multifile_last_annot', data.copy()))
         except Exception:
             pass
 
-    def _maybe_update_annot_tick(self, data, filename):
-        """Same as _update_multifile_annot_tick but only if the annotation data has actually changed. Defined separately, so we can call it with a delay."""
-        if (self._multifile_last_annot is None or # If it's the first file, or we don't have a last annotation to compare to
-            self._multifile_last_annot.shape != data.shape or # If the file changed (check in this order as otherwise we cannot compare...)
-            not np.all(self._multifile_last_annot == data)): # If the annotation data changed
+    def _maybe_update_annots(self, data, filename):
+        """If the annotation data has actually changed add array to store and _update_multifile_annot_tick but only. Defined separately, so we can call it with a delay."""
+        has_annot = np.sum(data > 0) != 0
+        first_annot = self._multifile_last_annot is None # If it's the first file, or we don't have a last annotation to compare to
+        new_img = self._multifile_last_annot.shape != data.shape if not first_annot else False # If the file changed (check in this order as otherwise we cannot compare...)
+        annot_changed = not np.all(self._multifile_last_annot == data) if not first_annot and not new_img else False # If the annotation data changed
+        # Store actual array data when user paints changes into annotations
+        if annot_changed:
+            if has_annot:
+                self._multifile_annotation_store[filename] = data.copy()
+            else:
+                if hasattr(self, '_multifile_annotation_store') and filename in self._multifile_annotation_store:
+                    del self._multifile_annotation_store[filename]
+        # update table flag (type-based); this is in some cases also wanted when there is no change in annotation data (e.g. when opening a file ...)
+        if has_annot and (first_annot or new_img or annot_changed):
             self._update_multifile_annot_tick(filename)
 
     def _update_multifile_annot_tick(self, filename):
