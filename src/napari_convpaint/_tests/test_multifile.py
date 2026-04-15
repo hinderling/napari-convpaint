@@ -23,6 +23,20 @@ def _patch_dialogs(monkeypatch, folder):
                         lambda *a, **k: QMessageBox.Yes)
 
 
+def _make_striped_rgb(rng):
+    """128x128 RGB image with three horizontal stripes of distinct colors.
+
+    Same color palette and layout across images so per-image normalization
+    produces the same scales; small noise keeps features non-degenerate.
+    Stripes: rows 0:40 red, 40:80 green, 80:128 blue.
+    """
+    im = rng.integers(0, 25, (128, 128, 3), dtype=np.uint8)
+    im[0:40, :, 0] += 180    # red stripe
+    im[40:80, :, 1] += 180   # green stripe
+    im[80:128, :, 2] += 180  # blue stripe
+    return im
+
+
 def test_multifile_folder_populates_table_and_filters(make_napari_viewer, tmp_path, monkeypatch):
     """Opening a folder populates the table with images and skips annot/seg files."""
     # Mix of images and annotation/segmentation files
@@ -71,21 +85,7 @@ def test_multifile_opens_different_image_types(make_napari_viewer, tmp_path, mon
         assert w._current_multifile_filename == fname
 
 
-def _make_striped_rgb(rng):
-    """128x128 RGB image with three horizontal stripes of distinct colors.
-
-    Same color palette and layout across images so per-image normalization
-    produces the same scales; small noise keeps features non-degenerate.
-    Stripes: rows 0:40 red, 40:80 green, 80:128 blue.
-    """
-    im = rng.integers(0, 25, (128, 128, 3), dtype=np.uint8)
-    im[0:40, :, 0] += 180    # red stripe
-    im[40:80, :, 1] += 180   # green stripe
-    im[80:128, :, 2] += 180  # blue stripe
-    return im
-
-
-def test_multifile_training_combines_classes_across_files(make_napari_viewer, tmp_path, monkeypatch):
+def test_multifile_training_combines_classes_across_files(make_napari_viewer, tmp_path, monkeypatch, qtbot):
     """Annotate class 1 on the red stripe of img1 and class 2 on the green stripe
     of img2. After multifile training, predicting img3 must contain both classes.
     """
@@ -101,6 +101,7 @@ def test_multifile_training_combines_classes_across_files(make_napari_viewer, tm
     viewer, w = _make_widget(make_napari_viewer, channel_mode='rgb')
 
     w._select_multifile_img_folder()
+    qtbot.wait(200)
 
     # img1: class 1 annotated inside the red stripe
     annot1 = np.zeros((128, 128), dtype=np.uint8)
@@ -118,12 +119,15 @@ def test_multifile_training_combines_classes_across_files(make_napari_viewer, tm
     # Segment img3 → write to a new folder
     out_dir = tmp_path / 'seg_out'
     out_dir.mkdir()
+    # "Trick" QFileDialog to return our output directory when the widget tries to ask where to save segmentations
     monkeypatch.setattr(QFileDialog, 'getExistingDirectory',
                         lambda *a, **k: str(out_dir))
+
     # Select only the third row (img3)
     w.multifile_list.selectRow(2)
     w._on_segment_selected_multifile()
 
+    # Check that segmentation TIFF was written and contains both classes in the expected regions
     seg_file = out_dir / 'img3_segmentation.tif'
     assert seg_file.exists(), "Segmentation TIFF was not written"
     seg = tifffile.imread(seg_file)

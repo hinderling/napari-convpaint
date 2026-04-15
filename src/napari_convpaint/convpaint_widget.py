@@ -70,7 +70,7 @@ class ConvpaintWidget(QWidget):
 
         # Create and add tabs
         self.tab_names = ['Home', 'Model options']
-        self.tab_names += ['Class names']
+        self.tab_names += ['Classes']
         self.tab_names += ['Advanced']
         self.tab_names += ['Multifile']
         tab_layouts = [None if name not in ['Model options', 'Multifile'] else QGridLayout() for name in self.tab_names]
@@ -366,44 +366,44 @@ class ConvpaintWidget(QWidget):
         self.set_default_clf_btn.setEnabled(True)
         self.classifier_params_group.glayout.addWidget(self.set_default_clf_btn, 4, 0, 1, 2)
 
-        # === CLASS NAMES TAB ===
+        # === CLASSES TAB ===
 
-        if 'Class names' in self.tab_names:
+        if 'Classes' in self.tab_names:
             # Create the main layout
-            self.class_names_layout = QGridLayout()
-            self.class_names_layout.setAlignment(Qt.AlignTop)
-            self.class_names_widget = QWidget()
-            self.class_names_widget.setLayout(self.class_names_layout)
+            self.classes_layout = QGridLayout()
+            self.classes_layout.setAlignment(Qt.AlignTop)
+            self.classes_widget = QWidget()
+            self.classes_widget.setLayout(self.classes_layout)
              
             # Add text to instruct the user (note that it is optional to use)
             class_names_text = QLabel('Set the names of the classes (optional):')
             class_names_text.setWordWrap(True)
             # class_names_text.setStyleSheet("font-size: 11px; color: rgba(120, 120, 120, 70%)")#; font-style: italic")
-            self.class_names_layout.addWidget(class_names_text, 0, 0, 1, 10)
+            self.classes_layout.addWidget(class_names_text, 0, 0, 1, 10)
 
             # Add buttons ("add class", "remove class" and reset)
             self.add_class_btn = QPushButton('Add class')
-            self.class_names_layout.addWidget(self.add_class_btn, len(self.initial_names)+1, 0, 1, 5)
+            self.classes_layout.addWidget(self.add_class_btn, len(self.initial_names)+1, 0, 1, 5)
             self.remove_class_btn = QPushButton('Remove class')
-            self.class_names_layout.addWidget(self.remove_class_btn, len(self.initial_names)+1, 5, 1, 5)
+            self.classes_layout.addWidget(self.remove_class_btn, len(self.initial_names)+1, 5, 1, 5)
             # Minimal import/export buttons (CSV)
             self.export_class_names_btn = QPushButton('Export class names (csv)')
-            self.class_names_layout.addWidget(self.export_class_names_btn, len(self.initial_names)+2, 0, 1, 5)
+            self.classes_layout.addWidget(self.export_class_names_btn, len(self.initial_names)+2, 0, 1, 5)
             self.import_class_names_btn = QPushButton('Import class names (csv/txt)')
-            self.class_names_layout.addWidget(self.import_class_names_btn, len(self.initial_names)+2, 5, 1, 5)
+            self.classes_layout.addWidget(self.import_class_names_btn, len(self.initial_names)+2, 5, 1, 5)
             # Reset to initial state
             self.reset_class_names_btn = QPushButton('Reset to default')
-            self.class_names_layout.addWidget(self.reset_class_names_btn, len(self.initial_names)+3, 0, 1, 10)
+            self.classes_layout.addWidget(self.reset_class_names_btn, len(self.initial_names)+3, 0, 1, 10)
             self.btn_class_distribution_annot = QPushButton('Show class distribution (in annotation)')
-            self.class_names_layout.addWidget(self.btn_class_distribution_annot, len(self.initial_names)+4, 0, 1, 10)
+            self.classes_layout.addWidget(self.btn_class_distribution_annot, len(self.initial_names)+4, 0, 1, 10)
 
             # Create the class names
             self._create_default_class_names()
 
             # Add the widget to the tab
-            self.class_names_layout.setColumnStretch(1, 1)
-            self.class_names_layout.setColumnStretch(5, 1)
-            self.tabs.add_named_tab('Class names', self.class_names_widget)
+            self.classes_layout.setColumnStretch(1, 1)
+            self.classes_layout.setColumnStretch(5, 1)
+            self.tabs.add_named_tab('Classes', self.classes_widget)
 
         # === ADVANCED TAB ===
 
@@ -668,8 +668,8 @@ class ConvpaintWidget(QWidget):
         # Set tooltip for the tabs
         self.tabs.setTabToolTip(self.tabs.tab_names.index('Home'), 'Main controls for Convpaint: select layers, train model and segment images. Adjust image processing and acceleration options.')
         self.tabs.setTabToolTip(self.tabs.tab_names.index('Model options'), 'Select the feature extraction model and adjust classifier parameters.')
-        if 'Class names' in self.tab_names:
-            self.tabs.setTabToolTip(self.tabs.tab_names.index('Class names'), 'Set the names of the classes for the annotation and segmentation layer. ' +
+        if 'Classes' in self.tab_names:
+            self.tabs.setTabToolTip(self.tabs.tab_names.index('Classes'), 'Set the names of the classes for the annotation and segmentation layer. Display class distribution.' +
                                     'This is optional but can help with keeping track of the classes, especially when using more than 3 classes.')
         if 'Advanced' in self.tab_names:
             self.tabs.setTabToolTip(self.tabs.tab_names.index('Advanced'), 'Advanced options for power users. Use with caution, as these options may lead to situations where the tool does not function as expected. ' +
@@ -732,8 +732,8 @@ class ConvpaintWidget(QWidget):
         self.set_clf_btn.setToolTip('Apply classifier parameters to the current model.')
         self.set_default_clf_btn.setToolTip('Reset classifier parameters to default values.')
 
-        # Class names tab
-        if 'Class names' in self.tab_names:
+        # Classes tab
+        if 'Classes' in self.tab_names:
             self.add_class_btn.setToolTip('Add a class name to the list.')
             self.remove_class_btn.setToolTip('Remove a class from the list. Note that this will also delete the corresponding annotations from the annotation layer, if they exist.')
             self.export_class_names_btn.setToolTip('Export class names as a csv file.')
@@ -817,8 +817,8 @@ class ConvpaintWidget(QWidget):
                   self.set_clf_btn, 	self.set_default_clf_btn]:
             w.setToolTip('')
 
-        # Class names tab
-        if 'Class names' in self.tab_names:
+        # Classes tab
+        if 'Classes' in self.tab_names:
             for w in [self.add_class_btn, self.remove_class_btn,
                       self.export_class_names_btn, self.import_class_names_btn,
                       self.reset_class_names_btn, self.btn_class_distribution_annot]:
@@ -1020,9 +1020,9 @@ class ConvpaintWidget(QWidget):
         self.set_clf_btn.clicked.connect(self._on_set_clf_params)
         self.set_default_clf_btn.clicked.connect(self._on_reset_clf_params)
 
-        # === CLASS NAMES TAB ===
+        # === CLASSES TAB ===
 
-        if 'Class names' in self.tab_names:
+        if 'Classes' in self.tab_names:
             self.add_class_btn.clicked.connect(lambda: self._on_add_class(text=None))
             self.remove_class_btn.clicked.connect(lambda: self._on_remove_class(del_annots=True))
             self.export_class_names_btn.clicked.connect(lambda: self._export_class_names_dialog())
@@ -1160,9 +1160,9 @@ class ConvpaintWidget(QWidget):
                 self.viewer.layers[l.name].selected_label = x
 
 
-### ============== Define the detailed behaviour in the class names tab ==============
+### ============== Define the detailed behaviour in the classes tab ==============
 
-    # Class Names
+    # Classes
 
     def _create_default_class_names(self):
         """Create the default class names and icons in the layout."""
@@ -1182,31 +1182,31 @@ class ConvpaintWidget(QWidget):
 
         # Remove and delete all class name widgets and icons
         for name in self.class_names:
-            self.class_names_layout.removeWidget(name)
+            self.classes_layout.removeWidget(name)
             name.deleteLater()
         for icon in self.class_icons:
-            self.class_names_layout.removeWidget(icon)
+            self.classes_layout.removeWidget(icon)
             icon.deleteLater()
 
         self.class_names.clear()
         self.class_icons.clear()
 
         # Remove the buttons from the layout
-        self.class_names_layout.removeWidget(self.add_class_btn)
-        self.class_names_layout.removeWidget(self.remove_class_btn)
-        self.class_names_layout.removeWidget(self.reset_class_names_btn)
-        self.class_names_layout.removeWidget(self.btn_class_distribution_annot)
+        self.classes_layout.removeWidget(self.add_class_btn)
+        self.classes_layout.removeWidget(self.remove_class_btn)
+        self.classes_layout.removeWidget(self.reset_class_names_btn)
+        self.classes_layout.removeWidget(self.btn_class_distribution_annot)
 
         # Recreate the default class names and icons
         self._create_default_class_names()
 
         # Re-add the buttons below the class names
-        self.class_names_layout.addWidget(self.add_class_btn, len(self.class_names)+1, 0, 1, 5)
-        self.class_names_layout.addWidget(self.remove_class_btn, len(self.class_names)+1, 5, 1, 5)
-        self.class_names_layout.addWidget(self.export_class_names_btn, len(self.class_names)+2, 0, 1, 5)
-        self.class_names_layout.addWidget(self.import_class_names_btn, len(self.class_names)+2, 5, 1, 5)
-        self.class_names_layout.addWidget(self.reset_class_names_btn, len(self.class_names)+3, 0, 1, 10)
-        self.class_names_layout.addWidget(self.btn_class_distribution_annot, len(self.class_names)+4, 0, 1, 10)
+        self.classes_layout.addWidget(self.add_class_btn, len(self.class_names)+1, 0, 1, 5)
+        self.classes_layout.addWidget(self.remove_class_btn, len(self.class_names)+1, 5, 1, 5)
+        self.classes_layout.addWidget(self.export_class_names_btn, len(self.class_names)+2, 0, 1, 5)
+        self.classes_layout.addWidget(self.import_class_names_btn, len(self.class_names)+2, 5, 1, 5)
+        self.classes_layout.addWidget(self.reset_class_names_btn, len(self.class_names)+3, 0, 1, 10)
+        self.classes_layout.addWidget(self.btn_class_distribution_annot, len(self.class_names)+4, 0, 1, 10)
 
     def _on_add_class(self, text=None):
         """Add a new class name and icon to the layout and update all annotation and segmentation layers."""
@@ -1217,7 +1217,7 @@ class ConvpaintWidget(QWidget):
         self.class_names.append(new_name)
         class_num = len(self.class_names)  # Class number is the length of the list
         # Add the new name to the layout
-        self.class_names_layout.addWidget(new_name, class_num, 1, 1, 9)
+        self.classes_layout.addWidget(new_name, class_num, 1, 1, 9)
         # Set the text of the new name
         text_str = text if text is not None else f'Class {class_num}'
         new_name.setText(text_str)
@@ -1233,7 +1233,7 @@ class ConvpaintWidget(QWidget):
         # Add a new icon
         new_icon = QtWidgets.QLabel()
         self.class_icons.append(new_icon)
-        self.class_names_layout.addWidget(new_icon, class_num, 0)
+        self.classes_layout.addWidget(new_icon, class_num, 0)
         new_icon.mousePressEvent = lambda event: self._set_all_labels_classes(class_num, event)
         
         # Update the icon with the color of the last label and all class names
@@ -1241,16 +1241,16 @@ class ConvpaintWidget(QWidget):
         self._update_class_names()
 
         # Move the add, remove and reset buttons one down
-        self.class_names_layout.removeWidget(self.add_class_btn)
-        self.class_names_layout.removeWidget(self.remove_class_btn)
-        self.class_names_layout.removeWidget(self.reset_class_names_btn)
-        self.class_names_layout.removeWidget(self.btn_class_distribution_annot)
-        self.class_names_layout.addWidget(self.add_class_btn, class_num+1, 0, 1, 5)
-        self.class_names_layout.addWidget(self.remove_class_btn, class_num+1, 5, 1, 5)
-        self.class_names_layout.addWidget(self.export_class_names_btn, class_num+2, 0, 1, 5)
-        self.class_names_layout.addWidget(self.import_class_names_btn, class_num+2, 5, 1, 5)
-        self.class_names_layout.addWidget(self.reset_class_names_btn, class_num+3, 0, 1, 10)
-        self.class_names_layout.addWidget(self.btn_class_distribution_annot, class_num+4, 0, 1, 10)
+        self.classes_layout.removeWidget(self.add_class_btn)
+        self.classes_layout.removeWidget(self.remove_class_btn)
+        self.classes_layout.removeWidget(self.reset_class_names_btn)
+        self.classes_layout.removeWidget(self.btn_class_distribution_annot)
+        self.classes_layout.addWidget(self.add_class_btn, class_num+1, 0, 1, 5)
+        self.classes_layout.addWidget(self.remove_class_btn, class_num+1, 5, 1, 5)
+        self.classes_layout.addWidget(self.export_class_names_btn, class_num+2, 0, 1, 5)
+        self.classes_layout.addWidget(self.import_class_names_btn, class_num+2, 5, 1, 5)
+        self.classes_layout.addWidget(self.reset_class_names_btn, class_num+3, 0, 1, 10)
+        self.classes_layout.addWidget(self.btn_class_distribution_annot, class_num+4, 0, 1, 10)
 
     def _on_remove_class(self, del_annots=True, event=None):
         """Remove the last class name and icon from the layout and update all annotation and segmentation layers."""
@@ -1271,16 +1271,16 @@ class ConvpaintWidget(QWidget):
             self.class_names.pop()
             self.class_icons.pop()
             # Move the buttons one up
-            self.class_names_layout.removeWidget(self.add_class_btn)
-            self.class_names_layout.removeWidget(self.remove_class_btn)
-            self.class_names_layout.removeWidget(self.reset_class_names_btn)
-            self.class_names_layout.removeWidget(self.btn_class_distribution_annot)
-            self.class_names_layout.addWidget(self.add_class_btn, len(self.class_names)+1, 0, 1, 5)
-            self.class_names_layout.addWidget(self.remove_class_btn, len(self.class_names)+1, 5, 1, 5)
-            self.class_names_layout.addWidget(self.export_class_names_btn, len(self.class_names)+2, 0, 1, 5)
-            self.class_names_layout.addWidget(self.import_class_names_btn, len(self.class_names)+2, 5, 1, 5)
-            self.class_names_layout.addWidget(self.reset_class_names_btn, len(self.class_names)+3, 0, 1, 10)
-            self.class_names_layout.addWidget(self.btn_class_distribution_annot, len(self.class_names)+4, 0, 1, 10)
+            self.classes_layout.removeWidget(self.add_class_btn)
+            self.classes_layout.removeWidget(self.remove_class_btn)
+            self.classes_layout.removeWidget(self.reset_class_names_btn)
+            self.classes_layout.removeWidget(self.btn_class_distribution_annot)
+            self.classes_layout.addWidget(self.add_class_btn, len(self.class_names)+1, 0, 1, 5)
+            self.classes_layout.addWidget(self.remove_class_btn, len(self.class_names)+1, 5, 1, 5)
+            self.classes_layout.addWidget(self.export_class_names_btn, len(self.class_names)+2, 0, 1, 5)
+            self.classes_layout.addWidget(self.import_class_names_btn, len(self.class_names)+2, 5, 1, 5)
+            self.classes_layout.addWidget(self.reset_class_names_btn, len(self.class_names)+3, 0, 1, 10)
+            self.classes_layout.addWidget(self.btn_class_distribution_annot, len(self.class_names)+4, 0, 1, 10)
             # Update the icons and class names
             self._update_class_names()
         else:
@@ -2194,21 +2194,23 @@ class ConvpaintWidget(QWidget):
     def _on_channel_mode_changed(self):
         """Set the image data dimensions based on radio buttons,
         reset classifier, and adjust normalization options."""
-        channel_mode = "multi" if self.radio_multi_channel.isChecked() else \
+        old_channel_mode = self.cp_model.get_param("channel_mode")
+        new_channel_mode = "multi" if self.radio_multi_channel.isChecked() else \
                        "rgb" if self.radio_rgb.isChecked() else \
                        "single"
-        self.cp_model.set_param("channel_mode", channel_mode, ignore_warnings=True)
-        self._reset_clf()
-        self._reset_radio_norm_choices()
-        if (self.add_layers_flag # Add layers only if not triggered from layer selection
-            and self.auto_add_layers): # and if auto_add_layers is checked
-            self._add_empty_annot()
-        # Reset the features for continuous training
-        self._reset_train_features()
-        # Set flags that new outputs need to be generated (and not planes of the old ones populated)
-        self.new_seg = True
-        self.new_proba = True
-        self.new_features = True
+        self.cp_model.set_param("channel_mode", new_channel_mode, ignore_warnings=True)
+        if old_channel_mode != new_channel_mode:
+            self._reset_clf()
+            self._reset_radio_norm_choices()
+            if (self.add_layers_flag # Add layers only if not triggered from layer selection
+                and self.auto_add_layers): # and if auto_add_layers is checked
+                self._add_empty_annot()
+            # Reset the features for continuous training
+            self._reset_train_features()
+            # Set flags that new outputs need to be generated (and not planes of the old ones populated)
+            self.new_seg = True
+            self.new_proba = True
+            self.new_features = True
 
     def _on_norm_changed(self):
         """Set the normalization options based on radio buttons,
@@ -2234,12 +2236,12 @@ class ConvpaintWidget(QWidget):
         self.add_layers_flag = False
 
         # Remove class names (note, resetting of class names needs to be split because of the handling of the attributes)
-        if 'Class names' in self.tab_names:
+        if 'Classes' in self.tab_names:
             for name in self.class_names:
-                self.class_names_layout.removeWidget(name)
+                self.classes_layout.removeWidget(name)
                 name.deleteLater()
             for icon in self.class_icons:
-                self.class_names_layout.removeWidget(icon)
+                self.classes_layout.removeWidget(icon)
                 icon.deleteLater()
 
         # Reset the model to default
@@ -2264,23 +2266,23 @@ class ConvpaintWidget(QWidget):
         # Reset the model description
         self._set_model_description()
 
-        if 'Class names' in self.tab_names:
+        if 'Classes' in self.tab_names:
             # Remove the buttons from the layout
-            self.class_names_layout.removeWidget(self.add_class_btn)
-            self.class_names_layout.removeWidget(self.remove_class_btn)
-            self.class_names_layout.removeWidget(self.reset_class_names_btn)
-            self.class_names_layout.removeWidget(self.btn_class_distribution_annot)
+            self.classes_layout.removeWidget(self.add_class_btn)
+            self.classes_layout.removeWidget(self.remove_class_btn)
+            self.classes_layout.removeWidget(self.reset_class_names_btn)
+            self.classes_layout.removeWidget(self.btn_class_distribution_annot)
 
             # Recreate the default class names and icons
             self._create_default_class_names()
 
             # Re-add the buttons below the class names
-            self.class_names_layout.addWidget(self.add_class_btn, len(self.class_names)+1, 0, 1, 5)
-            self.class_names_layout.addWidget(self.remove_class_btn, len(self.class_names)+1, 5, 1, 5)
-            self.class_names_layout.addWidget(self.export_class_names_btn, len(self.class_names)+2, 0, 1, 5)
-            self.class_names_layout.addWidget(self.import_class_names_btn, len(self.class_names)+2, 5, 1, 5)
-            self.class_names_layout.addWidget(self.reset_class_names_btn, len(self.class_names)+3, 0, 1, 10)
-            self.class_names_layout.addWidget(self.btn_class_distribution_annot, len(self.class_names)+4, 0, 1, 10)
+            self.classes_layout.addWidget(self.add_class_btn, len(self.class_names)+1, 0, 1, 5)
+            self.classes_layout.addWidget(self.remove_class_btn, len(self.class_names)+1, 5, 1, 5)
+            self.classes_layout.addWidget(self.export_class_names_btn, len(self.class_names)+2, 0, 1, 5)
+            self.classes_layout.addWidget(self.import_class_names_btn, len(self.class_names)+2, 5, 1, 5)
+            self.classes_layout.addWidget(self.reset_class_names_btn, len(self.class_names)+3, 0, 1, 10)
+            self.classes_layout.addWidget(self.btn_class_distribution_annot, len(self.class_names)+4, 0, 1, 10)
         
         if 'Multifile' in self.tab_names:
             self._reset_multifile_folder()
@@ -2683,8 +2685,6 @@ class ConvpaintWidget(QWidget):
 
         # Track annotation data changes to keep in-memory store in sync (for Multifile)
         self.store_annot = from_multifile # Only store if the annot was added from Multifile, to avoid storing unnecessarily when not using Multifile
-        if from_multifile:
-            new_annot_layer.events.set_data.connect(self._on_annotation_changed)
 
     def _check_create_segmentation_layer(self):
         """Check if segmentation layer exists and create it if not."""
@@ -3659,7 +3659,8 @@ class ConvpaintWidget(QWidget):
 
         with progress(total=0) as pbr:
             pbr.set_description("Training")
-            mem_mode = self.cont_training == "global"
+            mem_mode = (self.cont_training == "image"
+                        or self.cont_training == "global")
             # Train; in this case, normalization is not skipped (but done in the ConvpaintModel)
             in_channels = self._parse_in_channels(self.input_channels)
             _ = self.cp_model.train(img_list, annot_list, memory_mode=mem_mode, img_ids=id_list,
@@ -4137,9 +4138,9 @@ class ConvpaintWidget(QWidget):
 
         # Add/open annotations and segmentations
         if self.multifile_import_open_annotations:
-            QTimer.singleShot(100, lambda: self._multifile_open_annot(filename, auto_add=original_auto))
+            QTimer.singleShot(250, lambda: self._multifile_open_annot(filename, auto_add=original_auto))
         if self.multifile_import_open_segmentations:
-            QTimer.singleShot(100, lambda: self._multifile_open_segmentation(filename))
+            QTimer.singleShot(250, lambda: self._multifile_open_segmentation(filename))
 
         # Reset flag to update annotation status on annotation changes (e.g. painting)
         QTimer.singleShot(250, lambda: setattr(self, '_multifile_update_annot_tick', True))
@@ -4220,7 +4221,8 @@ class ConvpaintWidget(QWidget):
 
     def _maybe_update_annot_tick(self, data, filename):
         """Same as _update_multifile_annot_tick but only if the annotation data has actually changed. Defined separately, so we can call it with a delay."""
-        if (self._multifile_last_annot.shape != data.shape or # If the file changed (check this first as with different shapes we cannot compare values)
+        if (self._multifile_last_annot is None or # If it's the first file, or we don't have a last annotation to compare to
+            self._multifile_last_annot.shape != data.shape or # If the file changed (check in this order as otherwise we cannot compare...)
             not np.all(self._multifile_last_annot == data)): # If the annotation data changed
             self._update_multifile_annot_tick(filename)
 
@@ -4341,7 +4343,9 @@ class ConvpaintWidget(QWidget):
 
             # 2. Prepare it
             try:
-                prep = self._get_data_channel_first(arr, arr.ndim)  if arr is not None else None
+                is_rgb = self.cp_model.get_param('channel_mode') == 'rgb'
+                dims = arr.ndim if not is_rgb else arr.ndim - 1
+                prep = self._get_data_channel_first(arr, dims) if arr is not None else None
             except Exception:
                 warnings.warn(f'Could not prepare image {p} for training. Skipping.')
                 continue
@@ -4404,7 +4408,7 @@ class ConvpaintWidget(QWidget):
         if self.cp_model is None or not self.trained:
             warnings.warn('No trained model available for segmentation.')
             return
-        
+
         # If the user has selected probabilities as outputs, notify them that this is not (yet) supported and segmentations will be created and saved instead
         if self.add_probas:
             show_info('You selected class probabilities as output. This is not yet supported in the Multifile workflow. Segmentations will be created and saved instead.')
@@ -4473,7 +4477,9 @@ class ConvpaintWidget(QWidget):
                     continue
 
                 try:
-                    prep = self._get_data_channel_first(arr, arr.ndim) if arr is not None else None
+                    is_rgb = self.cp_model.get_param('channel_mode') == 'rgb'
+                    dims = arr.ndim if not is_rgb else arr.ndim - 1 # Account for channel dimension in RGB mode
+                    prep = self._get_data_channel_first(arr, dims) if arr is not None else None
                 except Exception:
                     warnings.warn(f'Could not prepare image {fname} for prediction. Skipping.')
                     continue
