@@ -2475,7 +2475,6 @@ class ConvpaintWidget(QWidget):
         self._reset_train_features()
         # Flag that the FE is now set (since we just set the model)
         self.flag_fe_as_set() # Flag that the FE is now set (since we just set the model)
-        self.flag_clf_as_set()
 
     def _on_reset_default_fe(self, event=None):
         """Reset the feature extraction model to the default model."""
@@ -2488,7 +2487,7 @@ class ConvpaintWidget(QWidget):
     def flag_clf_as_temp(self):
         """Flag classifier settings as changed but not yet applied."""
         self.set_clf_btn.setText('Set classifier parameters *')
-        self.set_clf_btn.setStyleSheet("color: black; font-weight: bold")
+        self.set_clf_btn.setStyleSheet("font-weight: bold")
         self.classifier_params_group.gbox.setTitle("Classifier (CatBoost) (unsaved changes) *")
 
     def flag_clf_as_set(self):
