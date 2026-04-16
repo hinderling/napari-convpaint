@@ -36,7 +36,7 @@ def compute_precision_recall(ground_truth, recovered):
     # return precision, recall
 
 def test_add_layers(make_napari_viewer, capsys):
-    """Test that annotation and prediction layers are added correctly"""
+    """Test that annotations and prediction layers are added correctly"""
     viewer = make_napari_viewer()
     my_widget = ConvpaintWidget(viewer)
     my_widget.ensure_init()
@@ -46,8 +46,8 @@ def test_add_layers(make_napari_viewer, capsys):
     assert 'annotations' in viewer.layers
     # assert 'segmentation' in viewer.layers
 
-def test_annotation_layer_dims(make_napari_viewer, capsys):
-    """Check that dimensions of annotation layer match image layer"""
+def test_annotations_layer_dims(make_napari_viewer, capsys):
+    """Check that dimensions of annotations layer match image layer"""
 
     viewer = make_napari_viewer()
     # viewer = napari.Viewer()
@@ -657,5 +657,5 @@ def test_all_models_train_predict(make_napari_viewer, fe_name, image_type):
 
     assert 'segmentation' in viewer.layers, "Segmentation layer not created"
     seg = viewer.layers['segmentation'].data
-    assert seg.shape == annot.shape, f"Segmentation shape {seg.shape} != annotation shape {annot.shape}"
+    assert seg.shape == annot.shape, f"Segmentation shape {seg.shape} != annotations shape {annot.shape}"
     assert np.unique(seg).size > 1, "Segmentation is uniform — model produced no meaningful output"

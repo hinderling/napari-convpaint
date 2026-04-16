@@ -109,8 +109,8 @@ def test_multifile_training_combines_classes_across_files(make_napari_viewer, tm
     # img2: class 2 annotated inside the green stripe
     annot2 = np.zeros((128, 128), dtype=np.uint8)
     annot2[50:70, 10:120] = 2
-    w._multifile_annotation_store['img1.tif'] = annot1
-    w._multifile_annotation_store['img2.tif'] = annot2
+    w._multifile_annotations_store['img1.tif'] = annot1
+    w._multifile_annotations_store['img2.tif'] = annot2
 
     # Train on the multifile store
     w._on_train_on_multifile()
@@ -145,7 +145,7 @@ def test_multifile_training_combines_classes_across_files(make_napari_viewer, tm
 
 
 def test_multifile_import_presaved_annotations(make_napari_viewer, tmp_path, monkeypatch):
-    """Pre-saved annotation TIFFs are registered as persistent (path string, green tick)."""
+    """Pre-saved annotations TIFFs are registered as persistent (path string, green tick)."""
     im, _ = generate_synthetic_square((64, 64), (20, 20))
     tifffile.imwrite(tmp_path / 'img1.tif', im)
     tifffile.imwrite(tmp_path / 'img2.tif', im)
@@ -172,7 +172,7 @@ def test_multifile_import_presaved_annotations(make_napari_viewer, tmp_path, mon
                         lambda *a, **k: str(annot_dir))
     w._import_annot_and_seg()
 
-    store = w._multifile_annotation_store
+    store = w._multifile_annotations_store
     assert set(store.keys()) == {'img1.tif', 'img2.tif'}
     # Imported entries are stored as path strings (persistent)
     assert all(isinstance(v, str) for v in store.values())
@@ -205,8 +205,8 @@ def test_multifile_export_annotations_creates_tiffs(make_napari_viewer, tmp_path
     a1[5:15, 5:15] = 1
     a2 = np.zeros((64, 64), dtype=np.uint8)
     a2[20:30, 20:30] = 2
-    w._multifile_annotation_store['img1.tif'] = a1
-    w._multifile_annotation_store['img2.tif'] = a2
+    w._multifile_annotations_store['img1.tif'] = a1
+    w._multifile_annotations_store['img2.tif'] = a2
 
     export_dir = tmp_path / 'exported'
     export_dir.mkdir()
@@ -224,8 +224,8 @@ def test_multifile_export_annotations_creates_tiffs(make_napari_viewer, tmp_path
     np.testing.assert_array_equal(tifffile.imread(f2), a2)
 
     # Store now holds path strings (persistent / green tick)
-    assert w._multifile_annotation_store['img1.tif'] == str(f1)
-    assert w._multifile_annotation_store['img2.tif'] == str(f2)
+    assert w._multifile_annotations_store['img1.tif'] == str(f1)
+    assert w._multifile_annotations_store['img2.tif'] == str(f2)
 
 
 def test_multifile_clear_annot_removes_from_store(make_napari_viewer, tmp_path, monkeypatch):
@@ -238,11 +238,11 @@ def test_multifile_clear_annot_removes_from_store(make_napari_viewer, tmp_path, 
     viewer, w = _make_widget(make_napari_viewer)
     w._select_multifile_img_folder()
 
-    w._multifile_annotation_store['img1.tif'] = np.ones((64, 64), dtype=np.uint8)
-    w._multifile_annotation_store['img2.tif'] = np.ones((64, 64), dtype=np.uint8) * 2
+    w._multifile_annotations_store['img1.tif'] = np.ones((64, 64), dtype=np.uint8)
+    w._multifile_annotations_store['img2.tif'] = np.ones((64, 64), dtype=np.uint8) * 2
 
     w.multifile_list.selectRow(0)
     w._multifile_clear_annot()
 
-    assert 'img1.tif' not in w._multifile_annotation_store
-    assert 'img2.tif' in w._multifile_annotation_store
+    assert 'img1.tif' not in w._multifile_annotations_store
+    assert 'img2.tif' in w._multifile_annotations_store

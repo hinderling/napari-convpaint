@@ -14,7 +14,7 @@ def test_3d_single_channel(make_napari_viewer, capsys):
     my_widget.cp_model.set_params(channel_mode='single')
     my_widget._on_add_annot_layer()
 
-    assert viewer.layers['annotations'].data.ndim == 3, "Annotation layer should be 3D"
+    assert viewer.layers['annotations'].data.ndim == 3, "Annotations layer should be 3D"
 
     # get stats and check dimensions and values
     my_widget.radio_normalize_over_stack.setChecked(True)
@@ -62,7 +62,7 @@ def test_3d_multi_channel(make_napari_viewer, capsys):
     # check that stack normalization is off
     assert my_widget.radio_normalize_over_stack.isEnabled() == False
 
-    assert viewer.layers['annotations'].data.ndim == 2, "Annotation layer should be 2D"
+    assert viewer.layers['annotations'].data.ndim == 2, "Annotations layer should be 2D"
 
     # get stats and check dimensions and values
     img = my_widget._get_selected_img(check=True)
@@ -97,7 +97,7 @@ def test_RGB(make_napari_viewer, capsys):
     # check that stack normalization is off
     assert my_widget.radio_normalize_over_stack.isEnabled() == False
 
-    assert viewer.layers['annotations'].data.ndim == 2, "Annotation layer should be 2D"
+    assert viewer.layers['annotations'].data.ndim == 2, "Annotations layer should be 2D"
 
     # get stats and check dimensions and values
     img = my_widget._get_selected_img(check=True)
@@ -176,7 +176,7 @@ def test_4d_image(make_napari_viewer, capsys):
     my_widget.cp_model.set_params(channel_mode='multi')
     my_widget._on_add_annot_layer()
 
-    assert viewer.layers['annotations'].data.ndim == 3, "Annotation layer should be 3D"
+    assert viewer.layers['annotations'].data.ndim == 3, "Annotations layer should be 3D"
     
     # get stats and check dimensions and values
     my_widget.radio_normalize_over_stack.setChecked(True)
