@@ -1042,11 +1042,11 @@ class ConvpaintWidget(QWidget):
 
             self.btn_train_on_selected.clicked.connect(self._on_train_on_selected)
             self.radio_single_training.toggled.connect(lambda checked:
-                checked and setattr(self, 'cont_training', 'off'))
+                checked and setattr(self, 'cont_training', 'Off'))
             self.radio_img_training.toggled.connect(lambda checked:
-                checked and setattr(self, 'cont_training', "image"))
+                checked and setattr(self, 'cont_training', "Image"))
             self.radio_global_training.toggled.connect(lambda checked:
-                checked and setattr(self, 'cont_training', "global"))
+                checked and setattr(self, 'cont_training', "Global"))
             # self.check_cont_training.stateChanged.connect(lambda: setattr(
             #     self, 'cont_training', self.check_cont_training.isChecked()))
             self.btn_class_distribution_trained.clicked.connect(lambda: self._on_show_class_distribution(trained_data=True))
@@ -1620,7 +1620,7 @@ class ConvpaintWidget(QWidget):
                 if self._check_large_image(img) and not self.cp_model.get_param('tile_image'):
                     show_info('Image is very large. Consider using tiling and/or downsampling.')
                 # If we have continuous training within a single image, reset the training features
-                if self.cont_training == "image" or self.cont_training == "off":
+                if self.cont_training == "Image" or self.cont_training == "Off":
                     self._reset_train_features()
                 self.update_layer_flag = True
                 self.data_shape = img.data.shape
@@ -1715,8 +1715,8 @@ class ConvpaintWidget(QWidget):
         # Get the data
         img = self._get_selected_img(check=True)
         annot = self.annotations_layer_selection_widget.value
-        mem_mode = (self.cont_training == "image"
-                    or self.cont_training == "global")
+        mem_mode = (self.cont_training == "Image"
+                    or self.cont_training == "Global")
 
         # Check if annotations of at least 2 classes are present
         if annot is None:
@@ -2192,9 +2192,9 @@ class ConvpaintWidget(QWidget):
         self.check_auto_add_layers.setChecked(self.auto_add_layers)
         self.check_keep_layers.setChecked(self.keep_layers)
         self.check_auto_select_annot.setChecked(self.auto_select_annot)
-        {"off": lambda: self.radio_single_training.setChecked(True),
-         "image": lambda: self.radio_img_training.setChecked(True),
-         "global": lambda: self.radio_global_training.setChecked(True)}[self.cont_training]()
+        {"Off": lambda: self.radio_single_training.setChecked(True),
+         "Image": lambda: self.radio_img_training.setChecked(True),
+         "Global": lambda: self.radio_global_training.setChecked(True)}[self.cont_training]()
         # self.check_cont_training.setChecked(self.cont_training)
         self.check_use_dask.setChecked(self.use_dask)
         self.text_input_channels.setText(self.input_channels)
@@ -2280,7 +2280,7 @@ class ConvpaintWidget(QWidget):
         self.seg_tag = 'segmentation' # Prefix for the segmentation layer names
         self.proba_prefix = 'probabilities' # Prefix for the class probabilities layer names
         self.features_prefix = 'features' # Prefix for the feature image layer name
-        self.cont_training = "image" # Update features for subsequent training ("image" or "off" or "global")
+        self.cont_training = "Image" # Update features for subsequent training ("Image" or "Off" or "Global")
         self.use_dask = False # Use Dask for parallel processing
         self.fe_device = 'auto' # Device to use for the FE (if applicable); 'auto' will use GPU if available, otherwise CPU
         self.clf_device = 'auto' # Device to use for the classifier (if applicable); 'auto' will use GPU if available, otherwise CPU
@@ -3597,8 +3597,8 @@ class ConvpaintWidget(QWidget):
 
         with progress(total=0) as pbr:
             pbr.set_description("Training")
-            mem_mode = (self.cont_training == "image"
-                        or self.cont_training == "global")
+            mem_mode = (self.cont_training == "Image"
+                        or self.cont_training == "Global")
             # Train; in this case, normalization is not skipped (but done in the ConvpaintModel)
             in_channels = self._parse_in_channels(self.input_channels)
             _ = self.cp_model.train(img_list, annot_list, memory_mode=mem_mode, img_ids=id_list,
