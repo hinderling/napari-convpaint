@@ -362,7 +362,7 @@ class ConvpaintWidget(QWidget):
 
         self.spin_depth = QSpinBox()
         self.spin_depth.setMinimum(1)
-        self.spin_depth.setMaximum(20)
+        self.spin_depth.setMaximum(16)  # CatBoost's hard upper bound; 17+ raises at fit time
         self.spin_depth.setToolTip('Set the depth of the trees for the classifier')
         self.classifier_params_group.glayout.addWidget(QLabel('Depth'), 2, 0, 1, 1)
         self.classifier_params_group.glayout.addWidget(self.spin_depth, 2, 1, 1, 1)
