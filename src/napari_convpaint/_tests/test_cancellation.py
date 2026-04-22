@@ -202,3 +202,53 @@ def test_cancel_from_another_thread_aborts_train():
     # on very fast hardware — the deterministic mid-run case is covered separately).
     assert 'error' not in result, f"worker crashed: {result!r}"
     assert 'cancelled' in result or 'ok' in result
+
+
+def test_widget_async_worker_completes_without_main_thread_violation(make_napari_viewer):
+    """Regression test for the 'NSWindow should only be instantiated on the main
+    thread' crash on macOS. The rest of the widget test suite runs with
+    ConvpaintWidget._sync_workers = True, which executes the worker on the
+    calling thread and would hide any QWidget-constructed-from-worker-thread
+    bug. Flip that off and drive one full _on_train / _on_predict cycle end
+    to end in a real Qt worker thread."""
+    import time
+    from qtpy.QtWidgets import QApplication
+    from napari_convpaint.convpaint_widget import ConvpaintWidget
+    from napari_convpaint.testing_utils import (
+        generate_synthetic_square,
+        generate_synthetic_circle_annotation,
+    )
+
+    im, _ = generate_synthetic_square(im_dims=(252, 252), square_dims=(70, 70))
+    im_annot = generate_synthetic_circle_annotation(
+        im_dims=(252, 252), circle1_xy=(125, 70), circle2_xy=(125, 125)
+    )
+
+    orig_sync = ConvpaintWidget._sync_workers
+    ConvpaintWidget._sync_workers = False
+    try:
+        viewer = make_napari_viewer()
+        widget = ConvpaintWidget(viewer)
+        # Swap to a cheap CPU-only feature extractor so the test finishes
+        # quickly; the bug we're guarding against is about Qt thread affinity,
+        # not about the specific FE choice.
+        widget.cp_model = ConvpaintModel(fe_name='gaussian_features')
+        widget.auto_seg = False  # keep the test to a single worker round
+        viewer.add_image(im)
+        widget._on_add_annot_layer()
+        viewer.layers['annotations'].data[...] = im_annot
+        widget.cp_model.set_params(channel_mode='rgb')
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            widget._on_train()
+            deadline = time.monotonic() + 30
+            while widget._op is not None and time.monotonic() < deadline:
+                QApplication.processEvents()
+                time.sleep(0.01)
+            assert widget._op is None, "async worker did not finish within 30s"
+            # If QWidgets had been constructed on the worker thread, the
+            # process would have aborted before reaching this line on macOS.
+            assert widget.trained
+    finally:
+        ConvpaintWidget._sync_workers = orig_sync

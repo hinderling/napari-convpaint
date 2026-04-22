@@ -1324,7 +1324,7 @@ class ConvpaintWidget(QWidget):
             # Swallow CancelledError here so it never reaches the worker's errored
             # signal; real exceptions still propagate.
             try:
-                with warnings.catch_warnings(), progress(total=0, desc='Training'):
+                with warnings.catch_warnings():
                     warnings.simplefilter(action="ignore", category=FutureWarning)
                     cp_model.train(image_stack_norm, annot_data, memory_mode=mem_mode,
                                    img_ids=img_name, in_channels=in_channels, skip_norm=False,
@@ -1338,6 +1338,7 @@ class ConvpaintWidget(QWidget):
         worker.errored.connect(self._on_worker_errored)
         worker.finished.connect(self._on_worker_finished)
         self._begin_worker('train', self.train_classifier_btn, cancel_token, worker,
+                           desc='Training',
                            disabled_buttons=[self.segment_btn, self.segment_all_btn])
 
     def _on_train_returned(self, _result):
@@ -1359,11 +1360,18 @@ class ConvpaintWidget(QWidget):
             self._op.cancel_token.cancel()
         return True
 
-    def _begin_worker(self, name, button, cancel_token, worker, disabled_buttons=None):
+    def _begin_worker(self, name, button, cancel_token, worker,
+                      desc='', total=0, disabled_buttons=None):
         # Drain the delayed _on_select_layer QTimer before we start — otherwise
         # it fires mid-op during layer-data assignment and resets the classifier.
         # The old synchronous code got this flush for free from napari.utils.progress.
         QApplication.processEvents()
+        # Create the progress bar on the main thread (QWidgets cannot be
+        # constructed from a worker thread on macOS — it raises NSInternalInconsistencyException).
+        pbar = progress(total=total, desc=desc)
+        worker.finished.connect(pbar.close)
+        if total:
+            worker.yielded.connect(pbar.increment_with_overflow)
         self._op = _ActiveOp(
             name=name,
             worker=worker,
@@ -1495,10 +1503,9 @@ class ConvpaintWidget(QWidget):
         @thread_worker
         def _do_predict():
             try:
-                with progress(total=0, desc='Prediction'):
-                    return cp_model._predict(image_plane, add_seg=True, in_channels=in_channels, skip_norm=True,
-                                             use_dask=use_dask, fe_use_device=fe_device,
-                                             cancel_token=cancel_token)
+                return cp_model._predict(image_plane, add_seg=True, in_channels=in_channels, skip_norm=True,
+                                         use_dask=use_dask, fe_use_device=fe_device,
+                                         cancel_token=cancel_token)
             except CancelledError:
                 return None
 
@@ -1509,6 +1516,7 @@ class ConvpaintWidget(QWidget):
         worker.errored.connect(self._on_worker_errored)
         worker.finished.connect(self._on_worker_finished)
         self._begin_worker('predict', self.segment_btn, cancel_token, worker,
+                           desc='Prediction',
                            disabled_buttons=[self.train_classifier_btn, self.segment_all_btn])
 
     def _on_predict_returned(self, result):
@@ -1619,15 +1627,13 @@ class ConvpaintWidget(QWidget):
         @thread_worker
         def _do_predict_all():
             try:
-                with progress(total=num_steps, desc='Segmenting stack') as pbar:
-                    for step in range(num_steps):
-                        cancel_token.raise_if_cancelled()
-                        image = image_stack_norm[..., step, :, :]
-                        probas, seg = cp_model._predict(image, add_seg=True, in_channels=in_channels, skip_norm=True,
-                                                        use_dask=use_dask, fe_use_device=fe_device,
-                                                        cancel_token=cancel_token)
-                        yield step, probas, seg
-                        pbar.update(1)
+                for step in range(num_steps):
+                    cancel_token.raise_if_cancelled()
+                    image = image_stack_norm[..., step, :, :]
+                    probas, seg = cp_model._predict(image, add_seg=True, in_channels=in_channels, skip_norm=True,
+                                                    use_dask=use_dask, fe_use_device=fe_device,
+                                                    cancel_token=cancel_token)
+                    yield step, probas, seg
             except CancelledError:
                 # Any slices already yielded stay in the labels layer.
                 return
@@ -1637,6 +1643,7 @@ class ConvpaintWidget(QWidget):
         worker.errored.connect(self._on_worker_errored)
         worker.finished.connect(self._on_worker_finished)
         self._begin_worker('predict_all', self.segment_all_btn, cancel_token, worker,
+                           desc='Segmenting stack', total=num_steps,
                            disabled_buttons=[self.train_classifier_btn, self.segment_btn])
 
     def _on_predict_all_yielded(self, value):
