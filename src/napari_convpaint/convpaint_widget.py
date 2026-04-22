@@ -10,7 +10,13 @@ from magicgui.widgets import create_widget
 import napari
 from napari.utils import progress
 from napari.utils.notifications import show_info
-from napari.qt.threading import thread_worker
+# Use superqt's thread_worker rather than napari.qt.threading.thread_worker: the
+# latter registers every worker with window._task_status_manager (and never
+# unregisters), so the worker's closure — including cp_model with its
+# VGG16 MPS weights — is pinned for the lifetime of the viewer. In a test
+# loop creating many widgets this accumulates and blows past the macOS
+# runner's 7.93 GiB MPS cap.
+from superqt.utils import thread_worker
 from napari_guitils.gui_structures import VHGroup, TabSet
 from pathlib import Path
 import numpy as np
@@ -1313,12 +1319,12 @@ class ConvpaintWidget(QWidget):
 
         cancel_token = CancelToken()
 
-        @thread_worker(progress={'desc': 'Training'})
+        @thread_worker
         def _do_train():
-            # Swallow CancelledError here so it never reaches napari's errored
-            # signal; real exceptions still propagate and napari shows them.
+            # Swallow CancelledError here so it never reaches the worker's errored
+            # signal; real exceptions still propagate.
             try:
-                with warnings.catch_warnings():
+                with warnings.catch_warnings(), progress(total=0, desc='Training'):
                     warnings.simplefilter(action="ignore", category=FutureWarning)
                     cp_model.train(image_stack_norm, annot_data, memory_mode=mem_mode,
                                    img_ids=img_name, in_channels=in_channels, skip_norm=False,
@@ -1486,12 +1492,13 @@ class ConvpaintWidget(QWidget):
 
         cancel_token = CancelToken()
 
-        @thread_worker(progress={'desc': 'Prediction'})
+        @thread_worker
         def _do_predict():
             try:
-                return cp_model._predict(image_plane, add_seg=True, in_channels=in_channels, skip_norm=True,
-                                         use_dask=use_dask, fe_use_device=fe_device,
-                                         cancel_token=cancel_token)
+                with progress(total=0, desc='Prediction'):
+                    return cp_model._predict(image_plane, add_seg=True, in_channels=in_channels, skip_norm=True,
+                                             use_dask=use_dask, fe_use_device=fe_device,
+                                             cancel_token=cancel_token)
             except CancelledError:
                 return None
 
@@ -1609,16 +1616,18 @@ class ConvpaintWidget(QWidget):
 
         cancel_token = CancelToken()
 
-        @thread_worker(progress={'total': num_steps, 'desc': 'Segmenting stack'})
+        @thread_worker
         def _do_predict_all():
             try:
-                for step in range(num_steps):
-                    cancel_token.raise_if_cancelled()
-                    image = image_stack_norm[..., step, :, :]
-                    probas, seg = cp_model._predict(image, add_seg=True, in_channels=in_channels, skip_norm=True,
-                                                    use_dask=use_dask, fe_use_device=fe_device,
-                                                    cancel_token=cancel_token)
-                    yield step, probas, seg
+                with progress(total=num_steps, desc='Segmenting stack') as pbar:
+                    for step in range(num_steps):
+                        cancel_token.raise_if_cancelled()
+                        image = image_stack_norm[..., step, :, :]
+                        probas, seg = cp_model._predict(image, add_seg=True, in_channels=in_channels, skip_norm=True,
+                                                        use_dask=use_dask, fe_use_device=fe_device,
+                                                        cancel_token=cancel_token)
+                        yield step, probas, seg
+                        pbar.update(1)
             except CancelledError:
                 # Any slices already yielded stay in the labels layer.
                 return
