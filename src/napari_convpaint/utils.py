@@ -2,19 +2,19 @@ import warnings
 import torch
 import numpy as np
 from scipy.ndimage import gaussian_filter
-# from scipy.ndimage import median_filter
 import skimage.transform
-import skimage.draw
 import skimage.morphology as morph
-from sklearn.decomposition import PCA
-from sklearn.cluster import KMeans
 from joblib import Parallel, delayed
 import einops as ein
-#import xgboost as xgb
 from torch.nn.functional import interpolate as torch_interpolate
-from matplotlib import pyplot as plt
 import os
 import requests
+
+# Imported inline to avoid heavy memory usage when the functions are not used:
+# from matplotlib import pyplot as plt
+# from sklearn.decomposition import PCA
+# from sklearn.cluster import KMeans
+# napari.utils (see details below)
 
 
 ### Cooperative cancellation
@@ -47,6 +47,8 @@ def check_cancel(cancel_token):
 ### PCA and Kmeans on feature images
 
 def apply_pca_to_f_image(feature_img, n_components, norm=True):
+    
+    from sklearn.decomposition import PCA
 
     spatial_dims = feature_img.shape[1:]
 
@@ -71,6 +73,8 @@ def apply_pca_to_f_image(feature_img, n_components, norm=True):
     return pc_norm
 
 def apply_kmeans_to_f_image(feature_img, n_clusters, random_state=None):
+
+    from sklearn.cluster import KMeans
     
     spatial_dims = feature_img.shape[1:]
 
@@ -120,8 +124,8 @@ def guided_model_download(model_file: str, model_url: str, model_dir: str = None
     # Try importing Napari tools
     use_napari = False
     try:
-        from napari.utils.progress import progress as napari_progress
-        from napari.utils.notifications import show_info, show_error
+        from napari.utils.progress import progress as napari_s
+        from napari.utils.notifications import show_info, shs
         import napari
         if napari.current_viewer():
             use_napari = True
@@ -682,6 +686,7 @@ def tile_annot(img, annot, coords, padding, plot_tiles=False):
         coord_tiles.append(coords_tile)
     
     if plot_tiles:
+            from matplotlib import pyplot as plt
             plt.imshow(im_to_show, cmap='gray')
             plt.show()
 

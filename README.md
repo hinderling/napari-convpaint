@@ -11,7 +11,7 @@ This tool, that comes both as a napari plugin and an intuitive Python API, can b
 
 Following an idea similar to other tools like ilastik, its main strength lies in its capability to use features from basically any model that creates meaningful features describing an image: from neural networks like VGG16 to foundational ViTs such as DINOV2, but also popular models such as Ilastik or Cellpose. This enables the segmentation of virtually any type of image, from simple to complex - without the need of switching and learning new tools.
 
-**Find more information and tutorials in the [docs](https://guiwitz.github.io/napari-convpaint/), the recording of the [presentation at I2K 2025 conference](https://www.youtube.com/watch?v=zoxaWo9J4nE) or read the [preprint of the paper](https://doi.org/10.1101/2024.09.12.610926).**
+**Find more information and tutorials in the [docs](https://guiwitz.github.io/napari-convpaint/), the recording of the [presentation at I2K 2025 conference](https://www.youtube.com/watch?v=zoxaWo9J4nE) or read the [paper](https://doi.org/10.1016/j.crmeth.2026.101335).**
 
 ![overview conv-paint](/images/network_github.png)
 
@@ -37,7 +37,7 @@ These are the scribble annotations provided for training:
 And this is the resulting Convpaint segmentation:
 <video src="https://github.com/user-attachments/assets/6a2be1fe-25cc-4af1-9f50-aab9bc4123d9"></video>
 
-Check out the [documentation](https://guiwitz.github.io/napari-convpaint/book/Landing.html) or the [paper](https://doi.org/10.1101/2024.09.12.610926) for more usecases!
+Check out the [documentation](https://guiwitz.github.io/napari-convpaint/book/Landing.html) or the [paper](https://doi.org/10.1016/j.crmeth.2026.101335) for more usecases!
 
 ## API
 
@@ -100,19 +100,22 @@ The idea behind this napari plugin was first developed by [Lucien Hinderling](ht
 If you find Convpaint useful in your research, please consider citing our work. Please also cite any Feature Extractor you have used within Convpaint, such as [ilastik](https://github.com/ilastik/ilastik-napari), [cellpose](https://cellpose.readthedocs.io/en/latest/), [DINOv2](https://github.com/facebookresearch/dinov2) or [JAFAR](https://github.com/PaulCouairon/JAFAR).
 
 Convpaint:
-```
-@article {Hinderling2024,
-	author = {Hinderling, Lucien and Witz, Guillaume and Schwob, Roman and Stojiljković, Ana and Dobrzyński, Maciej and Vladymyrov, Mykhailo and Frei, Joël and Grädel, Benjamin and Frismantiene, Agne and Pertz, Olivier},
-	title = {Convpaint - Interactive pixel classification using pretrained neural networks},
-	elocation-id = {2024.09.12.610926},
-	doi = {10.1101/2024.09.12.610926},
-	journal = {bioRxiv},
-	publisher = {Cold Spring Harbor Laboratory},
-	year = {2024},
+```bibtex
+@article{Hinderling2026,
+	author = {Hinderling, Lucien and Schwob, Roman and Witz, Guillaume and Stojiljković, Ana and Dobrzyński, Maciej and Vladymyrov, Mykhailo and Frei, Joël and Grädel, Benjamin and Frismantiene, Agne and Pertz, Olivier},
+	title = {Convpaint—Interactive pixel classification using pretrained neural networks},
+	doi = {10.1016/j.crmeth.2026.101335},
+	journal = {Cell Reports Methods},
+	publisher = {Elsevier BV},
+	volume = {6},
+	number = {3},
+	pages = {101335},
+	year = {2026},
+	month = mar,
 }
 ```
 Suggested citations for feature extractors:
-```
+```bibtex
 @article {Berg2019,
 	author = {Berg, Stuart and Kutra, Dominik and Kroeger, Thorben and Straehle, Christoph N. and Kausler, Bernhard X. and Haubold, Carsten and Schiegg, Martin and Ales, Janez and Beier, Thorsten and Rudy, Markus and Eren, Kemal and Cervantes, Jaime I. and Xu, Buote and Beuttenmueller, Fynn and Wolny, Adrian and Zhang, Chong and Koethe, Ullrich and Hamprecht, Fred A. and Kreshuk, Anna},
 	title = {ilastik: interactive machine learning for (bio)image analysis.},
@@ -125,7 +128,7 @@ Suggested citations for feature extractors:
 	journal = {Nature Methods},
 }
 ```
-```
+```bibtex
 @article {Stringer2021,
 	author = {Stringer, Carsen and Wang, Tim and Michaelos, Michalis and Pachitariu Marius},
 	title = {Cellpose: a generalist algorithm for cellular segmentation.},
@@ -136,7 +139,7 @@ Suggested citations for feature extractors:
 	year = {2021},
 }
 ```
-```
+```bibtex
 @article {oquab2024dinov2learningrobustvisual,
       title={DINOv2: Learning Robust Visual Features without Supervision}, 
       author={Maxime Oquab and Timothée Darcet and Théo Moutakanni and Huy Vo and Marc Szafraniec and Vasil Khalidov and Pierre Fernandez and Daniel Haziza and Francisco Massa and Alaaeldin El-Nouby and Mahmoud Assran and Nicolas Ballas and Wojciech Galuba and Russell Howes and Po-Yao Huang and Shang-Wen Li and Ishan Misra and Michael Rabbat and Vasu Sharma and Gabriel Synnaeve and Hu Xu and Hervé Jegou and Julien Mairal and Patrick Labatut and Armand Joulin and Piotr Bojanowski},
@@ -148,7 +151,7 @@ Suggested citations for feature extractors:
 }
 
 ```
-```
+```bibtex
 @misc{couairon2025jafar,
       title={JAFAR: Jack up Any Feature at Any Resolution}, 
       author={Paul Couairon and Loick Chambon and Louis Serrano and Jean-Emmanuel Haugeard and Matthieu Cord and Nicolas Thome},

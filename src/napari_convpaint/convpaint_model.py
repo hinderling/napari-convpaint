@@ -3,16 +3,18 @@ import pickle
 from pathlib import Path
 import importlib
 import inspect
-from pyexpat import features
-from catboost import CatBoostClassifier
-from sklearn.ensemble import RandomForestClassifier
 import numpy as np
 import warnings
 import skimage
-import torch
 import pandas as pd
 from typing import Tuple
 from math import lcm
+from .pickle_compat import migrate_pickle, safe_load
+
+# Imported inline to avoid heavy memory usage when the functions are not used:
+# from sklearn.ensemble import RandomForestClassifier
+# from catboost import CatBoostClassifier
+# import catboost
 
 from .feature_extractor import FeatureExtractor
 from .param import Param
@@ -46,8 +48,8 @@ class ConvpaintModel:
     """
 
     # Available models and Standard models (aliases) are provided by the individual feature-extractor
-    FE_MODELS_TYPES_DICT = {}
-    STD_MODELS = {}
+    FE_MODELS_TYPES_DICT = {} # Will contain fe_name:type_class (e.g. vgg16:Hookmodel) pairs for all available feature extractor models
+    STD_MODELS = {} # Will contain alias:Param pairs for standard models (e.g. "vgg-s": Param(fe_name="vgg16", fe_layers=['features.0... ))
     
     # Define the allowed values for the parameters; this is used to check the validity of parameter values when setting them
     allowed_param_vals = {
@@ -142,7 +144,6 @@ class ConvpaintModel:
         if not ConvpaintModel.FE_MODELS_TYPES_DICT:
             ConvpaintModel._init_fe_models_dict()
 
-        num_kwargs_given =  + len(kwargs)
         if (alias is not None) + (model_path is not None) + (param is not None) + (fe_name is not None) > 1:
             raise ValueError('Please provide either an alias, a model path, a param object, or ' +
                              'a feature extractor name (and optionally additional kwargs) but not multiples.\n' +
@@ -197,7 +198,7 @@ class ConvpaintModel:
         try:
             module = importlib.import_module(module_path)
         except ImportError as e:
-            warnings.warn(f"Could not import feature extractor module '{module_path}': {e}")
+            warnings.warn(f"Error when trying to import feature extractor module '{module_path}': {e}")
             return
 
         model_names = getattr(module, "AVAILABLE_MODELS", None)
@@ -269,9 +270,11 @@ class ConvpaintModel:
         models_dict : dict
             Dictionary of all available feature extractors; names as keys and types as values.
         """
+        if not ConvpaintModel.FE_MODELS_TYPES_DICT:
+            ConvpaintModel._init_fe_models_dict()
         models_dict = ConvpaintModel.FE_MODELS_TYPES_DICT.copy()
         return models_dict
-    
+
     @staticmethod
     def get_default_params():
         """
@@ -472,8 +475,16 @@ class ConvpaintModel:
         Loads the model from a pickle file.
         Only intended for internal use at model initiation.
         """
-        with open(pkl_path, 'rb') as f:
-            data = pickle.load(f)
+        try:
+            with open(pkl_path, 'rb') as f:
+                data = pickle.load(f)
+            used_compat = False
+        # Fall-back option for loading old pkl files with reference to conv_paint_param
+        # will save pkl with corrected reference; can be removed later
+        except Exception:
+            # Fall back to safe_load which remaps old module names
+            data = safe_load(pkl_path)
+            used_compat = True
         new_param = data.get('param', None)
         # If there is the old use_gpu parameter saved, use lock_device to set the device policy for the feature extractor accordingly
         if hasattr(new_param, 'use_gpu'):
@@ -497,6 +508,17 @@ class ConvpaintModel:
                 raise ValueError('Annotations must be a dictionary.')
             self.table = data['table']
             self.annot_dict = data['annotations']
+        # If we loaded via the compatibility loader, try to migrate the file
+        # in-place so future loads do not need the shim. Fail silently.
+        try:
+            if used_compat:
+                try:
+                    migrate_pickle(pkl_path)
+                except Exception:
+                    warnings.warn(f"Failed to migrate pickle file: {pkl_path}")
+        except NameError:
+            # used_compat not set for some unexpected code paths; ignore
+            pass
 
     def _load_yml(self, yml_path):
         """
@@ -572,6 +594,10 @@ class ConvpaintModel:
         Creates new feature extractor, and resets the classifier.
         Only intended for internal use at model initiation.
         """
+        # Lazy-import catboost here (before torch loads model weights) to avoid
+        # a segfault on Apple Silicon caused by catboost initialising shared
+        # native libraries (libomp / Metal) after PyTorch's MPS backend.
+        import catboost  # noqa: F401
 
         # Reset the model and classifier
         self.reset_classifier()
@@ -714,6 +740,18 @@ class ConvpaintModel:
         """
         scalings = self.fe_model.get_proposed_scalings()
         return scalings
+    
+    def get_fe_description(self):
+        """
+        Returns the descriptions of the feature extractor layers (None if the model uses no layers).
+
+        Returns
+        ---------
+        descriptions : list[str] or None
+            List of descriptions for the feature extractor layers, or None if the model uses no layers
+        """
+        description = self.fe_model.get_description()
+        return description
 
 
 ### USER METHODS FOR TRAINING AND PREDICTION
@@ -1169,6 +1207,7 @@ class ConvpaintModel:
             use_device = self.check_locked_device(use_device, part='clf')
             task_type = utils.get_catboost_device(use_device, warn=True)
             # Fixed seed for reproducibility; can be set to None for random seed
+            from catboost import CatBoostClassifier
             self.classifier = CatBoostClassifier(
                 iterations=self._param.clf_iterations,
                 learning_rate=self._param.clf_learning_rate,
@@ -1180,6 +1219,7 @@ class ConvpaintModel:
             self.classifier.fit(features, targets)
             self._param.classifier = 'CatBoost'
         else: # train a random forest classififer (does not support GPU)
+                from sklearn.ensemble import RandomForestClassifier
                 # Fix random_state for reproducibility; can be set to None for random seed
                 self.classifier = RandomForestClassifier(n_estimators=100, n_jobs=-1, random_state=0)
                 self.classifier.fit(features, targets)

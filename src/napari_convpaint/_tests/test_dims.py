@@ -1,7 +1,5 @@
 from napari_convpaint.convpaint_widget import ConvpaintWidget
-from napari_convpaint.testing_utils import generate_synthetic_square, generate_synthetic_circle_annotation
 import numpy as np
-import os
 
 def test_3d_single_channel(make_napari_viewer, capsys):
     """A 3D stack where 3rd dim is z or t"""
@@ -9,6 +7,7 @@ def test_3d_single_channel(make_napari_viewer, capsys):
     multid_3d = np.stack([(i+1) * np.random.randint(0, 255, (100,100)) for i in range(3)], axis=0)
     viewer = make_napari_viewer()
     my_widget = ConvpaintWidget(viewer)
+    my_widget.ensure_init()
     viewer.add_image(multid_3d)
 
     # my_widget.rgb_img = False
@@ -53,6 +52,7 @@ def test_3d_multi_channel(make_napari_viewer, capsys):
     multid_3d = np.stack([(i+1) * np.random.randint(0, 255, (100,100)) for i in range(3)], axis=0)
     viewer = make_napari_viewer()
     my_widget = ConvpaintWidget(viewer)
+    my_widget.ensure_init()
     viewer.add_image(multid_3d)
 
     # my_widget.rgb_img = False
@@ -87,6 +87,7 @@ def test_RGB(make_napari_viewer, capsys):
     multid_rgb = np.stack([np.random.randint(0, 255, (side_len, side_len), dtype=np.uint8) for i in range(3)], axis=2)
     viewer = make_napari_viewer()
     my_widget = ConvpaintWidget(viewer)
+    my_widget.ensure_init()
     viewer.add_image(multid_rgb)
 
     # my_widget.rgb_img = True
@@ -130,6 +131,7 @@ def test_RGBA(make_napari_viewer, capsys):
     rgba = np.random.randint(0, 255, (side_len, side_len, 4), dtype=np.uint8)
     viewer = make_napari_viewer()
     my_widget = ConvpaintWidget(viewer)
+    my_widget.ensure_init()
     viewer.add_image(rgba)
 
     # Napari should detect this as RGB
@@ -167,6 +169,7 @@ def test_4d_image(make_napari_viewer, capsys):
 
     viewer = make_napari_viewer()
     my_widget = ConvpaintWidget(viewer)
+    my_widget.ensure_init()
     viewer.add_image(multid_c_t)
 
     # my_widget.rgb_img = False
@@ -232,6 +235,7 @@ def test_RGBT_image(make_napari_viewer, capsys):
 
     viewer = make_napari_viewer()
     my_widget = ConvpaintWidget(viewer)
+    my_widget.ensure_init()
     viewer.add_image(multid_rgb_t)
 
     # my_widget.rgb_img = True
@@ -339,6 +343,7 @@ def test_incompatible_image_on_startup(make_napari_viewer):
 
     # Plugin should load without crashing even though a 5D image is selected
     my_widget = ConvpaintWidget(viewer)
+    my_widget.ensure_init()
     assert my_widget is not None
 
     # The widget should still be functional - adding a compatible image later should work

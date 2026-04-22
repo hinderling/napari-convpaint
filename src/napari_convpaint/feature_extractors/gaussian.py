@@ -1,12 +1,13 @@
 import skimage
 import numpy as np
-from ..feature_extractor import FeatureExtractor
 
 AVAILABLE_MODELS = ['gaussian_features']
 
 STD_MODELS = {
     "gaussian": {"fe_name": "gaussian_features"},
 }
+
+from ..feature_extractor import FeatureExtractor
 
 class GaussianFeatures(FeatureExtractor):
     """A simple feature extractor that applies a Gaussian filter to the input image."""

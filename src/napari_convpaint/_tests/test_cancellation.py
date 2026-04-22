@@ -214,7 +214,7 @@ def test_widget_async_worker_completes_without_main_thread_violation(make_napari
     import time
     from qtpy.QtWidgets import QApplication
     from napari_convpaint.convpaint_widget import ConvpaintWidget
-    from napari_convpaint.testing_utils import (
+    from napari_convpaint.testing_data import (
         generate_synthetic_square,
         generate_synthetic_circle_annotation,
     )
@@ -229,6 +229,7 @@ def test_widget_async_worker_completes_without_main_thread_violation(make_napari
     try:
         viewer = make_napari_viewer()
         widget = ConvpaintWidget(viewer)
+        widget.ensure_init()
         # Swap to a cheap CPU-only feature extractor so the test finishes
         # quickly; the bug we're guarding against is about Qt thread affinity,
         # not about the specific FE choice.
