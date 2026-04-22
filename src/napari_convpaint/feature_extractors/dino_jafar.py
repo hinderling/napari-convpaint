@@ -102,6 +102,11 @@ class DinoJafarFeatures(FeatureExtractor):
         return ("DINOv2 + JAFAR upsampler feature extractor\n"
                 "Patch size 14, overlap blending, CPU-accumulated HR features.")
 
+    def has_global_context(self):
+        # DINOv2 ViT backbone: self-attention over all patches. Tile features
+        # can never match whole-image features at any finite padding.
+        return True
+
     def get_default_params(self, param=None):
         param = super().get_default_params(param)
         param.fe_scalings = [1] # [1,8,14]

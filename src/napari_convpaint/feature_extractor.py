@@ -188,6 +188,33 @@ class FeatureExtractor:
         """
         return self.patch_size
 
+    def get_total_stride(self):
+        """
+        Total internal downsampling up to the deepest selected layer (product of
+        all stride-like operations, e.g. MaxPool kernel sizes in a CNN).
+        Input spatial dims must be multiples of this for deeper feature maps
+        to upsample cleanly back to input resolution; otherwise the upsample
+        ratio and align_corners=False sampling positions differ between
+        processing the whole image and processing a sub-window of it.
+
+        Returns:
+        ----------
+        total_stride : int
+            Default 1 — override in subclasses that downsample internally.
+        """
+        return 1
+
+    def has_global_context(self):
+        """
+        True if the FE contains operators that inject global (whole-input)
+        context into per-pixel features — e.g. AdaptiveAvgPool2d inside SE
+        blocks (EfficientNet), attention across all patches (ViT-like), etc.
+        For such FEs, tile_annotations / tile_image cannot match whole-image
+        features at any finite padding because each output pixel depends on
+        the entire input. Default False.
+        """
+        return False
+
     def get_num_input_channels(self):
         """
         Get the number of input channels that the model expects.

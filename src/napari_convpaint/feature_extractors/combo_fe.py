@@ -99,6 +99,14 @@ class ComboFeatures(FeatureExtractor):
         ps2 = self.model2.get_patch_size()
         self.patch_size = lcm(ps1, ps2)
         return self.patch_size
+
+    def get_total_stride(self):
+        s1 = self.model1.get_total_stride()
+        s2 = self.model2.get_total_stride()
+        return lcm(s1, s2)
+
+    def has_global_context(self):
+        return self.model1.has_global_context() or self.model2.has_global_context()
     
     def gives_patched_features(self):
         # Since we want to combine, we always rescale to image size, even if the models are patched

@@ -486,11 +486,19 @@ def pad_to_shape(feat, target_shape):
     return np.pad(feat, pad, mode='constant')
 
 
-def crop_to_shape(arr, target_shape):
+def align_up(val, alignment):
+    """Smallest multiple of `alignment` that is >= `val`. Alignment must be >= 1."""
+    return ((val + alignment - 1) // alignment) * alignment
+
+
+def crop_to_shape(arr, target_shape, crop_top=None, crop_left=None):
     """
-    Crops the spatial dimensions (last two) of `arr` symmetrically to match `target_shape`.
-    In case of odd number of pixels to remove, top and left crops are 1 larger than bottom and right
-    to reverse a prior reduction that removed more from bottom/right (from reduce_to_patch_multiple).
+    Crops the spatial dimensions (last two) of `arr` to match `target_shape`.
+
+    If `crop_top` / `crop_left` are given (for inverting an asymmetric pad),
+    they're used directly — the bottom/right crop is whatever's left. Without
+    them, crops symmetrically with top/left one larger on odd deltas (inverts
+    `reduce_to_patch_multiple` which removes more from bottom/right).
 
     Parameters
     ----------
@@ -498,6 +506,8 @@ def crop_to_shape(arr, target_shape):
         Input array with spatial dimensions in the last two axes.
     target_shape : tuple
         Desired shape for the last two dimensions: (..., H_target, W_target)
+    crop_top, crop_left : int, optional
+        Explicit top/left crop amounts (for inverting asymmetric pads).
 
     Returns
     -------
@@ -513,10 +523,15 @@ def crop_to_shape(arr, target_shape):
     crop_h = current_h - target_h
     crop_w = current_w - target_w
 
-    crop_top = (crop_h + 1) // 2  # top gets more when odd
+    if crop_top is None:
+        crop_top = (crop_h + 1) // 2  # top gets more when odd
+    if crop_left is None:
+        crop_left = (crop_w + 1) // 2
     crop_bottom = crop_h - crop_top
-    crop_left = (crop_w + 1) // 2  # left gets more when odd
-    crop_right = crop_w - crop_left
+    crop_right  = crop_w - crop_left
+
+    assert crop_bottom >= 0 and crop_right >= 0, \
+        f"crop_top/left {crop_top},{crop_left} exceed delta {crop_h},{crop_w}"
 
     h_end = -crop_bottom if crop_bottom > 0 else None
     w_end = -crop_right if crop_right > 0 else None
@@ -565,7 +580,7 @@ def get_annot_planes(img, annot=None, coords=None):
         coords_planes = None
     return img_planes, annot_planes, coords_planes
 
-def tile_annot(img, annot, coords, padding, plot_tiles=False):
+def tile_annot(img, annot, coords, padding, alignment=1, plot_tiles=False):
     """
     Tile the image and annotations into patches of the size of the annotations.
     Takes a number of pixels equal to 'padding' more than the bounding box of the annotation.
@@ -581,6 +596,11 @@ def tile_annot(img, annot, coords, padding, plot_tiles=False):
         Padding size to be added to the bounding box of the annotation.
         If an int is provided, it is applied to all sides.
         If a tuple is provided, it should be of the form (pad_top, pad_bottom, pad_left, pad_right).
+    alignment : int, optional
+        Snap each tile's top/left origin down and its height/width up to the next
+        multiple of `alignment`. Must match the FE's effective downsampling factor
+        (patch_size * total_stride * lcm(scalings)) for tile-level features to
+        align with whole-image features. Default 1 (no alignment).
 
     Returns:
     ----------
@@ -600,7 +620,7 @@ def tile_annot(img, annot, coords, padding, plot_tiles=False):
         pad_bottom, pad_right = padding # And pad the same on both sides
     else:
         raise ValueError(f"Padding must be an int or a tuple of 2 or 4 ints, got {padding}.")
-    
+
     # Find the bounding boxes of the annotations
     annot_regions = skimage.morphology.label(annot > 0)
     regions = skimage.measure.regionprops(annot_regions)
@@ -613,7 +633,9 @@ def tile_annot(img, annot, coords, padding, plot_tiles=False):
     if plot_tiles:
         im_to_show = img[0,0,...].copy()
         im_to_show[annot[0]>0] = 0
-    
+
+    img_h, img_w = img.shape[-2], img.shape[-1]
+
     for region in regions:
         # Get the bounding box of the annotation
         z_min, y_min, x_min, z_max, y_max, x_max = region.bbox
@@ -629,6 +651,18 @@ def tile_annot(img, annot, coords, padding, plot_tiles=False):
         y_max += pad_bottom
         x_min -= pad_left
         x_max += pad_right
+
+        # Snap tile bounds to the FE's downsampling grid. The origin is floored
+        # and the far edge is ceiled to the next multiple of `alignment`, so the
+        # MaxPool windowing inside the tile matches the whole-padded-image pass
+        # and the upsample ratio is an exact integer. Bounds are also clamped to
+        # the image; since `_get_overall_paddings` now pads the whole image to a
+        # multiple of `alignment`, clamping preserves the grid alignment too.
+        if alignment > 1:
+            y_min = max(0, (y_min // alignment) * alignment)
+            x_min = max(0, (x_min // alignment) * alignment)
+            y_max = min(img_h, align_up(y_max, alignment))
+            x_max = min(img_w, align_up(x_max, alignment))
 
         if plot_tiles:
             # Draw the bounding box WITH PADDING on the image

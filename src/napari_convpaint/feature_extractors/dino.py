@@ -52,6 +52,12 @@ class DinoFeatures(FeatureExtractor):
         desc += "\n(The small version is used, with registers and patch size 14x14.)"
         return desc
 
+    def has_global_context(self):
+        # ViT self-attention spans all patches, so every output patch's feature
+        # depends on the entire input — no finite padding makes tile features
+        # match whole-image features.
+        return True
+
     def get_default_params(self, param=None):
         param = super().get_default_params(param=param)
         param.fe_name = self.model_name

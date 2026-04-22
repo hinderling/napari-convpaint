@@ -70,6 +70,8 @@ class Hookmodel(FeatureExtractor):
         self.init_layer_dict()
 
         self.outputs = []
+        # Cached (RF, stride, has_global_context) — invalidated when hooks are (re)registered.
+        self._fe_properties_cache = None
         if layers is not None:
             self.register_hooks(layers)
         else:
@@ -166,8 +168,62 @@ class Hookmodel(FeatureExtractor):
             return layers
     
     def get_padding(self):
-        ks, depth = self.get_max_kernel_size_and_depth()
-        return ks * depth // 2  # Padding established empirically to avoid significant edge effects
+        # Rigorous half-receptive-field bound: `floor(RF / 2)` — the minimum
+        # context around an image pixel so its deepest selected feature equals
+        # the infinite-image answer. `_get_overall_paddings` separately snaps
+        # the padding up to a multiple of `get_total_stride()`.
+        return self._fe_properties()[0] // 2
+
+    def get_total_stride(self):
+        # Product of MaxPool kernel sizes and Conv2d strides up to the deepest
+        # selected layer. Input dims must be a multiple of this for tile-level
+        # feature extraction to align with whole-image extraction.
+        return self._fe_properties()[1]
+
+    def has_global_context(self):
+        # True if an AdaptiveAvgPool2d / AdaptiveMaxPool2d sits on the path to
+        # the deepest selected layer (e.g. SE blocks in EfficientNet). Such
+        # operators give every output pixel dependence on the entire input —
+        # no finite padding makes tile features match whole-image features.
+        return self._fe_properties()[2]
+
+    def _fe_properties(self):
+        """Cached `(receptive_field, total_stride, has_global_context)` from a
+        single module-dict walk. Invariant once `register_hooks` has run."""
+        if self._fe_properties_cache is None:
+            self._fe_properties_cache = self._compute_fe_properties()
+        return self._fe_properties_cache
+
+    def _compute_fe_properties(self):
+        """Walk the network in execution order, accumulating receptive field,
+        total stride, and whether any global-context op was encountered, up to
+        and including the deepest selected layer. RF grows by `(k-1) * stride`
+        on Conv2d/MaxPool/AvgPool; stride multiplies by `s` on strided Conv2d
+        and pooling."""
+        if len(self.selected_layers) == 0:
+            return 1, 1, False
+        rf = 1
+        stride = 1
+        has_global = False
+        latest_layer = self.module_dict[self.selected_layers[-1]]
+        for _, curr_layer in self.module_dict.items():
+            if isinstance(curr_layer, (nn.AdaptiveAvgPool2d, nn.AdaptiveMaxPool2d)):
+                has_global = True
+            k = s = None
+            if isinstance(curr_layer, nn.Conv2d):
+                k = curr_layer.kernel_size[0] if isinstance(curr_layer.kernel_size, tuple) else curr_layer.kernel_size
+                s = curr_layer.stride[0] if isinstance(curr_layer.stride, tuple) else curr_layer.stride
+            elif isinstance(curr_layer, (nn.MaxPool2d, nn.AvgPool2d)) and hasattr(curr_layer, 'kernel_size'):
+                ks = curr_layer.kernel_size
+                st = curr_layer.stride if curr_layer.stride is not None else ks
+                k = ks[0] if isinstance(ks, tuple) else ks
+                s = st[0] if isinstance(st, tuple) else st
+            if k is not None:
+                rf = rf + (k - 1) * stride
+                stride = stride * s
+            if curr_layer is latest_layer:
+                break
+        return rf, stride, has_global
 
     def get_max_kernel_size_and_depth(self):
         """
@@ -248,6 +304,7 @@ class Hookmodel(FeatureExtractor):
         selected_layers = self.layers_to_keys(selected_layers)
         self.features_per_layer = []
         self.selected_layers = selected_layers.copy()
+        self._fe_properties_cache = None
         for ind in range(len(selected_layers)):
             self.features_per_layer.append(
                 self.module_dict[selected_layers[ind]].out_channels)
