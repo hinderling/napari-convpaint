@@ -8,10 +8,8 @@ from .combo_fe import ComboFeatures
 try:
     from .ilastik import IlastikFeatures
 except ImportError as e:
-    print(f"Ilastik feature extractor not available.")
     pass
 try:
     from .cellpose import CellposeFeatures
 except ImportError as e:
-    print(f"Cellpose feature extractor not available.")
     pass

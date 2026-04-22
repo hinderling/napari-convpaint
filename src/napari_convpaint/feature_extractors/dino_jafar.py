@@ -1,19 +1,29 @@
-import sys
 import warnings
 import numpy as np
 import torch
 import torch.nn.functional as F
 from ..utils import get_device_from_torch_model, guided_model_download
-from ..feature_extractor import FeatureExtractor
-from typing import List, Tuple
+from typing import List
 import copy
-from ..jafar.layers import PretrainedViTWrapper, JAFAR
+
+def import_vitwrapper_jafar():
+    try:
+        from ..jafar.layers import PretrainedViTWrapper, JAFAR
+    except ImportError:
+        return None
+
+    return {
+        "PretrainedViTWrapper": PretrainedViTWrapper,
+        "JAFAR": JAFAR,
+    }
 
 AVAILABLE_MODELS = ["dino_jafar_small"]
 
 STD_MODELS = {
     "dino-jafar": {"fe_name": "dino_jafar_small"},
 }
+
+from ..feature_extractor import FeatureExtractor
 
 class DinoJafarFeatures(FeatureExtractor):
     """
@@ -70,11 +80,19 @@ class DinoJafarFeatures(FeatureExtractor):
         jafar_ckpt = guided_model_download(jafar_file, jafar_url)
 
         # --- Load backbone ---
+        vitwrapper_jafar = import_vitwrapper_jafar()
+        if vitwrapper_jafar is None:
+            raise ImportError(
+                "JAFAR backbone could not be imported. If called through ConvpaintModel, this should not happen as the availability of JAFAR is checked before. " +
+                "Make sure to have the jafar module installed and available in your environment."
+            )
+        wrapper, head = vitwrapper_jafar["PretrainedViTWrapper"], vitwrapper_jafar["JAFAR"]
+        
         internal_names = {"dino_jafar_small": "vit_small_patch14_reg4_dinov2"}
-        backbone = PretrainedViTWrapper(name=internal_names[model_name]).to(device)
+        backbone = wrapper(name=internal_names[model_name]).to(device)
 
         # --- Instantiate JAFAR head ---
-        model = JAFAR(
+        model = head(
             input_dim=3,
             qk_dim=128,
             v_dim=384,
