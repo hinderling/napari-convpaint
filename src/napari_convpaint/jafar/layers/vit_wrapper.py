@@ -19,6 +19,10 @@ MODEL_LIST = [
     "vit_base_patch16_clip_384",
     "vit_base_patch16_siglip_512.v2_webli",
     "vit_base_patch16_224",
+    "vit_small_patch16_dinov3.lvd1689m",
+    "vit_small_plus_patch16_dinov3.lvd1689m",
+    "vit_base_patch16_dinov3.lvd1689m",
+    "vit_large_patch16_dinov3.lvd1689m",
 ]
 
 
@@ -29,6 +33,8 @@ def get_patch_size_channels(backbone_name):
         feats = 768
         if backbone_name == "vit_base_patch16_clip_384":
             feats = 384
+    elif "vit_large" in backbone_name:
+        feats = 1024
     else:
         raise ValueError(f"Backbone name {backbone_name} not supported")
 
@@ -51,6 +57,7 @@ class PretrainedViTWrapper(nn.Module):
         stride = None,
         dynamic_img_size: bool = True,
         dynamic_img_pad: bool = False,
+        checkpoint_path=None,
         **kwargs,
     ):
         super().__init__()
@@ -60,7 +67,7 @@ class PretrainedViTWrapper(nn.Module):
         self.patch_size = int(re.search(r"patch(\d+)", name).group(1))
         self.dynamic_img_size = dynamic_img_size
         self.dynamic_img_pad = dynamic_img_pad
-        self.model, self.config = self.create_model(name, **kwargs)
+        self.model, self.config = self.create_model(name, checkpoint_path=checkpoint_path, **kwargs)
         self.embed_dim = self.model.embed_dim
         self.norm = norm
 
@@ -113,15 +120,28 @@ class PretrainedViTWrapper(nn.Module):
     def last_layer_index(self) -> int:
         return self.num_blocks - 1
 
-    def create_model(self, name: str, **kwargs) -> Tuple[VisionTransformer, transforms.Compose]:
-        model = timm.create_model(
-            name,
-            pretrained=True,
-            num_classes=0,
-            dynamic_img_size=self.dynamic_img_size,
-            dynamic_img_pad=self.dynamic_img_pad,
-            **kwargs,
-        )
+    def create_model(self, name: str, checkpoint_path=None, **kwargs) -> Tuple[VisionTransformer, transforms.Compose]:
+        # If a local checkpoint is provided (DINOv3 path), load from there to avoid
+        # timm/huggingface_hub doing a silent background download.
+        if checkpoint_path is not None:
+            model = timm.create_model(
+                name,
+                pretrained=False,
+                num_classes=0,
+                dynamic_img_size=self.dynamic_img_size,
+                dynamic_img_pad=self.dynamic_img_pad,
+                checkpoint_path=checkpoint_path,
+                **kwargs,
+            )
+        else:
+            model = timm.create_model(
+                name,
+                pretrained=True,
+                num_classes=0,
+                dynamic_img_size=self.dynamic_img_size,
+                dynamic_img_pad=self.dynamic_img_pad,
+                **kwargs,
+            )
         model = model.eval()
         # Different models have different data configurations
         # e.g., their training resolution, normalization, etc, are different
