@@ -239,6 +239,79 @@ def test_save_model_dino(make_napari_viewer, capsys):
     assert os.path.exists('_tests/model_dir/test_model_dino.pkl')
 
 
+def _dinov3_supported():
+    """DINOv3 requires timm >= 1.0.20 (which added the architecture)."""
+    import timm
+    return 'vit_small_plus_patch16_dinov3' in timm.list_models()
+
+
+@pytest.mark.skipif(not _dinov3_supported(),
+                    reason="DINOv3 requires timm >= 1.0.20")
+def test_save_model_dinov3(make_napari_viewer, capsys):
+    imgs_dir = os.path.join(os.path.dirname(__file__), '_tests', 'test_imgs')
+    im = np.array(Image.open(os.path.join(imgs_dir, '0000_img.png')))
+    im_annot = np.array(Image.open(os.path.join(imgs_dir, '0000_scribbles_all_01500_w3.png')))
+    ground_truth = np.array(Image.open(os.path.join(imgs_dir, '0000_ground_truth.png')))
+
+    viewer = make_napari_viewer()
+    my_widget = ConvpaintWidget(viewer)
+    my_widget.ensure_init()
+    viewer.add_image(im)
+    my_widget._on_add_annot_layer()
+    my_widget.cp_model.set_params(channel_mode='rgb')
+
+    my_widget.qcombo_fe_type.setCurrentText('dinov3_vits16plus')
+    assert my_widget.qcombo_fe_type.currentText() == 'dinov3_vits16plus'
+
+    cp_model = my_widget.cp_model
+    cp_model._param.fe_scalings = [1]
+    cp_model._param.fe_order = 0
+    cp_model._param.fe_name = 'dinov3_vits16plus'
+    cp_model._param.fe_use_min_features = False
+    cp_model._param.tile_annotations = False
+    cp_model._param.image_downsample = 1
+    cp_model._param.normalize = 1
+    my_widget._update_gui_from_params()
+    my_widget.set_fe_btn.click()
+    assert cp_model._param.fe_scalings == [1]
+    assert cp_model._param.fe_name == 'dinov3_vits16plus'
+
+    viewer.layers['annotations'].data[...] = im_annot
+    my_widget._on_train()
+    my_widget._on_predict()
+    os.makedirs('_tests/model_dir', exist_ok=True)
+    my_widget._on_save_model(save_file='_tests/model_dir/test_model_dinov3.pkl')
+    assert my_widget.qcombo_fe_type.currentText() == 'dinov3_vits16plus'
+    assert os.path.exists('_tests/model_dir/test_model_dinov3.pkl')
+
+
+@pytest.mark.skipif(not _dinov3_supported(),
+                    reason="DINOv3 requires timm >= 1.0.20")
+def test_load_model_dinov3(make_napari_viewer, capsys):
+    if not os.path.exists('_tests/model_dir/test_model_dinov3.pkl'):
+        pytest.skip("test_model_dinov3.pkl not generated yet — run test_save_model_dinov3 first")
+
+    imgs_dir = os.path.join(os.path.dirname(__file__), '_tests', 'test_imgs')
+    im = np.array(Image.open(os.path.join(imgs_dir, '0000_img.png')))
+    ground_truth = np.array(Image.open(os.path.join(imgs_dir, '0000_ground_truth.png')))
+
+    viewer = make_napari_viewer()
+    my_widget = ConvpaintWidget(viewer)
+    my_widget.ensure_init()
+
+    viewer.add_image(im)
+    my_widget.cp_model.set_params(channel_mode='rgb')
+
+    my_widget._on_load_model(save_file='_tests/model_dir/test_model_dinov3.pkl')
+    assert my_widget.qcombo_fe_type.currentText() == 'dinov3_vits16plus'
+    my_widget._on_predict()
+
+    recovered = viewer.layers['segmentation'].data
+    precision, recall = compute_precision_recall(ground_truth, recovered)
+    assert precision > 0.8, f"Precision: {precision}, too low"
+    assert recall > 0.8, f"Recall: {recall}, too low"
+
+
 def test_cross_attention_matches_mha_reference():
     """Verify that the manual attention score computation in CrossAttention
     produces identical results to the original nn.MultiheadAttention.forward()

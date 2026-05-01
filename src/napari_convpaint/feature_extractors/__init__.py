@@ -1,4 +1,5 @@
 from .dino import DinoFeatures
+from .dinov3 import Dinov3Features
 from .dino_jafar import DinoJafarFeatures
 from .gaussian import GaussianFeatures
 from .nnlayers import Hookmodel
