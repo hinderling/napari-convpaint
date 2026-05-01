@@ -399,6 +399,54 @@ def test_dino_jafar_small_mps_rgb(make_napari_viewer, capsys):
     assert recall > 0.7, f"Recall: {recall}, too low"
 
 
+@pytest.mark.skipif(
+    not torch.backends.mps.is_available(),
+    reason="MPS device not available"
+)
+def test_dinov3_jafar_vits16plus_mps_rgb(make_napari_viewer, capsys):
+    """Test dinov3_jafar_vits16plus on MPS with an RGB image.
+
+    Mirror of test_dino_jafar_small_mps_rgb for the DINOv3 backbone.
+    """
+    imgs_dir = os.path.join(os.path.dirname(__file__), '_tests', 'test_imgs')
+    im = np.array(Image.open(os.path.join(imgs_dir, '0000_img.png')))
+    im_annot = np.array(Image.open(os.path.join(imgs_dir, '0000_scribbles_all_01500_w3.png')))
+
+    viewer = make_napari_viewer()
+    my_widget = ConvpaintWidget(viewer)
+    my_widget.ensure_init()
+    viewer.add_image(im)
+    my_widget._on_add_annot_layer()
+    my_widget.cp_model.set_params(channel_mode='rgb')
+
+    my_widget.qcombo_fe_type.setCurrentText('dinov3_jafar_vits16plus')
+    assert my_widget.qcombo_fe_type.currentText() == 'dinov3_jafar_vits16plus'
+
+    cp_model = my_widget.cp_model
+    cp_model._param.fe_scalings = [1]
+    cp_model._param.fe_order = 0
+    cp_model._param.fe_name = 'dinov3_jafar_vits16plus'
+    cp_model.lock_device("gpu", "fe")
+    cp_model._param.fe_use_min_features = False
+    cp_model._param.tile_annotations = False
+    cp_model._param.image_downsample = 1
+    cp_model._param.normalize = 1
+    my_widget._update_gui_from_params()
+    my_widget.set_fe_btn.click()
+
+    viewer.layers['annotations'].data[...] = im_annot
+    my_widget._on_train()
+    my_widget._on_predict()
+
+    recovered = viewer.layers['segmentation'].data
+    precision, recall = compute_precision_recall(
+        np.array(Image.open(os.path.join(imgs_dir, '0000_ground_truth.png'))),
+        recovered
+    )
+    assert precision > 0.7, f"Precision: {precision}, too low"
+    assert recall > 0.7, f"Recall: {recall}, too low"
+
+
 def test_load_model_dino(make_napari_viewer, capsys):
     # im, ground_truth = generate_synthetic_square(im_dims=(252,252), square_dims=(70,70))
     # im_annot = generate_synthetic_circle_annotation(im_dims=(252,252), circle1_xy=(125,70), circle2_xy=(125,125))
