@@ -26,28 +26,6 @@ MODEL_LIST = [
 ]
 
 
-def get_patch_size_channels(backbone_name):
-    if "vit_small" in backbone_name:
-        feats = 384
-    elif "vit_base" in backbone_name:
-        feats = 768
-        if backbone_name == "vit_base_patch16_clip_384":
-            feats = 384
-    elif "vit_large" in backbone_name:
-        feats = 1024
-    else:
-        raise ValueError(f"Backbone name {backbone_name} not supported")
-
-    if "patch14" in backbone_name:
-        patch_size = 14
-    elif "patch16" in backbone_name:
-        patch_size = 16
-    else:
-        raise ValueError(f"Backbone name {backbone_name} not supported")
-
-    return patch_size, feats
-
-
 class PretrainedViTWrapper(nn.Module):
 
     def __init__(
