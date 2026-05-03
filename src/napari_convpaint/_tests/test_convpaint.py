@@ -239,14 +239,6 @@ def test_save_model_dino(make_napari_viewer, capsys):
     assert os.path.exists('_tests/model_dir/test_model_dino.pkl')
 
 
-def _dinov3_supported():
-    """DINOv3 requires timm >= 1.0.20 (which added the architecture)."""
-    import timm
-    return 'vit_small_plus_patch16_dinov3' in timm.list_models()
-
-
-@pytest.mark.skipif(not _dinov3_supported(),
-                    reason="DINOv3 requires timm >= 1.0.20")
 def test_save_model_dinov3(make_napari_viewer, capsys):
     imgs_dir = os.path.join(os.path.dirname(__file__), '_tests', 'test_imgs')
     im = np.array(Image.open(os.path.join(imgs_dir, '0000_img.png')))
@@ -285,8 +277,6 @@ def test_save_model_dinov3(make_napari_viewer, capsys):
     assert os.path.exists('_tests/model_dir/test_model_dinov3.pkl')
 
 
-@pytest.mark.skipif(not _dinov3_supported(),
-                    reason="DINOv3 requires timm >= 1.0.20")
 def test_load_model_dinov3(make_napari_viewer, capsys):
     if not os.path.exists('_tests/model_dir/test_model_dinov3.pkl'):
         pytest.skip("test_model_dinov3.pkl not generated yet — run test_save_model_dinov3 first")

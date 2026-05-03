@@ -123,25 +123,17 @@ class PretrainedViTWrapper(nn.Module):
     def create_model(self, name: str, checkpoint_path=None, **kwargs) -> Tuple[VisionTransformer, transforms.Compose]:
         # If a local checkpoint is provided (DINOv3 path), load from there to avoid
         # timm/huggingface_hub doing a silent background download.
+        timm_kwargs = dict(
+            num_classes=0,
+            dynamic_img_size=self.dynamic_img_size,
+            dynamic_img_pad=self.dynamic_img_pad,
+            **kwargs,
+        )
         if checkpoint_path is not None:
-            model = timm.create_model(
-                name,
-                pretrained=False,
-                num_classes=0,
-                dynamic_img_size=self.dynamic_img_size,
-                dynamic_img_pad=self.dynamic_img_pad,
-                checkpoint_path=checkpoint_path,
-                **kwargs,
-            )
+            timm_kwargs.update(pretrained=False, checkpoint_path=checkpoint_path)
         else:
-            model = timm.create_model(
-                name,
-                pretrained=True,
-                num_classes=0,
-                dynamic_img_size=self.dynamic_img_size,
-                dynamic_img_pad=self.dynamic_img_pad,
-                **kwargs,
-            )
+            timm_kwargs["pretrained"] = True
+        model = timm.create_model(name, **timm_kwargs)
         model = model.eval()
         # Different models have different data configurations
         # e.g., their training resolution, normalization, etc, are different
