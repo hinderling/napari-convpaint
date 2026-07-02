@@ -33,7 +33,7 @@ import warnings
 
 @dataclass
 class _ActiveOp:
-    name: str  # 'train' | 'predict' | 'predict_all'
+    name: str  # 'train' | 'train_project' | 'predict' | 'predict_all' | 'features' | 'features_all'
     worker: object
     cancel_token: object  # CancelToken — not annotated as a forward ref so @dataclass doesn't try to resolve it at decoration time
     button: QPushButton
@@ -1362,8 +1362,11 @@ class ConvpaintWidget(QWidget):
         self._set_model_description()
 
         # Snapshot inputs on the main thread so the worker never touches UI state.
+        # Copy the annotations: the UI stays responsive during training, so the
+        # user could otherwise keep painting into the very array the worker is
+        # reading, yielding inconsistent features/targets.
         image_stack_norm = self._get_data_channel_first_norm(img)
-        annot_data = annot.data
+        annot_data = annot.data.copy()
         img_name = img.name
         in_channels = self._parse_in_channels(self.input_channels)
         fe_device = self.fe_device
@@ -1392,8 +1395,7 @@ class ConvpaintWidget(QWidget):
         worker.errored.connect(self._on_worker_errored)
         worker.finished.connect(self._on_worker_finished)
         self._begin_worker('train', self.train_classifier_btn, cancel_token, worker,
-                           desc='Training',
-                           disabled_buttons=[self.segment_btn, self.segment_all_btn])
+                           desc='Training')
 
     def _on_train_returned(self, _result):
         if self._op is not None and self._op.cancel_was_requested:
@@ -1414,8 +1416,18 @@ class ConvpaintWidget(QWidget):
             self._op.cancel_token.cancel()
         return True
 
+    def _other_op_buttons(self, current_button):
+        """All existing operation-launching buttons except the given one.
+        Some of these buttons are only created in certain configurations
+        (advanced mode, Files tab), hence the getattr."""
+        names = ['train_classifier_btn', 'segment_btn', 'segment_all_btn',
+                 'btn_add_features', 'btn_add_features_stack',
+                 'train_classifier_on_project_btn']
+        buttons = (getattr(self, n, None) for n in names)
+        return [b for b in buttons if b is not None and b is not current_button]
+
     def _begin_worker(self, name, button, cancel_token, worker,
-                      desc='', total=0, disabled_buttons=None):
+                      desc='', total=0):
         # Drain the delayed _on_select_layer QTimer before we start — otherwise
         # it fires mid-op during layer-data assignment and resets the classifier.
         # The old synchronous code got this flush for free from napari.utils.progress.
@@ -1432,7 +1444,10 @@ class ConvpaintWidget(QWidget):
             cancel_token=cancel_token,
             button=button,
             button_orig_text=button.text(),
-            disabled_buttons=list(disabled_buttons or []),
+            # Ops are mutually exclusive: all other op buttons are disabled
+            # while one is running (only the running op's button stays live,
+            # doubling as the Cancel button).
+            disabled_buttons=self._other_op_buttons(button),
         )
         button.setText('Cancel')
         for b in self._op.disabled_buttons:
@@ -1462,7 +1477,7 @@ class ConvpaintWidget(QWidget):
         self._reset_predict_buttons()
         if op.cancel_was_requested:
             show_info('Operation cancelled.')
-            if op.name == 'train' and self.current_model_path == 'in training':
+            if op.name in ('train', 'train_project') and self.current_model_path == 'in training':
                 self.current_model_path = 'not trained' if not self.trained else 'trained, unsaved'
                 self._set_model_description()
             return
@@ -1475,59 +1490,73 @@ class ConvpaintWidget(QWidget):
         # CancelledError is swallowed inside each worker body, so only real
         # failures reach here — napari's default error handler still displays
         # the traceback; we just tidy up the 'in training' label.
-        if self._op is not None and self._op.name == 'train' and self.current_model_path == 'in training':
+        if (self._op is not None and self._op.name in ('train', 'train_project')
+                and self.current_model_path == 'in training'):
             self.current_model_path = 'not trained' if not self.trained else 'trained, unsaved'
             self._set_model_description()
 
     def _on_train_on_project(self):
-        """Train classifier on all annotations in project.
+        """Button slot: train classifier on all annotations in project, or
+        cancel the in-progress training.
         !!!! Need to double-check if normalization is done correctly for projects !!!!"""
+        if self._handle_cancel_click('train_project'):
+            return
 
         num_files = len(self.project_widget.params.file_paths)
         if num_files == 0:
             raise Exception('No files found')
 
-        with warnings.catch_warnings():
-            warnings.simplefilter(action="ignore", category=FutureWarning)
-            self.viewer.window._status_bar._toggle_activity_dock(True)
-        
+        self.current_model_path = 'in training'
+        self._set_model_description()
+
+        # Collect the data on the main thread: stepping through the file list
+        # drives Qt-side layer loading, which must not happen from a worker.
+        # Only the actual training below runs on the worker thread.
+        # Disconnect the layer-removed guard while the file list swaps layers.
         self.viewer.layers.events.removed.disconnect(self._on_reset_convpaint)
-        with progress(total=0) as pbr:
-            pbr.set_description(f"Training")
-            self.current_model_path = 'in training'
-            # all_features, all_targets = [], []
+        try:
             all_imgs, all_annots = [], []
             in_channels = self._parse_in_channels(self.input_channels)
             for ind in range(num_files):
                 self.project_widget.file_list.setCurrentRow(ind)
                 image_stack_norm = self._get_data_channel_first_norm()
-                annots = self.annotation_layer_selection_widget.value.data
+                annots = self.annotation_layer_selection_widget.value.data.copy()
                 all_imgs.append(image_stack_norm)
                 all_annots.append(annots)
-                # in_channels = self._parse_in_channels(self.input_channels)
-                # features, targets = self.cp_model.get_features_current_layers(image_stack_norm, annots, in_channels=in_channels)
-                # if features is None:
-                    # continue
-                # all_features.append(features)
-                # all_targets.append(targets)
-            self.cp_model.train(all_imgs, all_annots, in_channels=in_channels, skip_norm=True,
-                                fe_use_device=self.fe_device, clf_use_device=self.clf_device)
-            # all_features = np.concatenate(all_features, axis=0)
-            # all_targets = np.concatenate(all_targets, axis=0)
+        finally:
+            self.viewer.layers.events.removed.connect(self._on_reset_convpaint)
 
-            # self.cp_model._clf_train(all_features, all_targets)
+        fe_device = self.fe_device
+        clf_device = self.clf_device
+        cp_model = self.cp_model
 
-            self.current_model_path = 'trained, unsaved'
-            self.trained = True
-            self._reset_predict_buttons()
-            # self.save_model_btn.setEnabled(True)
-            self._set_model_description()
+        from .utils import CancelToken, CancelledError
+        cancel_token = CancelToken()
 
-        with warnings.catch_warnings():
-            warnings.simplefilter(action="ignore", category=FutureWarning)
-            self.viewer.window._status_bar._toggle_activity_dock(False)
+        @thread_worker
+        def _do_train_project():
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter(action="ignore", category=FutureWarning)
+                    cp_model.train(all_imgs, all_annots, in_channels=in_channels, skip_norm=True,
+                                   fe_use_device=fe_device, clf_use_device=clf_device,
+                                   cancel_token=cancel_token)
+            except CancelledError:
+                return None
 
-        self.viewer.layers.events.removed.connect(self._on_reset_convpaint)
+        worker = _do_train_project()
+        worker.returned.connect(self._on_train_project_returned)
+        worker.errored.connect(self._on_worker_errored)
+        worker.finished.connect(self._on_worker_finished)
+        self._begin_worker('train_project', self.train_classifier_on_project_btn, cancel_token, worker,
+                           desc='Training')
+
+    def _on_train_project_returned(self, _result):
+        if self._op is not None and self._op.cancel_was_requested:
+            return
+        self.current_model_path = 'trained, unsaved'
+        self.trained = True
+        self._set_model_description()
 
     # Predict
 
@@ -1564,26 +1593,28 @@ class ConvpaintWidget(QWidget):
             except CancelledError:
                 return None
 
-        self._pending_predict_dims = data_dims
+        # Capture the target slice now: the UI stays responsive during the
+        # prediction, so the user may scroll the stack before the result
+        # arrives — it must land on the slice that was predicted, not the one
+        # viewed at completion time.
+        step = self.viewer.dims.current_step[-3] if data_dims in ['3D_single', '4D', '3D_RGB'] else None
+        self._pending_predict_ctx = (data_dims, step)
 
         worker = _do_predict()
         worker.returned.connect(self._on_predict_returned)
         worker.errored.connect(self._on_worker_errored)
         worker.finished.connect(self._on_worker_finished)
         self._begin_worker('predict', self.segment_btn, cancel_token, worker,
-                           desc='Prediction',
-                           disabled_buttons=[self.train_classifier_btn, self.segment_all_btn])
+                           desc='Prediction')
 
     def _on_predict_returned(self, result):
         cancelled = self._op is not None and self._op.cancel_was_requested
-        if cancelled or result is None:
-            self._pending_predict_dims = None
+        ctx = getattr(self, '_pending_predict_ctx', None)
+        self._pending_predict_ctx = None
+        if cancelled or result is None or ctx is None:
             return
         probas, segmentation = result
-        data_dims = getattr(self, '_pending_predict_dims', None)
-        self._pending_predict_dims = None
-
-        step = self.viewer.dims.current_step[-3] if data_dims in ['3D_single', '4D', '3D_RGB'] else None
+        data_dims, step = ctx
 
         if self.add_seg:
             self._check_create_segmentation_layer()
@@ -1605,37 +1636,54 @@ class ConvpaintWidget(QWidget):
             self.viewer.layers[self.proba_prefix].refresh()
 
     def _on_get_feature_image(self, event=None):
-        """Get the feature image for the currently viewed frame based
-        on the current feature extractor and show it in a new layer."""
+        """Button slot: start feature extraction for the currently viewed frame,
+        or cancel the running one."""
+        if self._handle_cancel_click('features'):
+            return
 
-        with warnings.catch_warnings():
-            warnings.simplefilter(action="ignore", category=FutureWarning)
-            self.viewer.window._status_bar._toggle_activity_dock(True)
+        data_dims = self._get_data_dims(self._get_selected_img())
+        if data_dims not in self.supported_data_dims:
+            warnings.warn(f'Non-supported image dimensions {data_dims}. Feature extraction not performed.')
+            return
 
-        with progress(total=0) as pbr:
-            pbr.set_description(f"Feature extraction")
+        # Snapshot inputs on the main thread so the worker never touches UI state.
+        image_plane = self._get_current_plane_norm()
+        in_channels = self._parse_in_channels(self.input_channels)
+        pca, kmeans = self._check_parse_pca_kmeans()
+        fe_device = self.fe_device
+        cp_model = self.cp_model
 
-            # Check dimensionality
-            data_dims = self._get_data_dims(self._get_selected_img())
-            if data_dims not in self.supported_data_dims:
-                warnings.warn(f'Non-supported image dimensions {data_dims}. Feature extraction not performed.')
-                return
+        from .utils import CancelToken, CancelledError
+        cancel_token = CancelToken()
 
-            # Get the data
-            image_plane = self._get_current_plane_norm()
-            in_channels = self._parse_in_channels(self.input_channels)
+        @thread_worker
+        def _do_features():
+            try:
+                return cp_model.get_feature_image(image_plane, in_channels=in_channels, skip_norm=True,
+                                                  pca_components=pca, kmeans_clusters=kmeans,
+                                                  use_device=fe_device, cancel_token=cancel_token)
+            except CancelledError:
+                return None
 
-            # Check and parse PCA and Kmeans parameters
-            pca, kmeans = self._check_parse_pca_kmeans()
+        # Capture the target slice now (see _on_predict for why).
+        step = self.viewer.dims.current_step[-3] if data_dims in ['3D_single', '4D', '3D_RGB'] else None
+        self._pending_features_ctx = (data_dims, step, kmeans)
 
-            # Get feature image; skip norm as it is done above
-            feature_image = self.cp_model.get_feature_image(image_plane, in_channels=in_channels, skip_norm=True,
-                                                            pca_components=pca, kmeans_clusters=kmeans,
-                                                            use_device=self.fe_device)
+        worker = _do_features()
+        worker.returned.connect(self._on_features_returned)
+        worker.errored.connect(self._on_worker_errored)
+        worker.finished.connect(self._on_worker_finished)
+        self._begin_worker('features', self.btn_add_features, cancel_token, worker,
+                           desc='Feature extraction')
 
-        with warnings.catch_warnings():
-            warnings.simplefilter(action="ignore", category=FutureWarning)
-            self.viewer.window._status_bar._toggle_activity_dock(False)
+    def _on_features_returned(self, result):
+        cancelled = self._op is not None and self._op.cancel_was_requested
+        ctx = getattr(self, '_pending_features_ctx', None)
+        self._pending_features_ctx = None
+        if cancelled or result is None or ctx is None:
+            return
+        data_dims, step, kmeans = ctx
+        feature_image = result
 
         # Check if we need to create a new features layer
         num_features = feature_image.shape[0] if not kmeans else 0
@@ -1647,7 +1695,6 @@ class ConvpaintWidget(QWidget):
         if data_dims in ['2D', '2D_RGB', '3D_multi']: # No stack dim
             self.viewer.layers[self.features_prefix].data = feature_image
         elif data_dims in ['3D_single', '4D', '3D_RGB']: # stack dim is third last
-            step = self.viewer.dims.current_step[-3]
             self.viewer.layers[self.features_prefix].data[..., step, :, :] = feature_image
         # Case `data_dims is None` and other invalid cases are already caught above, so we don't need an else statement here
         self.viewer.layers[self.features_prefix].refresh()
@@ -1699,8 +1746,7 @@ class ConvpaintWidget(QWidget):
         worker.errored.connect(self._on_worker_errored)
         worker.finished.connect(self._on_worker_finished)
         self._begin_worker('predict_all', self.segment_all_btn, cancel_token, worker,
-                           desc='Segmenting stack', total=num_steps,
-                           disabled_buttons=[self.train_classifier_btn, self.segment_btn])
+                           desc='Segmenting stack', total=num_steps)
 
     def _on_predict_all_yielded(self, value):
         step, probas, seg = value
@@ -1715,9 +1761,11 @@ class ConvpaintWidget(QWidget):
             self.viewer.layers[self.proba_prefix].data[..., step, :, :] = probas
             self.viewer.layers[self.proba_prefix].refresh()
 
-    def _on_get_feature_image_all(self):
-        """Get the feature image for all frames based
-        on the current feature extractor and show it in a new layer."""
+    def _on_get_feature_image_all(self, event=None):
+        """Button slot: start feature extraction for the whole stack,
+        or cancel the running one."""
+        if self._handle_cancel_click('features_all'):
+            return
 
         # Get the data
         img = self._get_selected_img(check=True)
@@ -1727,66 +1775,82 @@ class ConvpaintWidget(QWidget):
         if data_dims not in ['3D_single', '3D_RGB', '4D']:
             warnings.warn(f'Image stack has wrong dimensionality ({data_dims}) for processing stacks. Feature extraction not performed.')
             return
-        
-        # Start feature extraction
-        with warnings.catch_warnings():
-            warnings.simplefilter(action="ignore", category=FutureWarning)
-            self.viewer.window._status_bar._toggle_activity_dock(True)
 
-        # Get normalized stack data (entire stack, and stats prepared given the radio buttons)
+        # Snapshot inputs on the main thread so the worker never touches UI state.
         image_stack_norm = self._get_data_channel_first_norm(img) # Normalize the entire stack
         pca, kmeans = self._check_parse_pca_kmeans()
         in_channels = self._parse_in_channels(self.input_channels)
+        fe_device = self.fe_device
+        cp_model = self.cp_model
+        num_steps = image_stack_norm.shape[-3]
+
+        from .utils import CancelToken, CancelledError
+        cancel_token = CancelToken()
 
         if kmeans:
-            # Get feature image for entire stack; skip norm as it is done above
-            feature_image = self.cp_model.get_feature_image(image_stack_norm, in_channels=in_channels, skip_norm=True,
-                                                                pca_components=pca, kmeans_clusters=kmeans,
-                                                                use_device=self.fe_device)
+            # Kmeans needs the entire stack at once, so there is no per-slice
+            # progress; the result arrives as a whole via `returned`.
+            @thread_worker
+            def _do_features_all():
+                try:
+                    return cp_model.get_feature_image(image_stack_norm, in_channels=in_channels, skip_norm=True,
+                                                      pca_components=pca, kmeans_clusters=kmeans,
+                                                      use_device=fe_device, cancel_token=cancel_token)
+                except CancelledError:
+                    return None
 
-            # Check if we need to create a new features layer
-            # num_features = feature_image.shape[0] if not kmeans else 0
-            # self._check_create_features_layer(num_features)
-            self._check_create_features_layer(0)
-            # Set the flag to False, so we don't create a new layer every time
-            self.new_features = False
-            # Update features layer
-            self.viewer.layers[self.features_prefix].data = feature_image
+            worker = _do_features_all()
+            worker.returned.connect(self._on_features_all_returned)
+            total = 0
 
         else: # No kmeans, can do step-by-step to save memory (and show progress)
-            # Step through the stack and predict each image
-            num_steps = image_stack_norm.shape[-3]
-            for step in progress(range(num_steps)):
+            @thread_worker
+            def _do_features_all():
+                try:
+                    for step in range(num_steps):
+                        cancel_token.raise_if_cancelled()
+                        # Take the slice of the 3rd last dimension (since images are C, Z, H, W or Z, H, W)
+                        image = image_stack_norm[..., step, :, :]
+                        feature_image = cp_model.get_feature_image(image, in_channels=in_channels, skip_norm=True,
+                                                                   pca_components=pca, kmeans_clusters=kmeans,
+                                                                   use_device=fe_device, cancel_token=cancel_token)
+                        yield step, feature_image
+                except CancelledError:
+                    # Any slices already yielded stay in the features layer.
+                    return
 
-                # Take the slice of the 3rd last dimension (since images are C, Z, H, W or Z, H, W)
-                image = image_stack_norm[..., step, :, :]
+            worker = _do_features_all()
+            worker.yielded.connect(self._on_features_all_yielded)
+            total = num_steps
 
-                # Predict the current step; skip normalization as it is done above
-                # Get feature image; skip norm as it is done above
-                feature_image = self.cp_model.get_feature_image(image, in_channels=in_channels, skip_norm=True,
-                                                                pca_components=pca, kmeans_clusters=kmeans,
-                                                                use_device=self.fe_device)
+        worker.errored.connect(self._on_worker_errored)
+        worker.finished.connect(self._on_worker_finished)
+        self._begin_worker('features_all', self.btn_add_features_stack, cancel_token, worker,
+                           desc='Extracting features', total=total)
 
-                # In the first iteration, check if we need to create a new features layer
-                # (we need the information about the number of classes)
-                if step == 0:
-                    # Check if we need to create a new features layer
-                    num_features = feature_image.shape[0] if not kmeans else 0
-                    self._check_create_features_layer(num_features)
-                    # Set the flag to False, so we don't create a new layer every time
-                    self.new_features = False
+    def _on_features_all_returned(self, result):
+        """Handles the kmeans (whole-stack) variant of _on_get_feature_image_all."""
+        cancelled = self._op is not None and self._op.cancel_was_requested
+        if cancelled or result is None:
+            return
+        self._check_create_features_layer(0)
+        # Set the flag to False, so we don't create a new layer every time
+        self.new_features = False
+        # Update features layer
+        self.viewer.layers[self.features_prefix].data = result
+        self.viewer.layers[self.features_prefix].refresh()
 
-                # Add the slices to the segmentation and probabilities layers
-                # if kmeans:
-                #     self.viewer.layers[self.features_prefix].data[step] = feature_image
-                #     self.viewer.layers[self.features_prefix].refresh()
-                # else:
-                self.viewer.layers[self.features_prefix].data[..., step, :, :] = feature_image
-                self.viewer.layers[self.features_prefix].refresh()
-
-            with warnings.catch_warnings():
-                warnings.simplefilter(action="ignore", category=FutureWarning)
-                self.viewer.window._status_bar._toggle_activity_dock(False)
+    def _on_features_all_yielded(self, value):
+        step, feature_image = value
+        # In the first iteration, check if we need to create a new features layer
+        # (we need the information about the number of features)
+        if step == 0:
+            self._check_create_features_layer(feature_image.shape[0])
+            # Set the flag to False, so we don't create a new layer every time
+            self.new_features = False
+        # Add the slice to the features layer
+        self.viewer.layers[self.features_prefix].data[..., step, :, :] = feature_image
+        self.viewer.layers[self.features_prefix].refresh()
 
 
     # Load/Save
