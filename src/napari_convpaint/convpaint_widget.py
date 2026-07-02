@@ -1756,9 +1756,12 @@ class ConvpaintWidget(QWidget):
         unique_labels = unique_labels[unique_labels != 0]
         if len(unique_labels) < 2:
             if not mem_mode:
-                raise Exception('You need annotations for at least foreground and background')
+                raise Exception('Training requires annotations of at least 2 classes '
+                                '(e.g. foreground and background).')
             if self.cp_model.num_trainings == 0:
-                raise Exception('Model has not yet been trained. You need annotations for at least foreground and background')
+                raise Exception('Training requires annotations of at least 2 classes '
+                                '(e.g. foreground and background). With continuous training, '
+                                'a single class is only allowed once the model has been trained before.')
 
         # Check if annotations layer has correct shape for the chosen data type
         if not self._approve_annotations_layer_shape(annot, img):
@@ -1827,7 +1830,8 @@ class ConvpaintWidget(QWidget):
             self._op.button.setText('Cancelling…')
             self._op.button.setEnabled(False)
             if self._op.pbar is not None:
-                self._op.pbar.set_description('Cancelling…')
+                # No ellipsis here: napari appends ': ' after the description
+                self._op.pbar.set_description('Cancelling')
         return True
 
     def _other_op_buttons(self, current_button):
