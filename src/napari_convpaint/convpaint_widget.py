@@ -44,6 +44,7 @@ class _ActiveOp:
     button_orig_text: str
     disabled_buttons: list = field(default_factory=list)
     cancel_was_requested: bool = False
+    pbar: object = None  # napari progress bar, for switching to 'Cancelling…'
 
 
 class ConvpaintWidget(QWidget):
@@ -1816,9 +1817,17 @@ class ConvpaintWidget(QWidget):
         tell the caller to return without starting new work."""
         if self._op is None:
             return False
-        if self._op.name == op_name:
+        if self._op.name == op_name and not self._op.cancel_was_requested:
             self._op.cancel_was_requested = True
             self._op.cancel_token.cancel()
+            # Immediate feedback: the worker only stops at its next cancel
+            # checkpoint — an in-flight CatBoost fit or a single FE forward
+            # pass cannot be interrupted — so reflect that the cancel was
+            # registered and ignore further clicks until it takes effect.
+            self._op.button.setText('Cancelling…')
+            self._op.button.setEnabled(False)
+            if self._op.pbar is not None:
+                self._op.pbar.set_description('Cancelling…')
         return True
 
     def _other_op_buttons(self, current_button):
@@ -1854,6 +1863,7 @@ class ConvpaintWidget(QWidget):
             # while one is running (only the running op's button stays live,
             # doubling as the Cancel button).
             disabled_buttons=self._other_op_buttons(button),
+            pbar=pbar,
         )
         button.setText('Cancel')
         for b in self._op.disabled_buttons:
@@ -1872,6 +1882,7 @@ class ConvpaintWidget(QWidget):
         if op is None:
             return
         op.button.setText(op.button_orig_text)
+        op.button.setEnabled(True)  # was disabled while 'Cancelling…'
         # _reset_predict_buttons below re-decides segment/segment-all state based
         # on self.trained; the train button has no such gating, so restoring it
         # here unconditionally is what keeps it clickable after a predict run.
