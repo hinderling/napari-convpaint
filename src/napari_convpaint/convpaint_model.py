@@ -1260,12 +1260,15 @@ class ConvpaintModel:
         clf : CatBoostClassifier or RandomForestClassifier
             Trained classifier (also saved in the model instance)
         """
+        # NOTE: The new classifier is fit into a local variable and adopted as
+        # self.classifier only after a successful fit — a failed or cancelled
+        # fit must not clobber the previously trained classifier.
         if not use_rf:
             use_device = self.check_locked_device(use_device, part='clf')
             task_type = utils.get_catboost_device(use_device, warn=True)
             # Fixed seed for reproducibility; can be set to None for random seed
             from catboost import CatBoostClassifier
-            self.classifier = CatBoostClassifier(
+            clf = CatBoostClassifier(
                 iterations=self._param.clf_iterations,
                 learning_rate=self._param.clf_learning_rate,
                 depth=self._param.clf_depth,
@@ -1273,16 +1276,35 @@ class ConvpaintModel:
                 task_type=task_type,
                 random_seed=0,
             )
-            self.classifier.fit(features, targets)
+            fit_kwargs = {}
+            if task_type == 'CPU':
+                # Make the boosting loop cancellable: the callback checks the
+                # ambient cancel token after every iteration and stops the fit
+                # early when cancelled; the check_cancel() after fit then turns
+                # the (partially trained, to-be-discarded) result into a proper
+                # CancelledError. CatBoost only supports callbacks on CPU;
+                # GPU fits remain uninterruptible.
+                class _CancelFitCallback:
+                    def after_iteration(self, info):
+                        try:
+                            utils.check_cancel()
+                        except utils.CancelledError:
+                            return False  # stop the fit at this iteration
+                        return True
+                fit_kwargs['callbacks'] = [_CancelFitCallback()]
+            clf.fit(features, targets, **fit_kwargs)
+            utils.check_cancel() # Discard the partial fit if it was stopped by cancellation
+            self.classifier = clf
             self._param.classifier = 'CatBoost'
         else: # train a random forest classififer (does not support GPU)
                 from sklearn.ensemble import RandomForestClassifier
                 # Fix random_state for reproducibility; can be set to None for random seed
-                self.classifier = RandomForestClassifier(n_estimators=100, n_jobs=-1, random_state=0)
-                self.classifier.fit(features, targets)
+                # (sklearn has no fit callbacks, so an RF fit is uninterruptible)
+                clf = RandomForestClassifier(n_estimators=100, n_jobs=-1, random_state=0)
+                clf.fit(features, targets)
+                self.classifier = clf
                 self._param.classifier = 'RandomForest'
 
-        clf = self.classifier
         self.num_features = features.shape[1] if isinstance(features, np.ndarray) else features[0].shape[1] if isinstance(features, list) else None
         return clf
     
@@ -1312,12 +1334,23 @@ class ConvpaintModel:
         features = np.moveaxis(features, 0, -1)
         features = np.reshape(features, (-1, nb_features)) # flatten
 
-        # Predict
-        if return_proba:
-            predictions = self.classifier.predict_proba(features)
-            predictions = np.moveaxis(predictions, -1, 0) # [nb_classes, width*height]
+        # Predict in row chunks: a single predict/predict_proba call over a full
+        # plane (H*W rows) is one uninterruptible C call that can take many
+        # seconds on large images; chunking bounds the cancel latency to one
+        # chunk while producing bit-identical results.
+        chunk_size = 1_000_000
+        num_rows = features.shape[0]
+        predict_fn = self.classifier.predict_proba if return_proba else self.classifier.predict
+        if num_rows > chunk_size:
+            parts = []
+            for i in range(0, num_rows, chunk_size):
+                utils.check_cancel()
+                parts.append(predict_fn(features[i:i+chunk_size]))
+            predictions = np.concatenate(parts, axis=0)
         else:
-            predictions = self.classifier.predict(features)
+            predictions = predict_fn(features)
+        if return_proba:
+            predictions = np.moveaxis(predictions, -1, 0) # [nb_classes, width*height]
 
         return predictions
 
@@ -1845,10 +1878,18 @@ class ConvpaintModel:
 
             # Gather the results of the dask processes if enabled
             if use_dask:
+                from dask.distributed import TimeoutError as DaskTimeoutError
                 for k in range(len(processes)):
-                    utils.check_cancel()
                     future = processes[k]
-                    out = future.result()
+                    # Poll instead of blocking indefinitely, so a cancel is
+                    # honored while waiting for a tile that is still computing.
+                    while True:
+                        utils.check_cancel()
+                        try:
+                            out = future.result(timeout=1)
+                            break
+                        except DaskTimeoutError:
+                            continue
                     crop_out = out[...,
                         new_min_row_ind_collection[k]:new_max_row_ind_collection[k],
                         new_min_col_ind_collection[k]:new_max_col_ind_collection[k]]

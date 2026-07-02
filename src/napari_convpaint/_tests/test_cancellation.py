@@ -232,6 +232,39 @@ def test_ambient_token_does_not_leak_out_of_the_call():
     assert clf is not None
 
 
+def test_cancel_during_catboost_fit_preserves_classifier():
+    """The CatBoost fit itself is cancellable on CPU via a per-iteration
+    callback. A cancel that lands mid-fit must abort with CancelledError and
+    leave the previously trained classifier in place (the partial fit is
+    discarded, and self.classifier is only reassigned after a successful fit)."""
+    model = ConvpaintModel(fe_name='gaussian_features')
+    image, annot = _tiny_dataset()
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        model.train(image, annot)
+    first_clf = model.classifier
+    assert first_clf is not None
+
+    # Only a handful of checkpoints run before the fit (per-scale, per-Z,
+    # pre-fit), so n=20 lands inside the boosting loop's per-iteration
+    # callback checks (default 100 iterations).
+    token = _CancelOnNthCheck(n=20)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        with pytest.raises(CancelledError):
+            model.train(image, annot, cancel_token=token)
+    assert token._checks >= 20, "cancel checkpoints were never reached"
+    assert model.classifier is first_clf, (
+        "classifier changed after a cancelled fit — partial fit was adopted"
+    )
+
+    # And the model must still be retrainable afterwards
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        clf = model.train(image, annot)
+    assert clf is not None and clf is not first_clf
+
+
 def test_cancel_from_another_thread_aborts_train():
     """Cross-thread cancel: main thread calls cancel() while a worker runs train().
     Uses the auto-cancel token so the outcome is deterministic regardless of how
