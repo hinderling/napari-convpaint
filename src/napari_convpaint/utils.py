@@ -4,6 +4,7 @@ from contextlib import contextmanager
 import torch
 import numpy as np
 from scipy.ndimage import gaussian_filter
+from skimage.measure import block_reduce
 import skimage.transform
 import skimage.morphology as morph
 from joblib import Parallel, delayed
@@ -130,7 +131,7 @@ def guided_model_download(model_file: str, model_url: str, model_dir: str = None
     Parameters:
     ----------
     model_file : str
-        Filename to save (e.g. "dinov2_vits14_reg.pth").
+        Filename to save (e.g. "dinov2_small-reg.pth").
     model_url : str
         Direct URL to the model.
     model_dir : str
@@ -149,45 +150,55 @@ def guided_model_download(model_file: str, model_url: str, model_dir: str = None
     if os.path.exists(model_path):
         return model_path  # Already downloaded
 
-    # Try importing Napari tools
     use_napari = False
+    viewer = None
     try:
-        from napari.utils.progress import progress as napari_s
-        from napari.utils.notifications import show_info, shs
+        from napari.utils.progress import progress as napari_progress
+        from napari.utils.notifications import show_error
         import napari
-        if napari.current_viewer():
+        viewer = napari.current_viewer()
+        if viewer is not None:
             use_napari = True
     except ImportError:
-        pass  # Fall back to CLI mode
+        pass # Fall back to CLI progress if napari is not available
+
+    if use_napari:
+        viewer.window._status_bar._toggle_activity_dock(True)
 
     try:
-        if use_napari:
-            show_info(f"🔄 Downloading model weights: {model_file}")
-
         with requests.get(model_url, stream=True) as r:
             r.raise_for_status()
             total = int(r.headers.get('content-length', 0))
-            chunk_size = 8192
+            chunk_size = 256 * 1024  # large enough to keep tqdm's chunk counter short
             num_chunks = total // chunk_size + 1
+            update_every = max(1, num_chunks // 100)
 
             if use_napari:
-                progress_bar = napari_progress(total=num_chunks, desc=f"Downloading {model_file}")
+                pbr_ctx = napari_progress(total=num_chunks)
+                # No-op display() suppresses the activity-dock ETA label (which would
+                # otherwise overflow the row); the QProgressBar still advances via the
+                # 'value' event emitted by update().
+                pbr_ctx.display = lambda msg=None, pos=None: None
             else:
                 print(f"Downloading {model_file} ({total / 1e6:.2f} MB) from {model_url}...")
-                progress_bar = range(num_chunks)
+                pbr_ctx = None
 
-            with open(model_path, 'wb') as f:
-                for i, chunk in enumerate(r.iter_content(chunk_size=chunk_size)):
-                    if chunk:
-                        f.write(chunk)
-                    if use_napari:
-                        progress_bar.update(1)
-                    elif i % 50 == 0 or i == num_chunks - 1:
-                        print(f"  {min((i + 1) * chunk_size / total * 100, 100):.1f}% done", end="\r")
+            try:
+                if pbr_ctx is not None:
+                    pbr_ctx.set_description("Downloading weights")
 
-        # Confirm completion
-        if use_napari:
-            show_info(f"✅ Download completed: {model_file}")
+                with open(model_path, 'wb') as f:
+                    for i, chunk in enumerate(r.iter_content(chunk_size=chunk_size)):
+                        if chunk:
+                            f.write(chunk)
+                        if pbr_ctx is not None:
+                            if i % update_every == 0 or i == num_chunks - 1:
+                                pbr_ctx.update(update_every)
+                        elif i % 50 == 0 or i == num_chunks - 1:
+                            print(f"  {min((i + 1) * chunk_size / total * 100, 100):.1f}% done", end="\r")
+            finally:
+                if pbr_ctx is not None:
+                    pbr_ctx.close()
 
     except Exception as e:
         if use_napari:
@@ -201,13 +212,16 @@ def guided_model_download(model_file: str, model_url: str, model_dir: str = None
             print(f"Please manually download from:\n{model_url}")
             print(f"And place it in:\n{model_dir}")
         raise RuntimeError(f"Model download failed: {e}")
+    finally:
+        if use_napari:
+            viewer.window._status_bar._toggle_activity_dock(False)
 
     return model_path
 
 
 ### SCALING AND RESCALING
 
-def scale_img(image, scaling_factor, upscale=False, input_type="img"):
+def scale_img(image, scaling_factor, upscale=False, input_type="img", plot_result=False, use_gaussian_scaling=False):
     """
     Downscale an image by averaging over non-overlapping blocks of the specified size.
     OR Upscale by repeating the pixels.
@@ -223,6 +237,8 @@ def scale_img(image, scaling_factor, upscale=False, input_type="img"):
     input_type : str ("img", "labels", "coords")
         Type of the input image. Determines how to scale the image:
         If "img", use median, if "labels", use mode, if "coords", use max.
+    plot_result : bool
+        If True, plot the original and scaled images.
 
     Returns:
     ----------
@@ -246,36 +262,28 @@ def scale_img(image, scaling_factor, upscale=False, input_type="img"):
     
     # Else DOWNSCALE the image
 
-    # IMAGES by gaussian filter and striding
-    if input_type == 'img':
-        # Apply a small Gaussian blur to avoid aliasing
-        sigma = 0.4 * scaling_factor
-        sigma = [0] * (image.ndim - 2) + [sigma, sigma]  # Add zeros for batch and channel dimensions
-        blurred_img = gaussian_filter(image, sigma=sigma)  # assuming shape (..., H, W)
-        # Downsample by striding
-        H, W = image.shape[-2:]
-        start_h = (H % scaling_factor) // 2 # Move the start such that the image is centered
-        start_w = (W % scaling_factor) // 2 # Move the start such that the image is centered
-        scaled_img = blurred_img[..., start_h::scaling_factor, start_w::scaling_factor]
-        # from matplotlib import pyplot as plt
-        # fig, ax = plt.subplots(1, 3, figsize=(15, 5))
-        # ax[0].imshow(image[0,0,...], cmap='gray')
-        # ax[1].imshow(blurred_img[0,0,...], cmap='gray')
-        # ax[2].imshow(scaled_img[0,0,...], cmap='gray')
-        # plt.show()
-        return scaled_img
-
-    # For LABELS and COORDINATES, we slice/stack the image to apply the downscaling along new axes
-    # First, we pad to the next multiple of the scaling factor, distributing on each side (with 1 pixel more on bottom/right if uneven)
+    # Pad to the next multiple of the scaling factor,
+    # distributing on each side (with 1 pixel more on bottom/right if uneven)
     if image.shape[-2] % scaling_factor != 0 or image.shape[-1] % scaling_factor != 0:
-        # Calculate padding sizes
         pad_h = (scaling_factor - (image.shape[-2] % scaling_factor)) % scaling_factor
         pad_w = (scaling_factor - (image.shape[-1] % scaling_factor)) % scaling_factor
         pad_top, pad_left = pad_h // 2, pad_w // 2
         pad_bot, pad_right = pad_h - pad_top, pad_w - pad_left
         # Pad the image
         image = pad(image, (pad_top, pad_bot, pad_left, pad_right), input_type=input_type)
-    # Slice the last two dimensions
+    
+    # IMAGES
+    img_strings = ('img', 'image', 'images') # Allow some flexibility in the input type string for images (but pass 'img' downstream)
+    if input_type in img_strings:
+        input_type = 'img'
+        if not use_gaussian_scaling:
+            # NEW (default): use block_reduce with mean
+            return scale_with_block_mean(image, scaling_factor)
+        else:
+            # OLD: by gaussian filter and striding
+            return scale_with_gaussian(image, scaling_factor, plot_blurred=plot_result)
+
+    # For LABELS and COORDINATES, slice the last two dimensions
     slice_start = (0, 0) #((image.shape[-2] % scaling_factor) // 2,
                     #  (image.shape[-1] % scaling_factor) // 2)
     slice_size = (image.shape[-2] // scaling_factor * scaling_factor, # These should now be equal to image shape, since we padded ...
@@ -312,11 +320,13 @@ def scale_img(image, scaling_factor, upscale=False, input_type="img"):
         if len(classes_before) != len(classes_after):
             warnings.warn(f"Classes have changed after downscaling from {classes_before} to {classes_after}.")
 
-        # from matplotlib import pyplot as plt
-        # fig, ax = plt.subplots(1, 2, figsize=(10, 5))
-        # ax[0].imshow(image[0,...], cmap='gray')
-        # ax[1].imshow(scaled_img[0,...], cmap='gray')
-        # plt.show()
+        if plot_result:
+            from matplotlib import pyplot as plt
+            _, ax = plt.subplots(1, 2, figsize=(10, 5))
+            ax[0].imshow(image[0,...], cmap='gray')
+            ax[1].imshow(scaled_img[0,...], cmap='gray')
+            plt.show()
+        
         return scaled_img
 
     elif input_type == 'coords':
@@ -337,6 +347,57 @@ def scale_img(image, scaling_factor, upscale=False, input_type="img"):
     else:
         raise ValueError(f"Unknown input type: {input_type}. Supported types are 'img', 'labels', and 'coords'.")
     
+def scale_with_block_mean(image, scaling_factor):
+    """Rescale image by block-mean downsampling. Reads exactly `scaling_factor` input
+    pixels per output pixel — strictly local — so a sub-window aligned to
+    `scaling_factor` produces bit-identical features to the whole-image pass
+    at the same physical positions (no boundary-mode blur leak).
+    
+    Intended for use on images that have been padded to a multiple of `scaling_factor`.
+    But also works otherwise, in which case it centre-crops to a multiple of `scaling_factor` before block-reducing.
+    """
+    # `block_reduce` needs strided ndarray semantics; materialise dask etc.
+    image = np.asarray(image)
+    H, W = image.shape[-2:]
+    # Centre-crop to a multiple of `scaling_factor` (matches the prior
+    # centring behaviour). In convpaint's context images already get padded to
+    # a multiple the all scaling factor, so this is normally a no-op.
+    crop_h = H % scaling_factor
+    crop_w = W % scaling_factor
+    if crop_h or crop_w:
+        sh = crop_h // 2
+        sw = crop_w // 2
+        image = image[..., sh:H - (crop_h - sh), sw:W - (crop_w - sw)]
+    block_shape = (1,) * (image.ndim - 2) + (scaling_factor, scaling_factor)
+    return block_reduce(image, block_size=block_shape, func=np.mean)
+
+def scale_with_gaussian(image, scaling_factor, plot_blurred=False):
+    """Rescale image by Gaussian-blur + strided downsampling. The blur is intended to mitigate aliasing artifacts from the strided downsampling,
+    but it also causes some bleed across blocks, so features at a given position are influenced by a slightly larger area of the input image compared to block-mean downscaling.
+
+    Intended for use on images that have been padded to a multiple of `scaling_factor`.
+    But also works otherwise, in which case it centre-crops to a multiple of `scaling_factor` before block-reducing.
+    """
+    # Apply a small Gaussian blur to avoid aliasing
+    sigma = 0.4 * scaling_factor
+    sigma = [0] * (image.ndim - 2) + [sigma, sigma]  # Add zeros for batch and channel dimensions
+    blurred_img = gaussian_filter(image, sigma=sigma)  # assuming shape (..., H, W)
+    # Downsample by striding
+    H, W = image.shape[-2:]
+    start_h = scaling_factor // 2 # Move the start such that the image is centered (and with padding, the picked pixels align at the center of blocks)
+    start_w = scaling_factor // 2 # Move the start such that the image is centered (and with padding, the picked pixels align at the center of blocks)
+    scaled_img = blurred_img[..., start_h::scaling_factor, start_w::scaling_factor]
+
+    if plot_blurred:
+        from matplotlib import pyplot as plt
+        _, ax = plt.subplots(1, 3, figsize=(15, 5))
+        ax[0].imshow(image[0,0,...], cmap='gray')
+        ax[1].imshow(blurred_img[0,0,...], cmap='gray')
+        ax[2].imshow(scaled_img[0,0,...], cmap='gray')
+        plt.show()
+    
+    return scaled_img
+
 def fast_mode(arr, axis):
     """
     Fast mode pooling assuming integer values >= 0
@@ -424,7 +485,7 @@ def rescale_outputs(output_img, output_shape, order=0):
     return rescaled_output
 
 
-### CROPPING, PADDING, TILING & ANNOTATION EXTRACTION
+### CROPPING, PADDING, TILING & ANNOTATIONS EXTRACTION
 
 def reduce_to_patch_multiple(input, patch_size):
     """
@@ -544,12 +605,20 @@ def pad_to_shape(feat, target_shape):
         pad.append((pad_before, pad_after))
     return np.pad(feat, pad, mode='constant')
 
+def align_up(val, alignment):
+    """Smallest multiple of `alignment` that is >= `val`. Alignment must be >= 1."""
+    return ((val + alignment - 1) // alignment) * alignment
 
-def crop_to_shape(arr, target_shape):
+def crop_to_shape(arr, target_shape, crop_top=None, crop_left=None):
     """
-    Crops the spatial dimensions (last two) of `arr` symmetrically to match `target_shape`.
-    In case of odd number of pixels to remove, top and left crops are 1 larger than bottom and right
-    to reverse a prior reduction that removed more from bottom/right (from reduce_to_patch_multiple).
+    Crops the spatial dimensions (last two) of `arr` to match `target_shape`.
+
+    If `crop_top` / `crop_left` are given (for inverting an asymmetric pad),
+    they're used directly — the bottom/right crop is whatever's left. Without
+    them, crops symmetrically with bottom/right one larger on odd deltas (this
+    matches the old policy in `_get_overall_paddings`, and the fall backs policies in
+    `reduce_to_patch_multiple` which removes more from bottom/right and
+    `pad_to_shape` which gives bottom/right the extra pixel).
 
     Parameters
     ----------
@@ -557,6 +626,8 @@ def crop_to_shape(arr, target_shape):
         Input array with spatial dimensions in the last two axes.
     target_shape : tuple
         Desired shape for the last two dimensions: (..., H_target, W_target)
+    crop_top, crop_left : int, optional
+        Explicit top/left crop amounts (for inverting asymmetric pads).
 
     Returns
     -------
@@ -572,16 +643,20 @@ def crop_to_shape(arr, target_shape):
     crop_h = current_h - target_h
     crop_w = current_w - target_w
 
-    crop_top = (crop_h + 1) // 2  # top gets more when odd
+    if crop_top is None:
+        crop_top = crop_h // 2  # top gets the smaller half when odd; bottom gets the extra
+    if crop_left is None:
+        crop_left = crop_w // 2
     crop_bottom = crop_h - crop_top
-    crop_left = (crop_w + 1) // 2  # left gets more when odd
-    crop_right = crop_w - crop_left
+    crop_right  = crop_w - crop_left
+
+    assert crop_bottom >= 0 and crop_right >= 0, \
+        f"crop_top/left {crop_top},{crop_left} exceed delta {crop_h},{crop_w}"
 
     h_end = -crop_bottom if crop_bottom > 0 else None
     w_end = -crop_right if crop_right > 0 else None
 
     return arr[..., crop_top:h_end, crop_left:w_end]
-
 
 def get_annot_planes(img, annot=None, coords=None):
     """
@@ -594,15 +669,15 @@ def get_annot_planes(img, annot=None, coords=None):
     img : np.ndarray
         Input image to extract planes from. Must have spatial dimensions as the last two dimensions.
     annot : np.ndarray, optional
-        Input annotation to extract planes from. Must have spatial dimensions as the last two dimensions.
-        If None, all image planes and no annotation planes are returned.
+        Input annotations to extract planes from. Must have spatial dimensions as the last two dimensions.
+        If None, all image planes and no annotations planes are returned.
 
     Returns:
     ----------
     img_planes : list of np.ndarray
         List of image planes that contain annotations. If annot is None, all image planes are returned.
     annot_planes : list of np.ndarray or None
-        List of annotation planes from the input annotation. If annot is None, None is returned.
+        List of annotations planes from the input annotations. If annot is None, None is returned.
     coords : np.ndarray or None
         List of coordinates planes from the input coordinates. If coords is None, None is returned.
     """
@@ -624,7 +699,7 @@ def get_annot_planes(img, annot=None, coords=None):
         coords_planes = None
     return img_planes, annot_planes, coords_planes
 
-def tile_annot(img, annot, coords, padding, plot_tiles=False):
+def tile_annot(img, annot, coords, padding, alignment=1, plot_tiles=False):
     """
     Tile the image and annotations into patches of the size of the annotations.
     Takes a number of pixels equal to 'padding' more than the bounding box of the annotation.
@@ -635,18 +710,23 @@ def tile_annot(img, annot, coords, padding, plot_tiles=False):
     img : np.ndarray
         Input image to be tiled. Must have spatial dimensions as the last two dimensions.
     annot : np.ndarray
-        Input annotation to use for tiling. Must have spatial dimensions as the last two dimensions.
+        Input annotations to use for tiling. Must have spatial dimensions as the last two dimensions.
     padding : int or tuple
-        Padding size to be added to the bounding box of the annotation.
+        Padding size to be added to the bounding box of the annotations.
         If an int is provided, it is applied to all sides.
         If a tuple is provided, it should be of the form (pad_top, pad_bottom, pad_left, pad_right).
+    alignment : int, optional
+        Snap each tile's top/left origin down and its height/width up to the next
+        multiple of `alignment`. Must match the FE's effective downsampling factor
+        (patch_size * total_stride * lcm(scalings)) for tile-level features to
+        align with whole-image features. Default 1 (no alignment).
 
     Returns:
     ----------
     img_tiles : list of np.ndarray
         List of image tiles that contain the annotations.
     annot_tiles : list of np.ndarray
-        List of annotation tiles that contain the annotations.
+        List of annotations tiles that contain the annotations.
     """
     if isinstance(padding, int):
         pad_top, pad_bottom, pad_left, pad_right = (padding, padding, padding, padding)
@@ -659,7 +739,7 @@ def tile_annot(img, annot, coords, padding, plot_tiles=False):
         pad_bottom, pad_right = padding # And pad the same on both sides
     else:
         raise ValueError(f"Padding must be an int or a tuple of 2 or 4 ints, got {padding}.")
-    
+
     # Find the bounding boxes of the annotations
     annot_regions = skimage.morphology.label(annot > 0)
     regions = skimage.measure.regionprops(annot_regions)
@@ -672,7 +752,9 @@ def tile_annot(img, annot, coords, padding, plot_tiles=False):
     if plot_tiles:
         im_to_show = img[0,0,...].copy()
         im_to_show[annot[0]>0] = 0
-    
+
+    img_h, img_w = img.shape[-2], img.shape[-1]
+
     for region in regions:
         # Get the bounding box of the annotation
         z_min, y_min, x_min, z_max, y_max, x_max = region.bbox
@@ -688,6 +770,18 @@ def tile_annot(img, annot, coords, padding, plot_tiles=False):
         y_max += pad_bottom
         x_min -= pad_left
         x_max += pad_right
+
+        # Snap tile bounds to the FE's downsampling grid. The origin is floored
+        # and the far edge is ceiled to the next multiple of `alignment`, so the
+        # MaxPool windowing inside the tile matches the whole-padded-image pass
+        # and the upsample ratio is an exact integer. Bounds are also clamped to
+        # the image; since `_get_overall_paddings` now pads the whole image to a
+        # multiple of `alignment`, clamping preserves the grid alignment too.
+        if alignment > 1:
+            y_min = max(0, (y_min // alignment) * alignment)
+            x_min = max(0, (x_min // alignment) * alignment)
+            y_max = min(img_h, align_up(y_max, alignment))
+            x_max = min(img_w, align_up(x_max, alignment))
 
         if plot_tiles:
             # Draw the bounding box WITH PADDING on the image
@@ -1219,7 +1313,7 @@ def get_balanced_mask(ref_mask, tgt_mask):
     tgt_mask_balanced[tgt_idx[:, 0], tgt_idx[:, 1]] = True
     return tgt_mask_balanced
 
-def get_annotation_regions(annotation, d_edge=1):
+def get_annotations_regions(annotations, d_edge=1):
     """
     Given the annotation returns list of pixel masks for each of the following regions:
     1. all foreground pixels
@@ -1233,8 +1327,8 @@ def get_annotation_regions(annotation, d_edge=1):
 
     Parameters:
     ----------
-    annotation: 2d np.ndarray
-        annotation image, 1 is background, 2,3,... are foreground classes
+    annotations: 2d np.ndarray
+        annotations image, 1 is background, 2,3,... are foreground classes
     d_edge: int
         dilation factor for edge, by default 1
 
@@ -1246,23 +1340,23 @@ def get_annotation_regions(annotation, d_edge=1):
     """
 
     # 1. all foreground pixels
-    fg = annotation > 1
+    fg = annotations > 1
 
     # 2. all not foreground pixels
-    not_fg = annotation == 1
+    not_fg = annotations == 1
 
     # 3. at most as many randomly selected not-foreground pixels as foreground pixels
     not_fg_balanced = get_balanced_mask(ref_mask=fg, tgt_mask=not_fg)
 
     # 4. signal: union of foreground pixels shrank by 1 pixel for each of the foreground classes
     # signal = np.zeros_like(fg).astype(np.bool_)
-    # for c in range(2, annotation.max() + 1):
-    #    signal = signal | morph.binary_erosion(annotation == c, morph.cross(1))
+    # for c in range(2, annotations.max() + 1):
+    #    signal = signal | morph.binary_erosion(annotations == c, morph.cross(1))
     # parallel implementation with joblib of the three lines above:
     def erode(c):
-        return morph.binary_erosion(annotation == c)
+        return morph.binary_erosion(annotations == c)
 
-    signal = np.any(Parallel(n_jobs=-1)(delayed(erode)(c) for c in range(2, annotation.max() + 1)), axis=0)
+    signal = np.any(Parallel(n_jobs=-1)(delayed(erode)(c) for c in range(2, annotations.max() + 1)), axis=0)
 
     # 5. edge obtained by dilation of 4. by 1+d_edge pixels and than subtracting 4.
     edge_signal = morph.binary_dilation(signal, morph.disk(1 + d_edge))
@@ -1288,7 +1382,7 @@ def get_annotation_regions(annotation, d_edge=1):
 def extract_annotated_pixels(features, annotation, full_annotation=True):
     """
     Given a set of features and an annotation
-    if not full_annotation, select all pixels in annotations (values 1,2,...), record same class_id as annotation
+    if not full_annotation, select all pixels in annotations (values 1,2,...), record same class_id as annotations
     otherwise, select all pixels in annotations (values 2,3...; assumes 1 added to the original [0-bg, 1,2...signal
     annotation values]). targets set for signal: class_id=2, the same number of background pixels class_id=1,
     and the edge pixels class_id=3
@@ -1324,7 +1418,7 @@ def extract_annotated_pixels(features, annotation, full_annotation=True):
         targets_sel = annot_flat[annot_mask]
     else:
         # get masks for annotation regions
-        masks = get_annotation_regions(annotation)
+        masks = get_annotations_regions(annotation)
 
         # get signal, edge, and balanced background pixels
         signal = masks['signal']
