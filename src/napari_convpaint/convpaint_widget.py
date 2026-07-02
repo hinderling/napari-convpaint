@@ -38,7 +38,6 @@ from collections import defaultdict
 @dataclass
 class _ActiveOp:
     name: str  # 'train' | 'train_multiple' | 'predict' | 'predict_all' | 'features' | 'features_all' | 'segment_files'
-    worker: object
     cancel_token: object  # CancelToken — not annotated as a forward ref so @dataclass doesn't try to resolve it at decoration time
     button: QPushButton
     button_orig_text: str
@@ -1859,7 +1858,6 @@ class ConvpaintWidget(QWidget):
             worker.yielded.connect(pbar.increment_with_overflow)
         self._op = _ActiveOp(
             name=name,
-            worker=worker,
             cancel_token=cancel_token,
             button=button,
             button_orig_text=button.text(),
