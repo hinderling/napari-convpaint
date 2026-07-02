@@ -1715,7 +1715,11 @@ class ConvpaintModel:
         # Predict pixels based on the features and classifier
         # NOTE: We always first predict probabilities and then take the argmax
         feature_img = feature_img if isinstance(feature_img, list) else [feature_img]
-        predictions = [self._clf_predict(f, return_proba=True) for f in feature_img]
+        predictions = []
+        for f in feature_img:
+            utils.check_cancel()
+            predictions.append(self._clf_predict(f, return_proba=True))
+        utils.check_cancel() # Checkpoint before the (potentially large) reshaping
         # Reshape the predictions to the original image shape
         padded_shapes = self.padded_shapes # Saved when extracting features
         pre_pad_shapes = self.pre_pad_shapes # Saved when extracting features

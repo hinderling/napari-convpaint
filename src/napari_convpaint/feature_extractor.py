@@ -371,6 +371,17 @@ class FeatureExtractor:
         if not param.fe_scalings in self.get_proposed_scalings():
             warnings.warn(f"The selected scalings {param.fe_scalings} are not in the proposed scalings {self.proposed_scalings}. Please check if this is intentional.")
 
+        # Post-processing of extracted features (rescaling, device transfer) works
+        # on one array per channel-series/layer; checking between elements keeps
+        # cancellation responsive even for huge feature images (e.g. many-channel
+        # inputs), where a single rescale/transfer can take seconds.
+        def _rescale_all(feats, shape):
+            out = []
+            for f in feats:
+                check_cancel()
+                out.append(rescale_features(feature_img=f, target_shape=shape, order=param.fe_order))
+            return out
+
         # Iterate over the scales and extract features for each scale
         for s in param.fe_scalings:
             check_cancel()
@@ -405,11 +416,7 @@ class FeatureExtractor:
                 # NOTE: this should not be necessary if the inputs are already multiples of the patch size at all scales
                 if patch_size > 1 and reduced_shape[2:] != pre_reduction_shape[2:] :
                     # Step 1: rescale to the reduced (cropped to patch multiple) shape
-                    features = [rescale_features(
-                                    feature_img=f,
-                                    target_shape=reduced_shape,
-                                    order=param.fe_order)
-                                for f in features]
+                    features = _rescale_all(features, reduced_shape)
 
                     # Step 2: pad back to original pre_reduction_shape (but still downscaled)
                     features = [pad_to_shape(f, pre_reduction_shape[2:] ) for f in features]
@@ -417,18 +424,19 @@ class FeatureExtractor:
                 # Rescale to the full original shape
                 target_shape = data.shape
 
-            features = [rescale_features(
-                                feature_img=f,
-                                target_shape=target_shape,
-                                order=param.fe_order)
-                        for f in features]
+            features = _rescale_all(features, target_shape)
 
             # If torch tensor is returned, convert to numpy array
             if isinstance(features[0], torch.Tensor):
-                # Detach, move to cpu, make np array
-                features = [feature.detach().cpu().numpy() for feature in features]
-            
+                # Detach, move to cpu, make np array (checking between transfers)
+                converted = []
+                for feature in features:
+                    check_cancel()
+                    converted.append(feature.detach().cpu().numpy())
+                features = converted
+
             # Put together features for each input_channels procession (and layers if applicable)
+            check_cancel() # Last checkpoint before the (potentially large) concatenation
             features = np.concatenate(features, axis=0)
 
             # If use_min_features is True, shorten features
