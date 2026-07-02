@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from napari_convpaint.convpaint_model import ConvpaintModel
+from napari_convpaint.feature_extractors.gaussian import GaussianFeatures
 from napari_convpaint.utils import CancelToken, CancelledError
 
 
@@ -164,6 +165,71 @@ def test_cancel_in_memory_mode_leaves_state_retrainable():
         warnings.simplefilter('ignore')
         clf = model.train(image, annot, memory_mode=True, img_ids='img0')
     assert clf is not None, "retrain after cancel should succeed"
+
+
+class _OldSignatureFE(GaussianFeatures):
+    """Simulates a third-party FE written before cancellation existed: its
+    overrides use the pre-cancellation signatures (no cancel_token, no
+    **kwargs). Cancellation is carried by an ambient ContextVar, so such FEs
+    must keep working unmodified AND be cancellable through the base-class
+    loop checkpoints."""
+
+    def extract_features_pyramid(self, data, param, patched=True, device=None):
+        return super().extract_features_pyramid(data, param, patched=patched, device=device)
+
+    def extract_features_from_stack(self, image, device=None):
+        return super().extract_features_from_stack(image, device=device)
+
+
+def test_custom_fe_with_old_signature_still_works():
+    """A custom FE with pre-cancellation override signatures must neither crash
+    (TypeError from an unexpected cancel_token kwarg) nor lose cancellability."""
+    model = ConvpaintModel(fe_name='gaussian_features')
+    model.fe_model = _OldSignatureFE()
+    image, annot = _tiny_dataset()
+
+    # Trains fine without a token ...
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        clf = model.train(image, annot)
+    assert clf is not None
+
+    # ... and with one ...
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        clf = model.train(image, annot, cancel_token=CancelToken())
+    assert clf is not None
+
+    # ... and is still cancellable mid-run through the ambient token, even
+    # though the FE itself never sees or forwards it.
+    token = _CancelOnNthCheck(n=2)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        with pytest.raises(CancelledError):
+            model.train(image, annot, cancel_token=token)
+    assert token._checks >= 2, "ambient cancel_token was never checked with a legacy FE"
+
+
+def test_ambient_token_does_not_leak_out_of_the_call():
+    """After a cancelled call returns, the ambient token must be uninstalled —
+    a later call without a token must not see the stale cancelled one."""
+    from napari_convpaint.utils import check_cancel
+
+    model = ConvpaintModel(fe_name='gaussian_features')
+    image, annot = _tiny_dataset()
+
+    token = CancelToken()
+    token.cancel()
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        with pytest.raises(CancelledError):
+            model.train(image, annot, cancel_token=token)
+
+    check_cancel()  # must not raise: no ambient token installed anymore
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        clf = model.train(image, annot)  # must not be affected by the old token
+    assert clf is not None
 
 
 def test_cancel_from_another_thread_aborts_train():

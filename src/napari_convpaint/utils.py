@@ -1,4 +1,6 @@
+import contextvars
 import warnings
+from contextlib import contextmanager
 import torch
 import numpy as np
 from scipy.ndimage import gaussian_filter
@@ -39,7 +41,33 @@ class CancelToken:
             raise CancelledError()
 
 
-def check_cancel(cancel_token):
+# The active token is carried in a ContextVar rather than threaded through every
+# method signature. Entry points (ConvpaintModel.train/segment/... ) install the
+# token with cancel_scope(); any code below them — including custom
+# FeatureExtractor subclasses with pre-cancellation signatures — is covered by
+# the plain check_cancel() calls in the base-class loops without needing a
+# cancel_token parameter of its own. ContextVars are per-thread, so the token
+# installed by a worker thread is invisible to other threads; the shared
+# CancelToken object is what crosses threads (cancel() from the GUI thread,
+# checks in the worker).
+_current_cancel_token = contextvars.ContextVar("convpaint_cancel_token", default=None)
+
+
+@contextmanager
+def cancel_scope(cancel_token):
+    """Install `cancel_token` (may be None) as the ambient token for the duration."""
+    reset_token = _current_cancel_token.set(cancel_token)
+    try:
+        yield
+    finally:
+        _current_cancel_token.reset(reset_token)
+
+
+def check_cancel(cancel_token=None):
+    """Raise CancelledError if the given token — or, when None, the ambient
+    token installed by the innermost cancel_scope() — has been cancelled."""
+    if cancel_token is None:
+        cancel_token = _current_cancel_token.get()
     if cancel_token is not None:
         cancel_token.raise_if_cancelled()
 
