@@ -1004,7 +1004,63 @@ class ConvpaintModel:
             )
 
         return features
-    
+
+### FEATURE CACHE (optional; speeds the interactive annotate->predict loop)
+
+    def enable_feature_cache(self, enabled=True, max_bytes=None):
+        """Turn on whole-image feature caching. When on, the (resolution-
+        independent) native features of an extracted image are cached and reused
+        the next time the *same* image is processed with the same FE settings —
+        e.g. re-segmenting while refining scribbles, or the train->predict of one
+        image — instead of recomputing them. Cache entries are content-addressed
+        (a hash of the prepared image), so it is self-invalidating: a changed
+        image simply misses. Bounded by a memory budget (see FeatureCache), so it
+        is safe on stacks/movies. Off by default (opt-in)."""
+        from .feature_cache import FeatureCache
+        self._feature_cache = FeatureCache(max_bytes=max_bytes, enabled=enabled)
+        return self._feature_cache
+
+    def _fe_cache_signature(self, param):
+        """The FE-relevant part of the cache key: parameters whose change
+        invalidates extracted features (reusing the model's own train-reset set),
+        plus image_downsample and the FE's patch size."""
+        def _hashable(v):
+            # fe_scalings / fe_layers are lists -> make them hashable for the key.
+            if isinstance(v, list):
+                return tuple(_hashable(x) for x in v)
+            return v
+        keys = getattr(self, "_params_to_reset_training", [])
+        sig = tuple((k, _hashable(getattr(param, k, None))) for k in keys)
+        return sig + (("image_downsample", getattr(param, "image_downsample", 1)),
+                      ("patch_size", self.fe_model.get_patch_size()))
+
+    @staticmethod
+    def _data_hash(d):
+        """Content hash of a prepared image tile, so train/predict of the same
+        pixels share a cache entry without threading an id through the pipeline."""
+        import hashlib
+        arr = np.ascontiguousarray(d)
+        h = hashlib.blake2b(arr.view(np.uint8), digest_size=16)
+        h.update(str(arr.shape).encode())
+        h.update(str(arr.dtype).encode())
+        return h.hexdigest()
+
+    def _extract_pyramid_cached(self, d, param, keep_patched, device):
+        """Extract the feature pyramid for one image, consulting the feature
+        cache. Behaviour with the cache disabled (the default) is exactly
+        extract_features_pyramid; enabled, it caches/reuses the native features
+        (bit-identical output, since the pyramid split is exact)."""
+        cache = getattr(self, "_feature_cache", None)
+        fe = self.fe_model
+        if cache is None or not cache.enabled or not fe.supports_feature_cache(param):
+            return fe.extract_features_pyramid(d, param, patched=keep_patched, device=device)
+        key = (self._data_hash(d), self._fe_cache_signature(param))
+        payload = cache.get(key)
+        if payload is None:
+            payload = fe.cacheable_repr(d, param, device)
+            cache.put(key, payload, fe.cacheable_nbytes(payload))
+        return fe.features_from_cacheable(payload, d.shape, param, patched=keep_patched)
+
 ### BACKEND METHOD FOR FEATURE EXTRACTION
 
     def _get_features(self, data, annotations=None, restore_input_form=True,
@@ -1229,13 +1285,10 @@ class ConvpaintModel:
             supported_devices=self.fe_model.supported_devices(),
             warn=True,
         )
-        features = [self.fe_model.extract_features_pyramid(
-                d,
-                params_for_extract,
-                patched=keep_patched,
-                device=fe_runtime_device)
+        features = [self._extract_pyramid_cached(
+                d, params_for_extract, keep_patched, fe_runtime_device)
                     for d in data]
-        
+
         if pca_components:
             features = [utils.apply_pca_to_f_image(f, n_components=pca_components)
                         for f in features]
