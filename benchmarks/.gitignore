@@ -1,0 +1,6 @@
+# Downloaded ground-truth datasets are never committed.
+data/
+# Benchmark result artifacts.
+results/
+*.json
+!configs/*.json
