@@ -126,3 +126,55 @@ def test_model_feature_cache_identical_and_reuses():
     assert np.array_equal(off2, on2)
     # cache actually stored and served something
     assert m_on._feature_cache.stats()["hits"] >= 1
+
+
+def test_disk_spillover_serves_ram_evicted_entries():
+    """RAM-evicted entries spill to disk and are served from there (bit-identical)."""
+    c = FeatureCache(max_bytes=int(2.5 * 10**6), headroom_frac=0.0,
+                     disk_max_bytes=100 * 10**6)
+    a = _arr(1); b = _arr(1); d = _arr(1)
+    c.put(("a",), a); c.put(("b",), b)  # RAM full (2 entries)
+    c.put(("c",), d)  # evicts "a" from RAM -> spills to disk
+    assert len(c) == 2 and c.stats()["disk_entries"] == 1
+    got = c.get(("a",))  # RAM miss -> disk hit
+    assert got is not None and np.array_equal(got, a)  # round-trips bit-identical
+    assert c.stats()["disk_hits"] == 1
+
+
+def test_disk_lru_eviction_and_total_miss():
+    c = FeatureCache(max_bytes=int(1.5 * 10**6), headroom_frac=0.0,
+                     disk_max_bytes=int(1.5 * 10**6))  # RAM holds 1, disk holds 1
+    c.put(("a",), _arr(1)); c.put(("b",), _arr(1))  # a -> disk, b in RAM
+    c.put(("c",), _arr(1))  # b -> disk (evicts a from disk), c in RAM
+    assert c.get(("a",)) is None      # a fell off disk entirely -> recompute
+    assert c.get(("b",)) is not None  # b on disk
+    assert c.get(("c",)) is not None  # c in RAM
+
+
+def test_disk_disabled_by_default():
+    c = FeatureCache(max_bytes=int(1.5 * 10**6), headroom_frac=0.0)  # no disk
+    c.put(("a",), _arr(1)); c.put(("b",), _arr(1))  # a evicted, dropped (no disk)
+    assert c.get(("a",)) is None and c.stats()["disk_entries"] == 0
+
+
+def test_clear_removes_disk_tier_and_tempdir():
+    import os
+    c = FeatureCache(max_bytes=int(1.5 * 10**6), headroom_frac=0.0,
+                     disk_max_bytes=100 * 10**6)
+    c.put(("a",), _arr(1)); c.put(("b",), _arr(1))  # a on disk
+    disk_dir = c._disk_dir
+    assert disk_dir is not None and os.path.isdir(disk_dir)
+    c.clear()
+    assert c.stats()["disk_entries"] == 0 and c.disk_nbytes == 0
+    c.close()
+    assert not os.path.isdir(disk_dir)  # temp dir removed
+
+
+def test_disk_bytes_never_exceeds_cap():
+    """Stress: many puts must never push the disk tier over its byte cap."""
+    cap = int(3.5 * 10**6)  # ~3 entries of 1 MB
+    c = FeatureCache(max_bytes=int(1.5 * 10**6), headroom_frac=0.0, disk_max_bytes=cap)
+    for i in range(20):
+        c.put((i,), _arr(1))
+        assert c.disk_nbytes <= cap  # invariant holds after every put
+    c.close()

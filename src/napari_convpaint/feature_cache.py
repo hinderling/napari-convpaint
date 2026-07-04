@@ -23,6 +23,10 @@ payload.
 """
 from __future__ import annotations
 
+import os
+import pickle
+import shutil
+import tempfile
 from collections import OrderedDict
 
 try:
@@ -37,6 +41,9 @@ _DEFAULT_MAX_BYTES = 2 * 1024 ** 3  # 2 GiB
 # Keep at least this fraction of currently-available RAM free (never consume it
 # all with cache), as a safety headroom against OOM.
 _DEFAULT_HEADROOM_FRAC = 0.25
+# Never write disk-cache data that would leave less than this much free on the
+# target filesystem — so the disk cache can't fill the user's disk.
+_DISK_HEADROOM_BYTES = 2 * 1024 ** 3  # 2 GiB
 
 
 def _payload_nbytes(payload) -> int:
@@ -70,7 +77,9 @@ class FeatureCache:
 
     def __init__(self, max_bytes: int | None = None,
                  headroom_frac: float = _DEFAULT_HEADROOM_FRAC,
-                 enabled: bool = True):
+                 enabled: bool = True,
+                 disk_max_bytes: int = 0,
+                 disk_dir: str | None = None):
         self._store: "OrderedDict[tuple, tuple]" = OrderedDict()  # key -> (payload, nbytes)
         self._total_bytes = 0
         self._headroom_frac = float(headroom_frac)
@@ -83,6 +92,21 @@ class FeatureCache:
         self._max_bytes = int(max_bytes)
         self.hits = 0
         self.misses = 0
+        # --- disk spillover: a second, larger LRU tier on disk ---
+        # RAM-evicted entries spill here (pickled) instead of being dropped, up to
+        # `disk_max_bytes` (0 = off). get() checks RAM then disk. This mainly helps
+        # FEs whose cacheable payload can't be compressed to a small form (e.g. an
+        # upsampling FE that emits full-resolution features), where per-slice
+        # payloads are large and few fit in RAM: reading one back from disk is far
+        # cheaper than recomputing it, so a stack too large for the RAM tier still
+        # benefits on the next iteration.
+        self._disk_max_bytes = int(disk_max_bytes)
+        self._disk_dir = disk_dir            # a caller dir, or a temp dir made lazily
+        self._owns_disk_dir = disk_dir is None
+        self._disk_store: "OrderedDict[tuple, tuple]" = OrderedDict()  # key -> (path, nbytes)
+        self._disk_bytes = 0
+        self._disk_seq = 0
+        self.disk_hits = 0
 
     # -- budget helpers ----------------------------------------------------
 
@@ -105,16 +129,24 @@ class FeatureCache:
     # -- public API --------------------------------------------------------
 
     def get(self, key):
-        """Return the cached payload for `key`, or None. Marks it most-recent."""
+        """Return the cached payload for `key`, or None. Checks RAM, then the disk
+        tier. A disk hit returns the loaded payload but leaves it on disk (no
+        promote-and-thrash): the RAM tier holds the most recent entries, disk the
+        older ones."""
         if not self.enabled:
             return None
         item = self._store.get(key)
-        if item is None:
-            self.misses += 1
-            return None
-        self._store.move_to_end(key)  # most-recently-used
-        self.hits += 1
-        return item[0]
+        if item is not None:
+            self._store.move_to_end(key)  # most-recently-used
+            self.hits += 1
+            return item[0]
+        payload = self._load_from_disk(key)  # RAM miss -> try disk
+        if payload is not None:
+            self.hits += 1
+            self.disk_hits += 1
+            return payload
+        self.misses += 1
+        return None
 
     def put(self, key, payload, nbytes: int | None = None):
         """Store `payload` under `key` if it fits the budget; else evict LRU and
@@ -139,38 +171,144 @@ class FeatureCache:
         self._total_bytes += nbytes
 
     def _evict_one(self):
-        _, (_, nbytes) = self._store.popitem(last=False)  # LRU = oldest
+        key, (payload, nbytes) = self._store.popitem(last=False)  # LRU = oldest
         self._total_bytes -= nbytes
+        # Spill to the disk tier instead of dropping (if disk spillover is on).
+        self._spill_to_disk(key, payload, nbytes)
+
+    # -- disk tier ---------------------------------------------------------
+
+    def _ensure_disk_dir(self) -> str:
+        if self._disk_dir is None:
+            self._disk_dir = tempfile.mkdtemp(prefix="convpaint_fcache_")
+            self._owns_disk_dir = True
+        os.makedirs(self._disk_dir, exist_ok=True)
+        return self._disk_dir
+
+    def _safe_remove(self, path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+    def _remove_disk_entry(self, key):
+        item = self._disk_store.pop(key, None)
+        if item is not None:
+            path, nbytes = item
+            self._disk_bytes -= nbytes
+            self._safe_remove(path)
+
+    def _evict_disk_one(self):
+        key = next(iter(self._disk_store))  # LRU = oldest
+        self._remove_disk_entry(key)
+
+    def _spill_to_disk(self, key, payload, nbytes):
+        """Write an RAM-evicted payload to the disk tier (LRU-bounded). No-op if
+        disk spillover is off or the single payload exceeds the disk cap."""
+        if self._disk_max_bytes <= 0 or nbytes > self._disk_max_bytes:
+            return
+        self._remove_disk_entry(key)  # replace any stale copy
+        while self._disk_store and self._disk_bytes + nbytes > self._disk_max_bytes:
+            self._evict_disk_one()
+        if self._disk_bytes + nbytes > self._disk_max_bytes:
+            return
+        # Also never fill the actual filesystem below the free-space headroom.
+        try:
+            free = shutil.disk_usage(self._ensure_disk_dir()).free
+            if free - nbytes < _DISK_HEADROOM_BYTES:
+                return
+        except OSError:
+            pass
+        self._disk_seq += 1
+        path = os.path.join(self._ensure_disk_dir(), f"{self._disk_seq}.pkl")
+        try:
+            with open(path, "wb") as f:
+                pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+        except Exception:
+            self._safe_remove(path)
+            return
+        self._disk_store[key] = (path, nbytes)
+        self._disk_bytes += nbytes
+
+    def _load_from_disk(self, key):
+        item = self._disk_store.get(key)
+        if item is None:
+            return None
+        path, _ = item
+        try:
+            with open(path, "rb") as f:
+                payload = pickle.load(f)
+        except Exception:
+            self._remove_disk_entry(key)
+            return None
+        self._disk_store.move_to_end(key)  # mark recently used
+        return payload
+
+    def _clear_disk(self):
+        for path, _ in list(self._disk_store.values()):
+            self._safe_remove(path)
+        self._disk_store.clear()
+        self._disk_bytes = 0
+
+    # -- invalidation / limits --------------------------------------------
 
     def invalidate(self, predicate=None):
-        """Drop entries. With no predicate, clears everything; otherwise drops
-        keys for which `predicate(key)` is True (e.g. all entries of one img_id
-        when its data changed, or of a changed FE signature)."""
+        """Drop entries (both RAM and disk tiers). With no predicate, clears
+        everything; otherwise drops keys for which `predicate(key)` is True."""
         if predicate is None:
             self._store.clear()
             self._total_bytes = 0
+            self._clear_disk()
             return
         for key in [k for k in self._store if predicate(k)]:
             self._total_bytes -= self._store.pop(key)[1]
+        for key in [k for k in self._disk_store if predicate(k)]:
+            self._remove_disk_entry(key)
 
     def clear(self):
         self.invalidate(None)
 
     def set_max_bytes(self, max_bytes: int):
-        """Change the cap in place, evicting LRU entries if now over it."""
+        """Change the RAM cap in place, evicting (spilling) LRU entries if over."""
         self._max_bytes = int(max_bytes)
         while self._store and self._total_bytes > self._max_bytes:
             self._evict_one()
 
+    def set_disk_max_bytes(self, disk_max_bytes: int):
+        """Change the disk cap in place, evicting disk LRU if over (0 = off)."""
+        self._disk_max_bytes = int(disk_max_bytes)
+        if self._disk_max_bytes <= 0:
+            self._clear_disk()
+        else:
+            while self._disk_store and self._disk_bytes > self._disk_max_bytes:
+                self._evict_disk_one()
+
     def set_enabled(self, enabled: bool):
-        """Enable/disable in place; disabling clears the cache to free RAM."""
+        """Enable/disable in place; disabling clears both tiers to free space."""
         self.enabled = bool(enabled)
         if not self.enabled:
             self.clear()
 
+    def close(self):
+        """Free the disk tier and remove the temp directory this cache created."""
+        self._clear_disk()
+        if self._owns_disk_dir and self._disk_dir:
+            shutil.rmtree(self._disk_dir, ignore_errors=True)
+            self._disk_dir = None
+
+    def __del__(self):  # pragma: no cover - best-effort cleanup
+        try:
+            self.close()
+        except Exception:
+            pass
+
     @property
     def nbytes(self) -> int:
         return self._total_bytes
+
+    @property
+    def disk_nbytes(self) -> int:
+        return self._disk_bytes
 
     def __len__(self):
         return len(self._store)
@@ -180,6 +318,9 @@ class FeatureCache:
         return {
             "entries": len(self._store),
             "bytes": self._total_bytes,
+            "disk_entries": len(self._disk_store),
+            "disk_bytes": self._disk_bytes,
+            "disk_hits": self.disk_hits,
             "hits": self.hits,
             "misses": self.misses,
             "hit_rate": (self.hits / total) if total else 0.0,

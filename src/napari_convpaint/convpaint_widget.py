@@ -577,9 +577,19 @@ class ConvpaintWidget(QWidget):
             self.cache_max_ram_spinbox.setValue(self.cache_max_mb)
             self.advanced_cache_group.glayout.addWidget(self.cache_max_ram_spinbox, 2, 2, 1, 1)
 
-            # Current cache size label
+            # Max disk spinbox (MB) — features evicted from RAM spill here instead
+            # of being recomputed. 0 disables disk spillover.
+            self.cache_max_disk_label = QLabel('Max cache disk (MB, 0 = RAM only)')
+            self.advanced_cache_group.glayout.addWidget(self.cache_max_disk_label, 3, 0, 1, 2)
+            self.cache_max_disk_spinbox = QSpinBox()
+            self.cache_max_disk_spinbox.setRange(0, 8 * 1024 * 1024)  # 0 .. 8 TB
+            self.cache_max_disk_spinbox.setSingleStep(1024)
+            self.cache_max_disk_spinbox.setValue(self.cache_disk_max_mb)
+            self.advanced_cache_group.glayout.addWidget(self.cache_max_disk_spinbox, 3, 2, 1, 1)
+
+            # Current cache size label (RAM + disk)
             self.cache_size_label = QLabel('Current cache size: 0 MB')
-            self.advanced_cache_group.glayout.addWidget(self.cache_size_label, 3, 0, 1, 3)
+            self.advanced_cache_group.glayout.addWidget(self.cache_size_label, 4, 0, 1, 3)
 
         # === MULTIFILE TAB ===
 
@@ -906,21 +916,30 @@ class ConvpaintWidget(QWidget):
         model = getattr(self, "cp_model", None)
         if model is None:
             return
-        max_bytes = int(self.cache_max_mb) * 1024 * 1024
+        # Use decimal MB (1e6) here to match the size shown in the label (also
+        # /1e6), so the number the user types is exactly the max size displayed.
+        max_bytes = int(self.cache_max_mb) * 1_000_000
+        disk_max_bytes = int(self.cache_disk_max_mb) * 1_000_000
         fc = getattr(model, "_feature_cache", None)
         if fc is None or recreate:
-            model.enable_feature_cache(enabled=self.cache_enabled, max_bytes=max_bytes)
+            model.enable_feature_cache(enabled=self.cache_enabled, max_bytes=max_bytes,
+                                       disk_max_bytes=disk_max_bytes)
         else:
             fc.set_max_bytes(max_bytes)
+            fc.set_disk_max_bytes(disk_max_bytes)
             fc.set_enabled(self.cache_enabled)
         self._refresh_cache_size_label()
 
     def _on_cache_enabled_toggled(self, checked=None):
         self.cache_enabled = self.check_use_cache.isChecked()
-        self._apply_feature_cache()  # set_enabled(False) clears it, freeing RAM
+        self._apply_feature_cache()  # set_enabled(False) clears it, freeing RAM+disk
 
     def _on_cache_max_ram_changed(self, value=None):
         self.cache_max_mb = self.cache_max_ram_spinbox.value()
+        self._apply_feature_cache()
+
+    def _on_cache_max_disk_changed(self, value=None):
+        self.cache_disk_max_mb = self.cache_max_disk_spinbox.value()
         self._apply_feature_cache()
 
     def _refresh_cache_size_label(self):
@@ -932,7 +951,8 @@ class ConvpaintWidget(QWidget):
             self.cache_size_label.setText('Current cache size: 0 MB')
             return
         self.cache_size_label.setText(
-            f'Current cache size: {fc.nbytes / 1e6:.0f} MB ({len(fc)} entries)')
+            f'Current cache size: RAM {fc.nbytes / 1e6:.0f} MB ({len(fc)}), '
+            f'disk {fc.disk_nbytes / 1e6:.0f} MB ({fc.stats()["disk_entries"]})')
 
     def _late_init(self):
         """Populate UI widgets with defaults from ConvpaintModel, set up connections, and reset model.
@@ -1129,6 +1149,7 @@ class ConvpaintWidget(QWidget):
             if hasattr(self, 'check_use_cache'):
                 self.check_use_cache.stateChanged.connect(self._on_cache_enabled_toggled)
                 self.cache_max_ram_spinbox.valueChanged.connect(self._on_cache_max_ram_changed)
+                self.cache_max_disk_spinbox.valueChanged.connect(self._on_cache_max_disk_changed)
                 # Keep the "current cache size" label live.
                 self._cache_size_timer = QTimer(self)
                 self._cache_size_timer.setInterval(1000)
@@ -1652,6 +1673,16 @@ class ConvpaintWidget(QWidget):
         self.annot_layers = {l for l in self.annot_layers if l is None or l.name in self.viewer.layers}
         self.seg_layers = {l for l in self.seg_layers if l is None or l.name in self.viewer.layers}
 
+        # Clear the feature cache when an IMAGE layer is removed: entries are keyed
+        # by image content (which is now gone), so they would otherwise linger in
+        # RAM/disk until evicted. The cache repopulates lazily on the next use.
+        removed = getattr(event, 'value', None) if event is not None else None
+        if isinstance(removed, napari.layers.Image):
+            fc = getattr(getattr(self, 'cp_model', None), '_feature_cache', None)
+            if fc is not None:
+                fc.clear()
+                self._refresh_cache_size_label()
+
     # Layer selection
 
     def _on_select_layer(self, newtext=None):
@@ -2003,35 +2034,66 @@ class ConvpaintWidget(QWidget):
         # Get normalized stack data (entire stack, and stats prepared given the radio buttons)
         image_stack_norm = self._get_data_channel_first_norm(img) # Normalize the entire stack
         
-        # Step through the stack and predict each image
+        # Step through the stack and predict each image.
         num_steps = image_stack_norm.shape[-3]
-        for step in progress(range(num_steps)):
+        in_channels = self._parse_in_channels(self.input_channels)
+        self._predict_all_probas_ready = False
 
-            # Take the slice of the 3rd last dimension (since images are C, Z, H, W or Z, H, W)
+        def _predict_and_write(step, cache_only):
+            """Predict one slice and write it to the layers. With cache_only=True,
+            only slices whose features are already cached are predicted (returns
+            False on a miss, without running the extractor). Returns True if
+            written."""
             image = image_stack_norm[..., step, :, :]
-
-            # Predict the current step; skip normalization as it is done above
-            in_channels = self._parse_in_channels(self.input_channels)
-            # Use the backend function which returns probabilities and segmentation
-            probas, seg = self.cp_model._predict(image, add_seg=True, in_channels=in_channels, skip_norm=True,
-                                                 use_dask=self.use_dask, fe_use_device=self.fe_device)
-
-            # In the first iteration, check if we need to create a new probas layer
-            # (we need the information about the number of classes)
-            if step == 0 and self.add_probas:
-                num_classes = probas.shape[0]
-                # Check if we need to create a new probabilities layer
-                self._check_create_probas_layer(num_classes)
-                # Set the flag to False, so we don't create a new layer every time
+            out = self.cp_model._predict(image, add_seg=True, in_channels=in_channels,
+                                         skip_norm=True, use_dask=self.use_dask,
+                                         fe_use_device=self.fe_device, cache_only=cache_only)
+            if out is None:  # cache_only peek: this slice is not cached yet
+                return False
+            probas, seg = out
+            # Create the probabilities layer on the first actual prediction (we
+            # need the class count); with cache-first ordering this may not be
+            # step 0.
+            if self.add_probas and not self._predict_all_probas_ready:
+                self._check_create_probas_layer(probas.shape[0])
                 self.new_proba = False
-
-            # Add the slices to the segmentation and probabilities layers
+                self._predict_all_probas_ready = True
             if self.add_seg:
                 self.viewer.layers[self.seg_tag].data[step] = seg
                 self.viewer.layers[self.seg_tag].refresh()
             if self.add_probas:
                 self.viewer.layers[self.proba_prefix].data[..., step, :, :] = probas
                 self.viewer.layers[self.proba_prefix].refresh()
+            return True
+
+        fc = getattr(self.cp_model, "_feature_cache", None)
+        cache_primed = (fc is not None and fc.enabled
+                        and (len(fc) + fc.stats().get("disk_entries", 0)) > 0)
+        if self.cache_enabled and cache_primed:
+            # Cache-first ordering: serve slices already in the cache before
+            # computing the rest. A plain sequential scan over a stack larger than
+            # the cache evicts the very slices the next pass needs first (classic
+            # LRU thrash) — so cached slices would be recomputed for no benefit.
+            # Predicting cached slices first guarantees they are used before the
+            # compute pass evicts them. Both phases share ONE progress bar over all
+            # slices. (Skipped when the cache is empty — nothing to serve first.)
+            with progress(total=num_steps) as pbr:
+                pbr.set_description("Predicting")
+                done = [False] * num_steps
+                for step in range(num_steps):          # phase 1: already-cached slices
+                    if _predict_and_write(step, cache_only=True):
+                        done[step] = True
+                        pbr.update(1)
+                for step in range(num_steps):          # phase 2: compute the rest
+                    if not done[step]:
+                        _predict_and_write(step, cache_only=False)
+                        pbr.update(1)
+        else:
+            with progress(total=num_steps) as pbr:
+                pbr.set_description("Predicting")
+                for step in range(num_steps):
+                    _predict_and_write(step, cache_only=False)
+                    pbr.update(1)
 
         with warnings.catch_warnings():
             warnings.simplefilter(action="ignore", category=FutureWarning)
@@ -2371,6 +2433,7 @@ class ConvpaintWidget(QWidget):
         self.use_dask = False # Use Dask for parallel processing
         self.cache_enabled = True # Reuse extracted features when re-segmenting / re-training the same image
         self.cache_max_mb = 2048 # Max RAM (MB) the feature cache may use (moderate default)
+        self.cache_disk_max_mb = 8192 # Max disk (MB) for spilled features (0 = disk spillover off)
         self.fe_device = 'auto' # Device to use for the FE (if applicable); 'auto' will use GPU if available, otherwise CPU
         self.clf_device = 'auto' # Device to use for the classifier (if applicable); 'auto' will use GPU if available, otherwise CPU
         self.input_channels = "" # Input channels for the model (as txt, will be parsed)
