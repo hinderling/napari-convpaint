@@ -25,6 +25,40 @@ from . import utils
 # If the FE gives a Tile block size, we use this instead.
 DEFAULT_TARGET_TILE_BLOCK = 1000
 
+# Adaptive tile_annotations: tiling around annotations only saves feature-
+# extraction work when the annotations occupy a small part of the image. When
+# scribbles are spread across (most of) the image, the tiles cover it anyway and
+# the per-tile overhead makes many small tiles *slower* than one whole-image pass
+# (measured ~2x) for identical features. We gate on the fraction of the image
+# spanned by the overall annotation bounding box: only tile when it is below this.
+TILE_ANNOT_MAX_BBOX_FRACTION = 0.5
+
+# Auto-tile prediction (memory optimization for local-context FEs) once the image
+# is larger than this on its longest side — below it tiling would not split the
+# image into multiple blocks, so there is nothing to save. ~1.5x the default tile
+# block so at least a 2-block split happens.
+AUTO_TILE_MIN_SIDE = 1500
+
+
+def _tiling_worthwhile(annot, whole_area):
+    """Cheaply decide whether tiling around the annotations in `annot` is likely
+    faster than one whole-image feature extraction.
+
+    Uses the fraction of the image spanned by the overall annotation bounding box
+    (last two dims = spatial): a small box means the annotations are clustered and
+    tiling avoids most of the whole-image work; a box covering most of the image
+    means tiling would process it all anyway with extra per-tile overhead. Errs
+    toward whole-image (the safe, identical-feature default) for spread-out
+    annotations."""
+    coords = np.argwhere(annot > 0)
+    if coords.size == 0:
+        return False
+    # Spatial extent = last two axes of the annotation.
+    h = coords[:, -2].max() - coords[:, -2].min() + 1
+    w = coords[:, -1].max() - coords[:, -1].min() + 1
+    return (h * w) < TILE_ANNOT_MAX_BBOX_FRACTION * whole_area
+
+
 class ConvpaintModel:
     """
     The `ConvpaintModel` class is the core of Convpaint and **combines feature extraction with pixel classification**.
@@ -840,6 +874,63 @@ class ConvpaintModel:
                                use_dask=use_dask, fe_use_device=fe_use_device)
         return seg
 
+    def segment_to_disk(self, image, out, in_channels=None, skip_norm=True,
+                        fe_use_device=None):
+        """Segment a single (potentially larger-than-RAM) image, streaming tiles.
+
+        Reads the image one tile at a time and writes each tile's segmentation
+        into `out`, so neither the whole image nor the whole feature stack is ever
+        fully resident. Peak RAM stays at roughly one tile regardless of image
+        size.
+
+        Parameters
+        ----------
+        image : array-like [Z, H, W] / [H, W] / [C, Z, H, W] etc.
+            A lazily-sliceable input — e.g. ``np.memmap`` or a ``zarr`` array —
+            whose tiles are loaded on demand. A plain in-RAM ndarray also works
+            (but then the input is already resident).
+        out : array-like [Z, H, W] uint8
+            Preallocated, disk-backed output to write the segmentation into
+            (e.g. ``np.memmap(..., mode='w+')`` or a ``zarr`` array). Its shape
+            must equal the image's spatial dims with the channel dim removed and
+            a leading Z (Z = 1 for 2D input).
+        skip_norm : bool, default True
+            True means `image` is already normalized (required for genuine
+            out-of-core use with global-statistics normalization, which would
+            otherwise need the whole image in RAM). If False, the whole image is
+            normalized up front (only suitable when it fits in RAM).
+
+        Returns
+        -------
+        out : the same array passed in, now filled with the segmentation.
+
+        Notes
+        -----
+        This always tiles, so it is only accuracy-preserving for local-context
+        feature extractors; a warning is emitted for global-context FEs (a ViT's
+        features depend on the whole image and cannot be tiled).
+        """
+        if self.classifier is None:
+            raise ValueError('No trained classifier found.')
+
+        # Bring the input to [C, Z, H, W] (views only, no copy for memmap/zarr).
+        img = self._prep_dims_single(image)[0]
+
+        if in_channels is not None:
+            self._check_in_channels([img], in_channels)
+            img = img[in_channels]
+
+        if not skip_norm:
+            # Materializes the whole image; only for the RAM-fitting convenience
+            # case. True out-of-core requires a pre-normalized lazy input.
+            img = self._norm_single_image(img)
+
+        # Tiled prediction writing the segmentation straight into `out` on disk.
+        self._parallel_predict_image(
+            img, return_proba=False, use_dask=False,
+            fe_use_device=fe_use_device, out=out)
+        return out
+
     def predict_probas(self, image, in_channels=None, skip_norm=False, use_dask=False, fe_use_device=None):
         """
         Predicts the probabilities of the classes of the pixels in an image using the trained classifier.
@@ -1091,8 +1182,23 @@ class ConvpaintModel:
                 self._warn_if_global_context("tile_annotations")
                 coords = [None for _ in data] if coords is None else coords
                 alignment = self._get_fe_alignment(params_for_extract) # scalings_lcm * fe_patch
-                tiles = [utils.tile_annot(d, a, c, p, alignment=alignment, plot_tiles=False)
-                        for d, a, c, p in zip(data, annotations, coords, paddings)]
+                # Adaptive tiling: tile_annotations only saves work when the
+                # annotations are clustered. When scribbles are spread across the
+                # image, the padded bounding-box tiles cover most of it anyway and
+                # each tile adds fixed feature-extraction overhead — so many small
+                # tiles are *slower* than one whole-image pass (measured ~2x on
+                # spread-out scribbles) for identical features. Per image, keep the
+                # tiles only if they process meaningfully less than the whole image.
+                tiles = []
+                for d, a, c, p in zip(data, annotations, coords, paddings):
+                    if _tiling_worthwhile(a, d.shape[-2] * d.shape[-1]):
+                        trio = utils.tile_annot(d, a, c, p, alignment=alignment, plot_tiles=False)
+                    else:
+                        # Tiling this image would cost more than one whole-image
+                        # pass (too many scattered tiles, or tiles covering most
+                        # of it) — extract it whole. Features are identical.
+                        trio = ([d], [a], [c])
+                    tiles.append(trio)
                 data        = [t for trio in tiles for t in trio[0]]
                 annotations = [t for trio in tiles for t in trio[1]]
                 # Flat-repeat paddings for each tile (though not needed anymore, in case they are used later)
@@ -1264,16 +1370,27 @@ class ConvpaintModel:
         """
         nb_features = features.shape[0] # [nb_features, width, height]
 
-        # Move features to last dimension and flatten
+        # Move features to last dimension and flatten to [num_pixels, nb_features].
+        # reshape after moveaxis forces a contiguous copy of the whole feature
+        # stack (for a 2000px VGG16 image that is ~1.5 GB); predicting in row
+        # chunks bounds the extra peak memory to one chunk and keeps the result
+        # bit-identical. A single predict_proba/predict call on the full array
+        # is itself one uninterruptible multi-second call on large images.
         features = np.moveaxis(features, 0, -1)
         features = np.reshape(features, (-1, nb_features)) # flatten
 
-        # Predict
-        if return_proba:
-            predictions = self.classifier.predict_proba(features)
-            predictions = np.moveaxis(predictions, -1, 0) # [nb_classes, width*height]
+        chunk_size = 1_000_000
+        num_rows = features.shape[0]
+        predict_fn = self.classifier.predict_proba if return_proba else self.classifier.predict
+        if num_rows > chunk_size:
+            parts = [predict_fn(features[i:i+chunk_size])
+                     for i in range(0, num_rows, chunk_size)]
+            predictions = np.concatenate(parts, axis=0)
         else:
-            predictions = self.classifier.predict(features)
+            predictions = predict_fn(features)
+
+        if return_proba:
+            predictions = np.moveaxis(predictions, -1, 0) # [nb_classes, width*height]
 
         return predictions
 
@@ -1535,12 +1652,20 @@ class ConvpaintModel:
         if not skip_norm:
             data = [self._norm_single_image(d) for d in data]
 
-        # Get class probabilities, using tiling if enabled
+        # Get class probabilities, using tiling if enabled. Tiling holds only one
+        # tile's feature stack at a time instead of the whole-image stack
+        # (F x H x W), a large memory saving on big images, at identical output —
+        # but only for local-context FEs (a ViT's features depend on the whole
+        # image). It is auto-enabled per image when the image is large enough to
+        # actually be split; tile_image=True forces it regardless of size.
         if self._param.tile_image:
             probas = [self._parallel_predict_image(d, return_proba=True, use_dask=use_dask, fe_use_device=fe_use_device)
                       for d in data]
         else:
-            probas = self._predict_image(data, return_proba=True, fe_use_device=fe_use_device) # Can handle lists directly
+            probas = [self._parallel_predict_image(d, return_proba=True, use_dask=use_dask, fe_use_device=fe_use_device)
+                      if self._should_auto_tile(d.shape) else
+                      self._predict_image(d, return_proba=True, fe_use_device=fe_use_device)
+                      for d in data]
 
         # Restore input dimensionality (especially see if we want to remove z dimension)
         probas = [self._restore_dims(probas[i], input_shapes[i])
@@ -1558,6 +1683,19 @@ class ConvpaintModel:
                 return probas[0]
             else:
                 return probas
+
+    def _should_auto_tile(self, image_shape):
+        """Whether to tile prediction for an image even though tile_image is off.
+
+        Auto-tiling is a pure memory optimization (identical output), so only
+        applies to local-context FEs — for global-context FEs (ViT, cellpose)
+        tiling would change the features. It only kicks in once the image is
+        large enough that tiling actually splits it into multiple blocks;
+        otherwise there is nothing to gain."""
+        if self.fe_model.get_has_global_context():
+            return False
+        h, w = image_shape[-2], image_shape[-1]
+        return max(h, w) > AUTO_TILE_MIN_SIDE
 
     def _predict_image(self, image, return_proba=True, feature_img=None, fe_use_device=None):
         """
@@ -1615,7 +1753,7 @@ class ConvpaintModel:
             return pred_reshaped[0]
         return pred_reshaped
 
-    def _parallel_predict_image(self, image, return_proba=True, use_dask=False, fe_use_device=None, plot_tiles=False):
+    def _parallel_predict_image(self, image, return_proba=True, use_dask=False, fe_use_device=None, plot_tiles=False, out=None):
         """
         Backend method to predict an image using tiling and parallelization.
         Returns the class probabilities and optionally the segmentation of the images.
@@ -1624,6 +1762,14 @@ class ConvpaintModel:
         but always keeps the Z dim --> [C, Z, H, W] for class probas, [Z, H, W] for segmentation.
 
         NOTE: As opposed to other methods, this method only takes single images as input.
+
+        `out`, if given, is the array the stitched result is written into instead
+        of allocating it in RAM. Passing a disk-backed array (e.g. np.memmap or a
+        zarr array) keeps the full output off-heap; combined with a lazy `image`
+        (np.memmap / zarr) whose tiles are read on demand, peak RAM stays at about
+        one tile regardless of image size (out-of-core prediction). `out` must
+        match the result shape/dtype ([C,Z,H,W] float32 for probas, [Z,H,W] uint8
+        for segmentation).
         """
 
         self._warn_if_global_context("tile_image")
@@ -1646,21 +1792,37 @@ class ConvpaintModel:
 
         image = self._prep_dims_single(image)[0] # NOTE: should technically not be necessary, as done outside
 
-        # Prepare array to write the predictions to
+        # Prepare array to write the predictions to (or use the caller's `out`,
+        # e.g. a memmap, to keep the full output off-heap for out-of-core runs).
         if return_proba:
             num_classes = self.classifier.classes_.shape[0]
             z, h, w = image.shape[-3:]
-            predicted_image_complete = np.zeros((num_classes, z, h, w),
-                                                dtype=(np.float32))
+            expected_shape = (num_classes, z, h, w)
+            expected_dtype = np.float32
         else:
-            predicted_image_complete = np.zeros(image.shape[-3:], dtype=(np.uint8))
+            expected_shape = image.shape[-3:]
+            expected_dtype = np.uint8
+        if out is not None:
+            if tuple(out.shape) != tuple(expected_shape):
+                raise ValueError(f"out has shape {tuple(out.shape)}, expected {tuple(expected_shape)}.")
+            predicted_image_complete = out
+        else:
+            predicted_image_complete = np.zeros(expected_shape, dtype=expected_dtype)
 
-        # Prepare dask client if enabled
+        # Prepare dask client if enabled.
+        # NOTE (perf): use a threaded, single-process cluster (processes=False).
+        # A process-based cluster (the previous Client()) pickles every submitted
+        # task's arguments to worker processes — and because we submit the bound
+        # method self._predict_image, that pickles the whole ConvpaintModel
+        # (including the FE's torch weights) once per tile, plus it spawns worker
+        # processes on every call. With threads the model is shared in-process
+        # (no serialization, valid on MPS/GPU) and torch/numpy/catboost release
+        # the GIL during compute, so tiles still overlap.
         if use_dask:
             from dask.distributed import Client
             import dask
             dask.config.set({'distributed.worker.daemon': False})
-            client = Client()
+            client = Client(processes=False)
             processes = []
 
         # Iterate over the blocks of the image and predict each block separately
@@ -1705,7 +1867,10 @@ class ConvpaintModel:
                 if max_row > image.shape[-2]:
                     max_row = image.shape[-2]
 
-                image_block = image[..., min_row:max_row, min_col:max_col]
+                # np.asarray materializes just this block, so a lazy/disk-backed
+                # image (np.memmap / zarr / dask) only loads the tile being
+                # processed rather than the whole image.
+                image_block = np.asarray(image[..., min_row:max_row, min_col:max_col])
 
                 # For plotting:
                 # Take the entire image, add boarders for the block
