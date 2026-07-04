@@ -72,3 +72,35 @@ def test_scale_img_image_and_labels_shape_match(factor, H, W, upscale):
         f"shape mismatch at factor={factor}, upscale={upscale}, (H,W)=({H},{W}): "
         f"img={img_out.shape[-2:]}  lbl={lbl_out.shape[-2:]}"
     )
+
+
+def test_imagenet_norm_uint8_unchanged():
+    """uint8 RGB is scaled by /255 then ImageNet stats — z-scored range."""
+    from napari_convpaint.utils import normalize_image_imagenet
+    rng = np.random.default_rng(0)
+    img = rng.integers(0, 256, (3, 1, 32, 32)).astype(np.uint8)
+    out = normalize_image_imagenet(img)
+    assert out.dtype == np.float32
+    assert out.min() < -1.0 and out.max() > 1.0  # ImageNet z-scored
+
+
+def test_imagenet_norm_float_in_unit_range_applied():
+    """A float image already in [0,1] gets ImageNet stats (not skipped)."""
+    from napari_convpaint.utils import normalize_image_imagenet
+    rng = np.random.default_rng(0)
+    img = rng.random((3, 1, 32, 32)).astype(np.float32)
+    out = normalize_image_imagenet(img)
+    assert not np.array_equal(out, img)  # normalization was applied
+    assert out.min() < 0.0  # mean-subtracted
+
+
+def test_imagenet_norm_float_out_of_range_rescaled_not_skipped():
+    """A float image outside [0,1] (e.g. microscopy) is percentile-rescaled to
+    [0,1] and ImageNet-normalized, rather than silently returned unchanged."""
+    from napari_convpaint.utils import normalize_image_imagenet
+    rng = np.random.default_rng(0)
+    img = rng.uniform(0, 4095, (3, 1, 32, 32)).astype(np.float32)
+    with pytest.warns(UserWarning, match="percentile rescale"):
+        out = normalize_image_imagenet(img)
+    assert not np.array_equal(out, img)          # NOT returned raw
+    assert out.min() < -1.0 and out.max() > 1.0  # ImageNet z-scored range
