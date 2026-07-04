@@ -1193,8 +1193,16 @@ def normalize_image_imagenet(image):
             if (x.min() >= 0.0 and x.max() <= 1.0):
                 pass  # image compatible with [0,1]
             else:
-                warnings.warn(f"Image dtype is {image.dtype} and values are outside [0,1]. Not applying ImageNet normalization.")
-                return image  # return image as is
+                # Float image outside [0,1] (e.g. microscopy). Previously this was
+                # silently returned unnormalized, feeding out-of-distribution
+                # values to the ImageNet-pretrained network. Instead, robustly
+                # stretch to [0,1] with a 1-99 percentile before applying ImageNet
+                # stats. Measured to help segmentation (substantially for
+                # per-channel-varying float ranges) and never hurt vs raw.
+                lo, hi = np.percentile(x, 1), np.percentile(x, 99)
+                x = np.clip((x - lo) / (hi - lo + 1e-8), 0.0, 1.0)
+                warnings.warn(f"Image dtype is {image.dtype} with values outside [0,1]; "
+                              "applied a 1-99 percentile rescale to [0,1] before ImageNet normalization.")
         else:
             warnings.warn(f"Image dtype {image.dtype} is not supported for imagenet normalization. Not applying ImageNet normalization.")
             # mn, mx = x.min(), x.max()
@@ -1233,8 +1241,16 @@ def normalize_image_imagenet(image):
             if (x.min() >= 0.0 and x.max() <= 1.0):
                 pass  # image compatible with [0,1]
             else:
-                warnings.warn(f"Image dtype is {image.dtype} and values are outside [0,1]. Not applying ImageNet normalization.")
-                return image  # return image as is
+                # See the numpy path: robust 1-99 percentile stretch to [0,1]
+                # instead of silently leaving out-of-[0,1] float data unnormalized.
+                flat = x.flatten()
+                if flat.numel() > 16_000_000:  # torch.quantile caps input size
+                    flat = flat[:: (flat.numel() // 16_000_000) + 1]  # subsample for the percentile
+                lo = torch.quantile(flat, 0.01)
+                hi = torch.quantile(flat, 0.99)
+                x = torch.clamp((x - lo) / (hi - lo + 1e-8), 0.0, 1.0)
+                warnings.warn(f"Image dtype is {image.dtype} with values outside [0,1]; "
+                              "applied a 1-99 percentile rescale to [0,1] before ImageNet normalization.")
         else:
             warnings.warn(f"Image dtype {image.dtype} is not supported for imagenet normalization. Not applying ImageNet normalization.")
             return image  # return image as is
