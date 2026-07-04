@@ -30,6 +30,11 @@ class FeatureExtractor:
         # For such FEs, tile_annotations / tile_image cannot match whole-image features at any finite padding
         self.tile_block_size = None # If not None, this block size is used for tiling the image at segmentation
         self.num_input_channels = [1]
+        # Number of features each hooked layer contributes (only Hookmodel sets a
+        # real value); default None so `fe_use_min_features` degrades gracefully
+        # (warns and uses all features) for FEs that don't track it, instead of
+        # raising AttributeError.
+        self.features_per_layer = None
         self.norm_mode = "default"  # or "imagenet" or "percentile"
         self.rgb_input = False # Whether the model takes RGB input or not
         self.proposed_scalings = [[1],
@@ -292,7 +297,7 @@ class FeatureExtractor:
             The list of devices that the feature extractor supports.
         """
         if self.model is not None and hasattr(self.model, "to"):
-            return [torch.device("cuda"), torch.device("mps"), [torch.device("cpu")]]
+            return [torch.device("cuda"), torch.device("mps"), torch.device("cpu")]
         else:
             return [torch.device("cpu")]
 

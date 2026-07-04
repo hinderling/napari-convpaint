@@ -78,12 +78,21 @@ class DinoJafarFeatures(FeatureExtractor):
         self.num_input_channels = [3]           # RGB
         self.norm_mode = "imagenet"
         self.rgb_input = True
+        # DINO ViT backbone: attention mixes the whole image into every token,
+        # so features are global — tiling cannot reproduce whole-image features.
+        self.has_global_context = True
         # The largest scale equals the backbone patch size — at that scale
         # JAFAR is asked for native patch-resolution output (no upsampling).
         self.proposed_scalings = [[1],
                                   [1, 8],
                                   [1, 8, self.patch_size],
                                   ]
+
+        # Internal JAFAR upsampling scales; normally (re)set from fe_scalings in
+        # get_enforced_params before extraction, but default it here so direct FE
+        # use (extract_features_from_plane without going through ConvpaintModel)
+        # doesn't hit an AttributeError.
+        self.jafar_scalings = [1]
 
         # Parent .create_model() saves tuple (hr_head, backbone) in self.model
         self.model, self.backbone = self.model
@@ -261,11 +270,15 @@ class DinoJafarFeatures(FeatureExtractor):
         else:
             tile_px = min(desired_tile_px, max_fit)
 
-        # Ensure overlap_tokens yields positive stride
-        # stride = tile_px - overlap_tokens*ps
-        max_overlap_tokens = (tile_px // ps) - 1  # need at least one stride
-        if max_overlap_tokens < 0:
-            max_overlap_tokens = 0
+        # Clamp overlap_tokens to satisfy BOTH constraints:
+        #  - positive stride:            tile_px - overlap*ps > 0  -> overlap <= tiles-1
+        #  - non-negative blend window:  tile_px - 2*overlap*ps >= 0 -> overlap <= tiles//2
+        # The window builder (_extract_tiled_multiscale) makes a symmetric
+        # ramp/flat/ramp of length tile_px - 2*overlap*ps; without the second
+        # bound, a tile exactly 3 patches wide (tiles==3, overlap==2) passes the
+        # stride check but requests torch.ones(-ps) and crashes.
+        tiles = tile_px // ps
+        max_overlap_tokens = max(0, min(tiles - 1, tiles // 2))
         if overlap_tokens > max_overlap_tokens:
             overlap_tokens = max_overlap_tokens
 
@@ -307,8 +320,10 @@ class DinoJafarFeatures(FeatureExtractor):
         stride = tile_px - ov_px
         assert stride > 0, "Invalid stride (overlap too large)."
 
-        # A CPU copy of the hr_head is kept for device-incompatible runtime errors
-        hr_head_cpu = copy.deepcopy(hr_head).to("cpu").eval()
+        # A CPU copy of the hr_head is only needed if a device (e.g. MPS) error
+        # forces a CPU retry — build it lazily on first use instead of deep-copying
+        # the whole head on every extraction call (this method runs once per plane).
+        hr_head_cpu = None
 
         # Get low-resolution backbone features for the full image once
         lr_full, _ = backbone(image_batch)
@@ -363,8 +378,11 @@ class DinoJafarFeatures(FeatureExtractor):
                             feat = hr_head(img_tile, lr_tile, (out_h, out_h))
                         except RuntimeError as e:
                             # Some devices (MPS) or dtype mismatches may fail;
-                            # retry on the CPU copy and move back to runtime device.
+                            # retry on the CPU copy (built once, on demand) and
+                            # move back to the runtime device.
                             if "MPS" in str(e) or "weight type" in str(e):
+                                if hr_head_cpu is None:
+                                    hr_head_cpu = copy.deepcopy(hr_head).to("cpu").eval()
                                 feat = hr_head_cpu(img_tile.cpu(), lr_tile.cpu(), (out_h, out_h)).to(dev)
                             else:
                                 raise
@@ -395,10 +413,14 @@ class DinoJafarFeatures(FeatureExtractor):
                     # Track the blending weights used for normalization
                     weight_cpu[:, :, top:top + tile_px, left:left + tile_px] += w2d.cpu()
 
-                    # Free temporary locals and clear MPS cache if available
+                    # Free temporary locals
                     del img_tile, lr_tile, per_scale_feats, feat_cat, chunks, weighted
-                    if torch.backends.mps.is_available():
-                        torch.mps.empty_cache()  # avoid MPS fragmentation issues
+
+            # Clear the MPS cache once per plane (after all tiles), not per tile:
+            # torch.mps.empty_cache() forces a device sync, so calling it inside
+            # the tile loop serialized the GPU and dominated runtime.
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
 
         # Normalize accumulated sums by weights and concatenate per-scale results
         eps = 1e-8
