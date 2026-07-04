@@ -1007,17 +1007,21 @@ class ConvpaintModel:
 
 ### FEATURE CACHE (optional; speeds the interactive annotate->predict loop)
 
-    def enable_feature_cache(self, enabled=True, max_bytes=None):
+    def enable_feature_cache(self, enabled=True, max_bytes=None, disk_max_bytes=0):
         """Turn on whole-image feature caching. When on, the (resolution-
         independent) native features of an extracted image are cached and reused
         the next time the *same* image is processed with the same FE settings —
         e.g. re-segmenting while refining scribbles, or the train->predict of one
         image — instead of recomputing them. Cache entries are content-addressed
         (a hash of the prepared image), so it is self-invalidating: a changed
-        image simply misses. Bounded by a memory budget (see FeatureCache), so it
-        is safe on stacks/movies. Off by default (opt-in)."""
+        image simply misses. Bounded by a RAM budget (``max_bytes``); RAM-evicted
+        entries spill to disk up to ``disk_max_bytes`` (0 = off), which lets a
+        stack too large for RAM still benefit on the next iteration (loading a
+        cached slice from disk is much faster than recomputing it). Off by
+        default (opt-in)."""
         from .feature_cache import FeatureCache
-        self._feature_cache = FeatureCache(max_bytes=max_bytes, enabled=enabled)
+        self._feature_cache = FeatureCache(max_bytes=max_bytes, enabled=enabled,
+                                           disk_max_bytes=disk_max_bytes)
         return self._feature_cache
 
     def _fe_cache_signature(self, param):
@@ -1045,18 +1049,25 @@ class ConvpaintModel:
         h.update(str(arr.dtype).encode())
         return h.hexdigest()
 
-    def _extract_pyramid_cached(self, d, param, keep_patched, device):
+    def _extract_pyramid_cached(self, d, param, keep_patched, device, cache_only=False):
         """Extract the feature pyramid for one image, consulting the feature
         cache. Behaviour with the cache disabled (the default) is exactly
         extract_features_pyramid; enabled, it caches/reuses the native features
-        (bit-identical output, since the pyramid split is exact)."""
+        (bit-identical output, since the pyramid split is exact).
+
+        ``cache_only=True`` is a peek: return the reconstructed features only if
+        they are already cached, else return None WITHOUT running the (expensive)
+        feature extractor. This lets a stack prediction serve already-cached
+        slices first, before a sequential scan evicts them (see the widget)."""
         cache = getattr(self, "_feature_cache", None)
         fe = self.fe_model
         if cache is None or not cache.enabled or not fe.supports_feature_cache(param):
-            return fe.extract_features_pyramid(d, param, patched=keep_patched, device=device)
+            return None if cache_only else fe.extract_features_pyramid(d, param, patched=keep_patched, device=device)
         key = (self._data_hash(d), self._fe_cache_signature(param))
         payload = cache.get(key)
         if payload is None:
+            if cache_only:
+                return None
             payload = fe.cacheable_repr(d, param, device)
             cache.put(key, payload, fe.cacheable_nbytes(payload))
         return fe.features_from_cacheable(payload, d.shape, param, patched=keep_patched)
@@ -1066,7 +1077,7 @@ class ConvpaintModel:
     def _get_features(self, data, annotations=None, restore_input_form=True,
                           memory_mode=False, img_ids=None,
                           in_channels=None, skip_norm=False, use_device=None,
-                          pca_components=0, kmeans_clusters=0):
+                          pca_components=0, kmeans_clusters=0, cache_only=False):
         """
         Returns the features of images extracted by the feature extractor model.
 
@@ -1286,8 +1297,13 @@ class ConvpaintModel:
             warn=True,
         )
         features = [self._extract_pyramid_cached(
-                d, params_for_extract, keep_patched, fe_runtime_device)
+                d, params_for_extract, keep_patched, fe_runtime_device, cache_only=cache_only)
                     for d in data]
+
+        # cache_only peek: if any image's features are not already cached, signal
+        # a miss so the caller can defer this image to the compute pass.
+        if cache_only and any(f is None for f in features):
+            return None
 
         if pca_components:
             features = [utils.apply_pca_to_f_image(f, n_components=pca_components)
@@ -1674,7 +1690,7 @@ class ConvpaintModel:
 
         return features, annotations
 
-    def _predict(self, data, add_seg=False, in_channels=None, skip_norm=False, use_dask=False, fe_use_device=None):
+    def _predict(self, data, add_seg=False, in_channels=None, skip_norm=False, use_dask=False, fe_use_device=None, cache_only=False):
         """
         Backend method to predict images as a whole or tiling and parallelizing the prediction.
 
@@ -1711,7 +1727,19 @@ class ConvpaintModel:
         # but only for local-context FEs (a ViT's features depend on the whole
         # image). It is auto-enabled per image when the image is large enough to
         # actually be split; tile_image=True forces it regardless of size.
-        if self._param.tile_image:
+        if cache_only:
+            # Peek: only serve images whose features are already cached; return
+            # None on any miss so the caller defers it to the compute pass. The
+            # tiled path doesn't support the peek, so a tiled image counts as a
+            # miss (it is cheap/local anyway, where caching matters least).
+            probas = []
+            for d in data:
+                p = (None if (self._param.tile_image or self._should_auto_tile(d.shape))
+                     else self._predict_image(d, return_proba=True, fe_use_device=fe_use_device, cache_only=True))
+                if p is None:
+                    return None
+                probas.append(p)
+        elif self._param.tile_image:
             probas = [self._parallel_predict_image(d, return_proba=True, use_dask=use_dask, fe_use_device=fe_use_device)
                       for d in data]
         else:
@@ -1750,7 +1778,7 @@ class ConvpaintModel:
         h, w = image_shape[-2], image_shape[-1]
         return max(h, w) > AUTO_TILE_MIN_SIDE
 
-    def _predict_image(self, image, return_proba=True, feature_img=None, fe_use_device=None):
+    def _predict_image(self, image, return_proba=True, feature_img=None, fe_use_device=None, cache_only=False):
         """
         Backend method to predict images without tiling and parallelization.
         Returns the class probabilities and optionally the segmentation of the images.
@@ -1771,7 +1799,10 @@ class ConvpaintModel:
                                             restore_input_form=False,
                                             in_channels=None, # already extracted outside
                                             skip_norm=True, # already normalized outside
-                                            use_device=fe_use_device)
+                                            use_device=fe_use_device,
+                                            cache_only=cache_only)
+            if feature_img is None:  # cache_only peek: features not cached
+                return None
 
         num_f = feature_img[0].shape[0] if isinstance(feature_img, list) else feature_img.shape[0]
         num_f_clf = self.num_features
