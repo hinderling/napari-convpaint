@@ -547,6 +547,40 @@ class ConvpaintWidget(QWidget):
             self.advanced_unsupervised_group.glayout.addWidget(self.kmeans_label, 1, 0, 1, 2)
             self.advanced_unsupervised_group.glayout.addWidget(self.text_features_kmeans, 1, 2, 1, 2)
 
+        # === PERFORMANCE TAB ===
+
+        if 'Advanced' in self.tab_names:
+            self.advanced_cache_group = VHGroup('Feature caching', orientation='G')
+            self.tabs.add_named_tab('Advanced', self.advanced_cache_group.gbox)
+
+            # Explanatory note
+            cache_note = QLabel(
+                "Reuse extracted features when segmenting or training the same image "
+                "repeatedly (e.g. while refining annotations), instead of recomputing "
+                "them. Bounded by the memory limit below; on stacks/movies the oldest "
+                "cached slices are dropped first.")
+            cache_note.setStyleSheet(style_for_infos)
+            cache_note.setWordWrap(True)
+            self.advanced_cache_group.glayout.addWidget(cache_note, 0, 0, 1, 3)
+
+            # Enable/disable checkbox
+            self.check_use_cache = QCheckBox('Enable feature caching')
+            self.check_use_cache.setChecked(self.cache_enabled)
+            self.advanced_cache_group.glayout.addWidget(self.check_use_cache, 1, 0, 1, 3)
+
+            # Max RAM spinbox (MB)
+            self.cache_max_ram_label = QLabel('Max cache RAM (MB)')
+            self.advanced_cache_group.glayout.addWidget(self.cache_max_ram_label, 2, 0, 1, 2)
+            self.cache_max_ram_spinbox = QSpinBox()
+            self.cache_max_ram_spinbox.setRange(64, 1024 * 1024)  # 64 MB .. 1 TB
+            self.cache_max_ram_spinbox.setSingleStep(256)
+            self.cache_max_ram_spinbox.setValue(self.cache_max_mb)
+            self.advanced_cache_group.glayout.addWidget(self.cache_max_ram_spinbox, 2, 2, 1, 1)
+
+            # Current cache size label
+            self.cache_size_label = QLabel('Current cache size: 0 MB')
+            self.advanced_cache_group.glayout.addWidget(self.cache_size_label, 3, 0, 1, 3)
+
         # === MULTIFILE TAB ===
 
         if 'Multifile' in self.tab_names:
@@ -864,6 +898,42 @@ class ConvpaintWidget(QWidget):
             from .convpaint_model import ConvpaintModel
             self._cpm_class = ConvpaintModel
 
+    def _apply_feature_cache(self, recreate=False):
+        """Apply the current caching settings (enabled + max RAM) to the active
+        model. Pass recreate=True right after the model is (re)created; otherwise
+        the existing cache is updated in place so its entries survive a settings
+        change."""
+        model = getattr(self, "cp_model", None)
+        if model is None:
+            return
+        max_bytes = int(self.cache_max_mb) * 1024 * 1024
+        fc = getattr(model, "_feature_cache", None)
+        if fc is None or recreate:
+            model.enable_feature_cache(enabled=self.cache_enabled, max_bytes=max_bytes)
+        else:
+            fc.set_max_bytes(max_bytes)
+            fc.set_enabled(self.cache_enabled)
+        self._refresh_cache_size_label()
+
+    def _on_cache_enabled_toggled(self, checked=None):
+        self.cache_enabled = self.check_use_cache.isChecked()
+        self._apply_feature_cache()  # set_enabled(False) clears it, freeing RAM
+
+    def _on_cache_max_ram_changed(self, value=None):
+        self.cache_max_mb = self.cache_max_ram_spinbox.value()
+        self._apply_feature_cache()
+
+    def _refresh_cache_size_label(self):
+        if not hasattr(self, "cache_size_label"):
+            return
+        model = getattr(self, "cp_model", None)
+        fc = getattr(model, "_feature_cache", None) if model is not None else None
+        if fc is None:
+            self.cache_size_label.setText('Current cache size: 0 MB')
+            return
+        self.cache_size_label.setText(
+            f'Current cache size: {fc.nbytes / 1e6:.0f} MB ({len(fc)} entries)')
+
     def _late_init(self):
         """Populate UI widgets with defaults from ConvpaintModel, set up connections, and reset model.
         This is called after the GUI is shown to ensure that all components are properly initialized."""
@@ -871,6 +941,7 @@ class ConvpaintWidget(QWidget):
         # === MODEL DEFAULTS & WIDGET POPULATION ===
         self._import_convpaint_model_class()
         self.cp_model = self._cpm_class()
+        self._apply_feature_cache(recreate=True)
         # Get default parameters to set in widget
         self.default_cp_param = self._cpm_class.get_default_params()
         # Use variables of main model as temp variables for the Models tab, as it is the one model used at that time
@@ -1054,6 +1125,15 @@ class ConvpaintWidget(QWidget):
 
             self.check_use_dask.stateChanged.connect(lambda: setattr(
                 self, 'use_dask', self.check_use_dask.isChecked()))
+
+            if hasattr(self, 'check_use_cache'):
+                self.check_use_cache.stateChanged.connect(self._on_cache_enabled_toggled)
+                self.cache_max_ram_spinbox.valueChanged.connect(self._on_cache_max_ram_changed)
+                # Keep the "current cache size" label live.
+                self._cache_size_timer = QTimer(self)
+                self._cache_size_timer.setInterval(1000)
+                self._cache_size_timer.timeout.connect(self._refresh_cache_size_label)
+                self._cache_size_timer.start()
 
             self.text_input_channels.textChanged.connect(lambda: setattr(
                 self, 'input_channels', self.text_input_channels.text()))
@@ -2115,6 +2195,7 @@ class ConvpaintWidget(QWidget):
 
         # Load the model (Note: done after updating GUI, since GUI updates might reset clf or change model)
         self.cp_model = new_model
+        self._apply_feature_cache(recreate=True)
         self.cp_model._param = new_param
         temp_fe_model = self._cpm_class.create_fe(new_param.fe_name)
         self.temp_fe_description = temp_fe_model.get_description()
@@ -2288,6 +2369,8 @@ class ConvpaintWidget(QWidget):
         self.features_prefix = 'features' # Prefix for the feature image layer name
         self.cont_training = "Image" # Update features for subsequent training ("Image" or "Off" or "Global")
         self.use_dask = False # Use Dask for parallel processing
+        self.cache_enabled = True # Reuse extracted features when re-segmenting / re-training the same image
+        self.cache_max_mb = 2048 # Max RAM (MB) the feature cache may use (moderate default)
         self.fe_device = 'auto' # Device to use for the FE (if applicable); 'auto' will use GPU if available, otherwise CPU
         self.clf_device = 'auto' # Device to use for the classifier (if applicable); 'auto' will use GPU if available, otherwise CPU
         self.input_channels = "" # Input channels for the model (as txt, will be parsed)
@@ -2481,6 +2564,7 @@ class ConvpaintWidget(QWidget):
 
         # Create a new model with the new FE
         self.cp_model = self._cpm_class(param=new_param)
+        self._apply_feature_cache(recreate=True)
         self._reset_device_options()
         self._reset_clf() # Call to take all actions needed after resetting the clf
         # Reset the features for continuous training
