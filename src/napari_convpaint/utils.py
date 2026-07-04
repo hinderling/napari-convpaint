@@ -723,10 +723,20 @@ def tile_annot(img, annot, coords, padding, alignment=1, plot_tiles=False):
         # the image; since `_get_overall_paddings` now pads the whole image to a
         # multiple of `alignment`, clamping preserves the grid alignment too.
         if alignment > 1:
-            y_min = max(0, (y_min // alignment) * alignment)
-            x_min = max(0, (x_min // alignment) * alignment)
-            y_max = min(img_h, align_up(y_max, alignment))
-            x_max = min(img_w, align_up(x_max, alignment))
+            y_min = (y_min // alignment) * alignment
+            x_min = (x_min // alignment) * alignment
+            y_max = align_up(y_max, alignment)
+            x_max = align_up(x_max, alignment)
+        # Always clamp to the image bounds: the padding subtraction above can push
+        # y_min/x_min negative or y_max/x_max past the image, which would produce
+        # negative-start slices grabbing the wrong region. (Clamping to the image
+        # preserves grid alignment because the image is pre-padded to a multiple
+        # of `alignment`.) Previously this only ran for alignment > 1, leaving the
+        # alignment==1 case — gaussian/ilastik with padding — unguarded.
+        y_min = max(0, y_min)
+        x_min = max(0, x_min)
+        y_max = min(img_h, y_max)
+        x_max = min(img_w, x_max)
 
         if plot_tiles:
             # Draw the bounding box WITH PADDING on the image
@@ -817,12 +827,15 @@ def get_features_targets(features, annot):
     annot : np.ndarray
         Extracted targets from the input annotation. Shape is (num_pixels,).
     """
-    # Get the annotated pixels and targets
+    # Get the annotated pixels and targets.
+    # Index the feature axis (0) with the spatial mask directly instead of
+    # moveaxis-ing the whole [F, *spatial] stack to [*spatial, F] first — the
+    # moveaxis forces a full contiguous copy of the entire feature stack, while
+    # annotations are typically a small fraction of the pixels. features[:, mask]
+    # gathers only the annotated columns ([F, N]); the result is identical.
     mask = annot > 0
-    features = np.moveaxis(features, 0, -1) #move [z, h, w, features]
-    # Select only the pixels that are annotated, linearizing them
-    features = features[mask] # Get the features
-    annot = annot[mask] # Get the targets
+    features = features[:, mask].T  # [N, F], same rows/order as the old moveaxis path
+    annot = annot[mask]             # [N]
 
     return features, annot
 
