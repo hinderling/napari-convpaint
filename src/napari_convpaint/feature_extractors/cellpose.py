@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import skimage
 import importlib.util
+from .. import utils
 from ..utils import get_device_from_torch_model
 
 def import_models():
@@ -158,23 +159,20 @@ class CellposeFeatures(FeatureExtractor):
         for t in T0[:3]:
             # Put to cpu, detach, and convert to numpy
             t = t.detach().cpu().numpy()[0]
-            # Resize if necessary
+            # Resize if necessary (upsample the downsampled feature maps to image
+            # resolution). resize_nearest is bit-identical to the previous
+            # skimage.transform.resize(order=0) here but far faster on the
+            # many-channel feature tensors (skimage is per-channel single-threaded).
             f,w,h = t.shape[-3:]
             if (w,h) != (w_img,h_img):
-                t = skimage.transform.resize(
-                        image=t,
-                        output_shape=(f, w_img, h_img),
-                        preserve_range=True, order=0)
+                t = utils.resize_nearest(t, (w_img, h_img))
             out_t.append(t)
 
         #append the output tensor from T1 (gradients and cell probability)
         t = T1.detach().cpu().numpy()[0]
         f,w,h = t.shape[-3:]
         if (w,h) != (w_img,h_img):
-            t = skimage.transform.resize(
-                    image=t,
-                    output_shape=(f, w_img, h_img),
-                    preserve_range=True, order=0)
+            t = utils.resize_nearest(t, (w_img, h_img))
         out_t.append(t)
 
         #append the original image

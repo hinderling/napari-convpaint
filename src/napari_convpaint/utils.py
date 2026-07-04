@@ -406,6 +406,28 @@ def rescale_features(feature_img, target_shape, order=1):
         out = torch_interpolate(t, size=output_shape[2:], mode=int_mode, align_corners=align_corners)
         return out.numpy().astype(feature_img.dtype, copy=False)
 
+def resize_nearest(arr, out_hw):
+    """Fast nearest-neighbour resize of the last two (spatial) dims of ``arr``.
+
+    Bit-identical to ``skimage.transform.resize(arr, ..., order=0)`` for
+    upsampling (out_h >= in_h and out_w >= in_w), but done with an index gather
+    instead of scipy's per-element ``zoom_shift``, which is dramatically faster
+    for many-channel feature stacks (skimage is single-threaded per channel).
+
+    ``arr`` : np.ndarray with spatial dims last, e.g. [F, H, W] or [F, Z, H, W].
+    ``out_hw`` : (out_h, out_w).
+    """
+    in_h, in_w = arr.shape[-2], arr.shape[-1]
+    out_h, out_w = int(out_hw[-2]), int(out_hw[-1])
+    if (in_h, in_w) == (out_h, out_w):
+        return arr
+    # skimage order=0 maps output index o -> floor((o + 0.5) * in / out); this is
+    # exact for upsampling (verified against skimage for integer and non-integer
+    # ratios). Clip guards the borders.
+    row = np.clip(((np.arange(out_h) + 0.5) * in_h / out_h).astype(int), 0, in_h - 1)
+    col = np.clip(((np.arange(out_w) + 0.5) * in_w / out_w).astype(int), 0, in_w - 1)
+    return arr[..., row, :][..., :, col]
+
 def rescale_class_labels(label_img, output_shape):
     """
     Rescale a class label image to the specified output size.
