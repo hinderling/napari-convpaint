@@ -50,6 +50,10 @@ class Dinov3Features(FeatureExtractor):
         self.num_input_channels = [3]
         self.norm_mode = "imagenet"
         self.rgb_input = True
+        # ViT self-attention mixes information across the whole image, so a
+        # pixel's features depend on the entire input — tiling cannot reproduce
+        # whole-image features (matches DINOv2 in dino.py).
+        self.has_global_context = True
         self.proposed_scalings = [[1]]
 
         # CLS + register tokens prefix the patch tokens in forward_features output

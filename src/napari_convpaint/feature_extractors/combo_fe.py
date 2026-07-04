@@ -109,10 +109,16 @@ class ComboFeatures(FeatureExtractor):
         # So, the combo FE itself is not patched, even if it works with a patch_size to comply with the models
         return False
 
-    def extract_features_pyramid(self, image, param, patched=False, device=None):
+    def extract_features_pyramid(self, data, param, patched=False, device=None):
+        # NOTE: each sub-FE runs with ITS OWN default scalings/order
+        # (get_default_params overrides fe_scalings/fe_order), not the combo-level
+        # ones. This is intentional: the sub-FEs are heterogeneous (e.g. a ViT
+        # that only supports scalings [1] combined with a CNN pyramid), so a
+        # single user-chosen scaling set cannot apply to both. Both halves are
+        # always unpatched (patched=False) and concatenated on the feature axis.
         def1 = self.model1.get_default_params(param)
-        features1 = self.model1.extract_features_pyramid(image, def1, patched=False, device=device)
+        features1 = self.model1.extract_features_pyramid(data, def1, patched=False, device=device)
         def2 = self.model2.get_default_params(param)
-        features2 = self.model2.extract_features_pyramid(image, def2, patched=False, device=device)
+        features2 = self.model2.extract_features_pyramid(data, def2, patched=False, device=device)
         features = np.concatenate((features1, features2), axis=0)
         return features

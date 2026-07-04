@@ -1,7 +1,16 @@
+import threading
 import numpy as np
 import torch
 from torch import nn
 from ..utils import get_device_from_torch_model, guided_model_download
+
+class _StopForward(Exception):
+    """Raised by the last hooked layer to abort the forward pass once all
+    selected features have been captured. A real exception (not `assert False`)
+    so that stopping still works under `python -O` / PYTHONOPTIMIZE, which strips
+    assert statements and would otherwise run the whole network every plane."""
+    pass
+
 
 def import_models():
     try:
@@ -76,7 +85,14 @@ class Hookmodel(FeatureExtractor):
         # INITIALIZATION OF LAYER HOOKS
         self.init_layer_dict()
 
-        self.outputs = []
+        # Hook outputs are kept per-thread: the forward hooks append captured
+        # feature maps into a thread-local list so concurrent extractions (e.g.
+        # the threaded dask prediction path, which shares this one FE instance
+        # across worker threads) do not clobber each other's outputs.
+        self._tls = threading.local()
+        # Handles for the registered forward hooks, so they can be removed before
+        # re-registering (otherwise a stale hook_last keeps aborting the forward).
+        self._hook_handles = []
         if layers is not None:
             self.register_hooks(layers)
         else:
@@ -238,25 +254,34 @@ class Hookmodel(FeatureExtractor):
     def get_num_input_channels(self):
         return [self.named_modules[0][1].in_channels]
     
+    def _thread_outputs(self):
+        """Per-thread list the forward hooks append captured features into."""
+        outputs = getattr(self._tls, "outputs", None)
+        if outputs is None:
+            outputs = []
+            self._tls.outputs = outputs
+        return outputs
+
     def extract_features_from_stack(self, image, device=torch.device("cpu")):
         self.move_model_to_device(device)
 
         # Convert image to numpy array and ensure correct data type
         image = np.asarray(image, dtype=np.float32)
 
-        self.outputs = []
+        # Fresh per-thread output list for this extraction (see __init__).
+        self._tls.outputs = []
         with torch.no_grad():
             # Treat z as batch dimension (temprorarily)
             ch_torch = torch.tensor(np.moveaxis(image, 1, 0))
             try:
                 _ = self(ch_torch) # Forward pass through the model
-            except AssertionError as ea:
-                pass # Stop at hook
+            except _StopForward:
+                pass # Stopped at the last hooked layer (all features captured)
             except Exception as ex:
                 raise ex
-            
+
         # Move the z dimension back to the second position (and features to first)
-        outputs = [o.permute(1, 0, 2, 3) for o in self.outputs]
+        outputs = [o.permute(1, 0, 2, 3) for o in self._tls.outputs]
 
         return outputs
 
@@ -265,25 +290,37 @@ class Hookmodel(FeatureExtractor):
         return self.model(tensor_image_dev)
 
     def hook_normal(self, module, input, output):
-        # print("extracting with normal layer")
-        self.outputs.append(output)
+        self._thread_outputs().append(output)
 
     def hook_last(self, module, input, output):
-        # print("extracting with last layer")
-        self.outputs.append(output)
-        assert False
+        self._thread_outputs().append(output)
+        raise _StopForward
 
     def register_hooks(self, selected_layers):  # , selected_layer_pos):
         selected_layers = self.layers_to_keys(selected_layers)
+        # Remove any previously registered hooks first — register_hooks is a
+        # public API and can be re-called on an existing instance; leaving the
+        # old hooks attached (in particular the old hook_last, which aborts the
+        # forward via `assert False`) would fire before the newly selected
+        # layers are reached and silently drop their features.
+        for handle in self._hook_handles:
+            handle.remove()
+        self._hook_handles = []
+        # Sort the selected layers into model execution order (module_dict is
+        # insertion-ordered = execution order). hook_last (which aborts the
+        # forward) must sit on the deepest-executing layer, and features must be
+        # captured in a consistent order; a caller passing layers out of order
+        # would otherwise abort early and silently drop the deeper layers.
+        module_order = {k: i for i, k in enumerate(self.module_dict.keys())}
+        selected_layers = sorted(selected_layers, key=lambda k: module_order.get(k, len(module_order)))
         self.features_per_layer = []
         self.selected_layers = selected_layers.copy()
         for ind in range(len(selected_layers)):
             self.features_per_layer.append(
                 self.module_dict[selected_layers[ind]].out_channels)
             if ind == len(selected_layers) - 1:
-                # print(f"registering LAST hook for layer {selected_layers[ind]}")
-                self.module_dict[selected_layers[ind]].register_forward_hook(self.hook_last)
+                handle = self.module_dict[selected_layers[ind]].register_forward_hook(self.hook_last)
             else:
-                # print(f"registering hook for layer {selected_layers[ind]}")
-                self.module_dict[selected_layers[ind]].register_forward_hook(self.hook_normal)
+                handle = self.module_dict[selected_layers[ind]].register_forward_hook(self.hook_normal)
+            self._hook_handles.append(handle)
         self._compute_nn_properties() # Recompute RF, patch size, and global context properties based on the new layers
