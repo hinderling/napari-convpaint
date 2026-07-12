@@ -471,6 +471,13 @@ class FeatureExtractor:
         can return False to opt out."""
         return True
 
+    def cache_spill_to_disk(self):
+        """Whether this FE's payloads may be spilled to the disk cache tier on
+        RAM eviction. FEs whose payloads are huge relative to their recompute
+        cost (e.g. CNN feature maps) should return False: they stay cacheable in
+        RAM but are dropped instead of pickled to disk."""
+        return True
+
     def cacheable_repr(self, data, param, device=torch.device("cpu")):
         """Compute the cacheable payload for `data`: the expensive, ideally-small
         intermediate that `features_from_cacheable` turns into full features.
