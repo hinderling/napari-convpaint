@@ -1673,15 +1673,24 @@ class ConvpaintWidget(QWidget):
         self.annot_layers = {l for l in self.annot_layers if l is None or l.name in self.viewer.layers}
         self.seg_layers = {l for l in self.seg_layers if l is None or l.name in self.viewer.layers}
 
-        # Clear the feature cache when an IMAGE layer is removed: entries are keyed
-        # by image content (which is now gone), so they would otherwise linger in
-        # RAM/disk until evicted. The cache repopulates lazily on the next use.
+        # Clear the feature cache only when the LAST user image layer is removed.
+        # The cache is content-addressed (a removed image's entries simply stop
+        # hitting and age out via LRU), so clearing on every removal would throw
+        # away valid entries for the images still open — including when the
+        # plugin itself removes/recreates its own probabilities/features layers
+        # (e.g. after a class-count change), which must never wipe the cache.
         removed = getattr(event, 'value', None) if event is not None else None
-        if isinstance(removed, napari.layers.Image):
-            fc = getattr(getattr(self, 'cp_model', None), '_feature_cache', None)
-            if fc is not None:
-                fc.clear()
-                self._refresh_cache_size_label()
+        plugin_layer_names = {self.proba_prefix, self.features_prefix}
+        if (isinstance(removed, napari.layers.Image)
+                and removed.name not in plugin_layer_names):
+            user_images_left = any(
+                isinstance(l, napari.layers.Image) and l.name not in plugin_layer_names
+                for l in self.viewer.layers)
+            if not user_images_left:
+                fc = getattr(getattr(self, 'cp_model', None), '_feature_cache', None)
+                if fc is not None:
+                    fc.clear()
+                    self._refresh_cache_size_label()
 
     # Layer selection
 
