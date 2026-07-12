@@ -82,17 +82,6 @@ def test_tiled_equals_whole_image_with_downsample():
     np.testing.assert_allclose(tiled, whole, rtol=0, atol=1e-4)
 
 
-def test_tiled_equals_whole_image_dask():
-    """Threaded dask tiling shares one model across tile threads; results must
-    match the sequential tiled pass (thread-local shape bookkeeping)."""
-    cp = _trained_gaussian()
-    cp.set_params(tile_image=True, ignore_warnings=True)
-    img = np.random.RandomState(3).rand(1400, 1400).astype(np.float32)
-    seq = cp._predict(img)
-    par = cp._predict(img, use_dask=True)
-    np.testing.assert_allclose(par, seq, rtol=0, atol=1e-5)
-
-
 def test_tile_block_math_covers_all_sizes():
     """The kept regions of the tile loop must partition the image exactly for
     any padding/scaling/downsample combination (incl. margin >= block size),

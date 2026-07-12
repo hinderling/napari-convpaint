@@ -1,5 +1,4 @@
 import pickle
-import threading
 from pathlib import Path
 import importlib
 import inspect
@@ -145,11 +144,6 @@ class ConvpaintModel:
         self.num_features = 0
         self._fe_locked_device = None
         self._clf_locked_device = None
-        # Per-call shape bookkeeping written by _get_features and read back by
-        # _predict_image/_restore_shape. Thread-local because tiled prediction
-        # with use_dask runs tiles as threads sharing this one model instance
-        # (Client(processes=False)) — plain attributes would race across tiles.
-        self._shape_tls = threading.local()
         self._params_to_reset_training = ['channel_mode',
                                           'normalize',
                                         #   'image_downsample',
@@ -1102,52 +1096,6 @@ class ConvpaintModel:
                       spill_ok=fe.cache_spill_to_disk())
         return fe.features_from_cacheable(payload, d.shape, param, patched=keep_patched)
 
-### PER-CALL SHAPE BOOKKEEPING (thread-local, see __init__)
-
-    def __getstate__(self):
-        # threading.local cannot be pickled, and dask serializes the model when
-        # tiles are submitted (even on a threaded cluster). Per-call shape state
-        # never needs to survive pickling — drop it and recreate on unpickle.
-        state = self.__dict__.copy()
-        state.pop('_shape_tls', None)
-        return state
-
-    def __setstate__(self, state):
-        self.__dict__.update(state)
-        self._shape_tls = threading.local()
-
-    @property
-    def original_shapes(self):
-        return getattr(self._shape_tls, "original_shapes", None)
-
-    @original_shapes.setter
-    def original_shapes(self, value):
-        self._shape_tls.original_shapes = value
-
-    @property
-    def pre_pad_shapes(self):
-        return getattr(self._shape_tls, "pre_pad_shapes", None)
-
-    @pre_pad_shapes.setter
-    def pre_pad_shapes(self, value):
-        self._shape_tls.pre_pad_shapes = value
-
-    @property
-    def padded_shapes(self):
-        return getattr(self._shape_tls, "padded_shapes", None)
-
-    @padded_shapes.setter
-    def padded_shapes(self, value):
-        self._shape_tls.padded_shapes = value
-
-    @property
-    def paddings(self):
-        return getattr(self._shape_tls, "paddings", None)
-
-    @paddings.setter
-    def paddings(self, value):
-        self._shape_tls.paddings = value
-
 ### BACKEND METHOD FOR FEATURE EXTRACTION
 
     def _get_features(self, data, annotations=None, restore_input_form=True,
@@ -2017,20 +1965,12 @@ class ConvpaintModel:
         else:
             predicted_image_complete = np.zeros(expected_shape, dtype=expected_dtype)
 
-        # Prepare dask client if enabled.
-        # NOTE (perf): use a threaded, single-process cluster (processes=False).
-        # A process-based cluster (the previous Client()) pickles every submitted
-        # task's arguments to worker processes — and because we submit the bound
-        # method self._predict_image, that pickles the whole ConvpaintModel
-        # (including the FE's torch weights) once per tile, plus it spawns worker
-        # processes on every call. With threads the model is shared in-process
-        # (no serialization, valid on MPS/GPU) and torch/numpy/catboost release
-        # the GIL during compute, so tiles still overlap.
+        # Prepare dask client if enabled
         if use_dask:
             from dask.distributed import Client
             import dask
             dask.config.set({'distributed.worker.daemon': False})
-            client = Client(processes=False)
+            client = Client()
             processes = []
 
         # Iterate over the blocks of the image and predict each block separately

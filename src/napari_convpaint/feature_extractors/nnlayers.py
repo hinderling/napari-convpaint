@@ -1,4 +1,3 @@
-import threading
 import numpy as np
 import torch
 from torch import nn
@@ -85,11 +84,7 @@ class Hookmodel(FeatureExtractor):
         # INITIALIZATION OF LAYER HOOKS
         self.init_layer_dict()
 
-        # Hook outputs are kept per-thread: the forward hooks append captured
-        # feature maps into a thread-local list so concurrent extractions (e.g.
-        # the threaded dask prediction path, which shares this one FE instance
-        # across worker threads) do not clobber each other's outputs.
-        self._tls = threading.local()
+        self.outputs = []
         # Handles for the registered forward hooks, so they can be removed before
         # re-registering (otherwise a stale hook_last keeps aborting the forward).
         self._hook_handles = []
@@ -265,41 +260,14 @@ class Hookmodel(FeatureExtractor):
     def get_num_input_channels(self):
         return [self.named_modules[0][1].in_channels]
     
-    def __getstate__(self):
-        # threading.local and torch hook handles cannot be pickled (dask
-        # serializes the model when tiles are submitted, even on a threaded
-        # cluster). Drop both and rebuild the hooks on unpickle.
-        state = self.__dict__.copy()
-        state.pop('_tls', None)
-        state.pop('_hook_handles', None)
-        return state
-
-    def __setstate__(self, state):
-        self.__dict__.update(state)
-        self._tls = threading.local()
-        self._hook_handles = []
-        # Hooks captured inside the pickled torch modules can't be removed
-        # without their handles — clear them and re-register cleanly.
-        for module in self.module_dict.values():
-            module._forward_hooks.clear()
-        self.register_hooks(self.selected_layers)
-
-    def _thread_outputs(self):
-        """Per-thread list the forward hooks append captured features into."""
-        outputs = getattr(self._tls, "outputs", None)
-        if outputs is None:
-            outputs = []
-            self._tls.outputs = outputs
-        return outputs
-
     def extract_features_from_stack(self, image, device=torch.device("cpu")):
         self.move_model_to_device(device)
 
         # Convert image to numpy array and ensure correct data type
         image = np.asarray(image, dtype=np.float32)
 
-        # Fresh per-thread output list for this extraction (see __init__).
-        self._tls.outputs = []
+        # Fresh output list for this extraction (filled by the forward hooks).
+        self.outputs = []
         with torch.no_grad():
             # Treat z as batch dimension (temprorarily)
             ch_torch = torch.tensor(np.moveaxis(image, 1, 0))
@@ -311,7 +279,7 @@ class Hookmodel(FeatureExtractor):
                 raise ex
 
         # Move the z dimension back to the second position (and features to first)
-        outputs = [o.permute(1, 0, 2, 3) for o in self._tls.outputs]
+        outputs = [o.permute(1, 0, 2, 3) for o in self.outputs]
 
         return outputs
 
@@ -320,10 +288,10 @@ class Hookmodel(FeatureExtractor):
         return self.model(tensor_image_dev)
 
     def hook_normal(self, module, input, output):
-        self._thread_outputs().append(output)
+        self.outputs.append(output)
 
     def hook_last(self, module, input, output):
-        self._thread_outputs().append(output)
+        self.outputs.append(output)
         raise _StopForward
 
     def register_hooks(self, selected_layers):  # , selected_layer_pos):
