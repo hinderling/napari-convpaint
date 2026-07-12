@@ -1,7 +1,6 @@
 import warnings
 import torch
 import numpy as np
-from scipy.ndimage import gaussian_filter
 from skimage.measure import block_reduce
 import skimage.transform
 import skimage.morphology as morph
@@ -192,9 +191,7 @@ def scale_img(image, scaling_factor, upscale=False, input_type="img"):
         If True, upscale the image by repeating the pixels.
     input_type : str ("img", "labels", "coords")
         Type of the input image. Determines how to scale the image:
-        If "img", use median, if "labels", use mode, if "coords", use max.
-    plot_result : bool
-        If True, plot the original and scaled images.
+        If "img", use block mean, if "labels", use mode, if "coords", use max.
 
     Returns:
     ----------
@@ -228,16 +225,9 @@ def scale_img(image, scaling_factor, upscale=False, input_type="img"):
         # Pad the image
         image = pad(image, (pad_top, pad_bot, pad_left, pad_right), input_type=input_type)
     
-    # IMAGES
-    img_strings = ('img', 'image', 'images') # Allow some flexibility in the input type string for images (but pass 'img' downstream)
-    if input_type in img_strings:
-        input_type = 'img'
-        if not use_gaussian_scaling:
-            # NEW (default): use block_reduce with mean
-            return scale_with_block_mean(image, scaling_factor)
-        else:
-            # OLD: by gaussian filter and striding
-            return scale_with_gaussian(image, scaling_factor, plot_blurred=plot_result)
+    # IMAGES: block-mean downscaling (strictly local — see scale_with_block_mean)
+    if input_type == 'img':
+        return scale_with_block_mean(image, scaling_factor)
 
     # For LABELS and COORDINATES, slice the last two dimensions
     slice_start = (0, 0) #((image.shape[-2] % scaling_factor) // 2,
@@ -276,13 +266,6 @@ def scale_img(image, scaling_factor, upscale=False, input_type="img"):
         if len(classes_before) != len(classes_after):
             warnings.warn(f"Classes have changed after downscaling from {classes_before} to {classes_after}.")
 
-        if plot_result:
-            from matplotlib import pyplot as plt
-            _, ax = plt.subplots(1, 2, figsize=(10, 5))
-            ax[0].imshow(image[0,...], cmap='gray')
-            ax[1].imshow(scaled_img[0,...], cmap='gray')
-            plt.show()
-        
         return scaled_img
 
     elif input_type == 'coords':
@@ -326,33 +309,6 @@ def scale_with_block_mean(image, scaling_factor):
         image = image[..., sh:H - (crop_h - sh), sw:W - (crop_w - sw)]
     block_shape = (1,) * (image.ndim - 2) + (scaling_factor, scaling_factor)
     return block_reduce(image, block_size=block_shape, func=np.mean)
-
-def scale_with_gaussian(image, scaling_factor, plot_blurred=False):
-    """Rescale image by Gaussian-blur + strided downsampling. The blur is intended to mitigate aliasing artifacts from the strided downsampling,
-    but it also causes some bleed across blocks, so features at a given position are influenced by a slightly larger area of the input image compared to block-mean downscaling.
-
-    Intended for use on images that have been padded to a multiple of `scaling_factor`.
-    But also works otherwise, in which case it centre-crops to a multiple of `scaling_factor` before block-reducing.
-    """
-    # Apply a small Gaussian blur to avoid aliasing
-    sigma = 0.4 * scaling_factor
-    sigma = [0] * (image.ndim - 2) + [sigma, sigma]  # Add zeros for batch and channel dimensions
-    blurred_img = gaussian_filter(image, sigma=sigma)  # assuming shape (..., H, W)
-    # Downsample by striding
-    H, W = image.shape[-2:]
-    start_h = scaling_factor // 2 # Move the start such that the image is centered (and with padding, the picked pixels align at the center of blocks)
-    start_w = scaling_factor // 2 # Move the start such that the image is centered (and with padding, the picked pixels align at the center of blocks)
-    scaled_img = blurred_img[..., start_h::scaling_factor, start_w::scaling_factor]
-
-    if plot_blurred:
-        from matplotlib import pyplot as plt
-        _, ax = plt.subplots(1, 3, figsize=(15, 5))
-        ax[0].imshow(image[0,0,...], cmap='gray')
-        ax[1].imshow(blurred_img[0,0,...], cmap='gray')
-        ax[2].imshow(scaled_img[0,0,...], cmap='gray')
-        plt.show()
-    
-    return scaled_img
 
 def fast_mode(arr, axis):
     """
