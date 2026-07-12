@@ -2039,6 +2039,10 @@ class ConvpaintWidget(QWidget):
         in_channels = self._parse_in_channels(self.input_channels)
         self._predict_all_probas_ready = False
 
+        # Per-slice cache-key memos: the compute pass reuses the content hash
+        # the cache peek already computed instead of re-hashing the slice.
+        key_memos = {}
+
         def _predict_and_write(step, cache_only):
             """Predict one slice and write it to the layers. With cache_only=True,
             only slices whose features are already cached are predicted (returns
@@ -2047,7 +2051,8 @@ class ConvpaintWidget(QWidget):
             image = image_stack_norm[..., step, :, :]
             out = self.cp_model._predict(image, add_seg=True, in_channels=in_channels,
                                          skip_norm=True, use_dask=self.use_dask,
-                                         fe_use_device=self.fe_device, cache_only=cache_only)
+                                         fe_use_device=self.fe_device, cache_only=cache_only,
+                                         key_memo=key_memos.setdefault(step, {}))
             if out is None:  # cache_only peek: this slice is not cached yet
                 return False
             probas, seg = out

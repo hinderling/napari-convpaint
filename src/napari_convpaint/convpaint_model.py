@@ -1059,7 +1059,8 @@ class ConvpaintModel:
         h.update(str(arr.dtype).encode())
         return h.hexdigest()
 
-    def _extract_pyramid_cached(self, d, param, keep_patched, device, cache_only=False):
+    def _extract_pyramid_cached(self, d, param, keep_patched, device, cache_only=False,
+                                key_memo=None, memo_idx=0):
         """Extract the feature pyramid for one image, consulting the feature
         cache. Behaviour with the cache disabled (the default) is exactly
         extract_features_pyramid; enabled, it caches/reuses the native features
@@ -1073,7 +1074,16 @@ class ConvpaintModel:
         fe = self.fe_model
         if cache is None or not cache.enabled or not fe.supports_feature_cache(param):
             return None if cache_only else fe.extract_features_pyramid(d, param, patched=keep_patched, device=device)
-        key = (self._data_hash(d), self._fe_cache_signature(param))
+        # `key_memo` (optional, supplied per prepared image by the caller) reuses
+        # the content hash computed by a preceding cache_only peek, so the
+        # compute pass doesn't hash the same padded array a second time.
+        if key_memo is not None and memo_idx in key_memo:
+            data_hash = key_memo[memo_idx]
+        else:
+            data_hash = self._data_hash(d)
+            if key_memo is not None:
+                key_memo[memo_idx] = data_hash
+        key = (data_hash, self._fe_cache_signature(param))
         payload = cache.get(key)
         if payload is None:
             if cache_only:
@@ -1122,7 +1132,8 @@ class ConvpaintModel:
     def _get_features(self, data, annotations=None, restore_input_form=True,
                           memory_mode=False, img_ids=None,
                           in_channels=None, skip_norm=False, use_device=None,
-                          pca_components=0, kmeans_clusters=0, cache_only=False):
+                          pca_components=0, kmeans_clusters=0, cache_only=False,
+                          key_memo=None):
         """
         Returns the features of images extracted by the feature extractor model.
 
@@ -1346,8 +1357,9 @@ class ConvpaintModel:
             warn=True,
         )
         features = [self._extract_pyramid_cached(
-                d, params_for_extract, keep_patched, fe_runtime_device, cache_only=cache_only)
-                    for d in data]
+                d, params_for_extract, keep_patched, fe_runtime_device, cache_only=cache_only,
+                key_memo=key_memo, memo_idx=i)
+                    for i, d in enumerate(data)]
 
         # cache_only peek: if any image's features are not already cached, signal
         # a miss so the caller can defer this image to the compute pass.
@@ -1741,7 +1753,8 @@ class ConvpaintModel:
 
         return features, annotations
 
-    def _predict(self, data, add_seg=False, in_channels=None, skip_norm=False, use_dask=False, fe_use_device=None, cache_only=False):
+    def _predict(self, data, add_seg=False, in_channels=None, skip_norm=False, use_dask=False, fe_use_device=None, cache_only=False,
+                 key_memo=None):
         """
         Backend method to predict images as a whole or tiling and parallelizing the prediction.
 
@@ -1778,6 +1791,9 @@ class ConvpaintModel:
         # but only for local-context FEs (a ViT's features depend on the whole
         # image). It is auto-enabled per image when the image is large enough to
         # actually be split; tile_image=True forces it regardless of size.
+        # The cache-key memo is only unambiguous for single-image calls (its
+        # indices refer to positions within one prepared-data list).
+        key_memo = key_memo if len(data) == 1 else None
         if cache_only:
             # Peek: only serve images whose features are already cached; return
             # None on any miss so the caller defers it to the compute pass. The
@@ -1786,7 +1802,8 @@ class ConvpaintModel:
             probas = []
             for d in data:
                 p = (None if (self._param.tile_image or self._should_auto_tile(d.shape))
-                     else self._predict_image(d, return_proba=True, fe_use_device=fe_use_device, cache_only=True))
+                     else self._predict_image(d, return_proba=True, fe_use_device=fe_use_device, cache_only=True,
+                                              key_memo=key_memo))
                 if p is None:
                     return None
                 probas.append(p)
@@ -1796,7 +1813,7 @@ class ConvpaintModel:
         else:
             probas = [self._parallel_predict_image(d, return_proba=True, use_dask=use_dask, fe_use_device=fe_use_device)
                       if self._should_auto_tile(d.shape) else
-                      self._predict_image(d, return_proba=True, fe_use_device=fe_use_device)
+                      self._predict_image(d, return_proba=True, fe_use_device=fe_use_device, key_memo=key_memo)
                       for d in data]
 
         # Restore input dimensionality (especially see if we want to remove z dimension)
@@ -1829,7 +1846,8 @@ class ConvpaintModel:
         h, w = image_shape[-2], image_shape[-1]
         return max(h, w) > AUTO_TILE_MIN_SIDE
 
-    def _predict_image(self, image, return_proba=True, feature_img=None, fe_use_device=None, cache_only=False):
+    def _predict_image(self, image, return_proba=True, feature_img=None, fe_use_device=None, cache_only=False,
+                       key_memo=None):
         """
         Backend method to predict images without tiling and parallelization.
         Returns the class probabilities and optionally the segmentation of the images.
@@ -1851,7 +1869,8 @@ class ConvpaintModel:
                                             in_channels=None, # already extracted outside
                                             skip_norm=True, # already normalized outside
                                             use_device=fe_use_device,
-                                            cache_only=cache_only)
+                                            cache_only=cache_only,
+                                            key_memo=key_memo)
             if feature_img is None:  # cache_only peek: features not cached
                 return None
 
