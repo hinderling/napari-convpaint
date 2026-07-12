@@ -265,6 +265,25 @@ class Hookmodel(FeatureExtractor):
     def get_num_input_channels(self):
         return [self.named_modules[0][1].in_channels]
     
+    def __getstate__(self):
+        # threading.local and torch hook handles cannot be pickled (dask
+        # serializes the model when tiles are submitted, even on a threaded
+        # cluster). Drop both and rebuild the hooks on unpickle.
+        state = self.__dict__.copy()
+        state.pop('_tls', None)
+        state.pop('_hook_handles', None)
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._tls = threading.local()
+        self._hook_handles = []
+        # Hooks captured inside the pickled torch modules can't be removed
+        # without their handles — clear them and re-register cleanly.
+        for module in self.module_dict.values():
+            module._forward_hooks.clear()
+        self.register_hooks(self.selected_layers)
+
     def _thread_outputs(self):
         """Per-thread list the forward hooks append captured features into."""
         outputs = getattr(self._tls, "outputs", None)

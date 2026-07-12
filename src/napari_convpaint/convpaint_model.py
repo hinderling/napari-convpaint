@@ -1146,6 +1146,18 @@ class ConvpaintModel:
 
 ### PER-CALL SHAPE BOOKKEEPING (thread-local, see __init__)
 
+    def __getstate__(self):
+        # threading.local cannot be pickled, and dask serializes the model when
+        # tiles are submitted (even on a threaded cluster). Per-call shape state
+        # never needs to survive pickling — drop it and recreate on unpickle.
+        state = self.__dict__.copy()
+        state.pop('_shape_tls', None)
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._shape_tls = threading.local()
+
     @property
     def original_shapes(self):
         return getattr(self._shape_tls, "original_shapes", None)
