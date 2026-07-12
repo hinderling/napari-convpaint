@@ -1443,24 +1443,26 @@ class ConvpaintModel:
         """
         nb_features = features.shape[0] # [nb_features, width, height]
 
-        # Move features to last dimension and flatten to [num_pixels, nb_features].
-        # reshape after moveaxis forces a contiguous copy of the whole feature
-        # stack (for a 2000px VGG16 image that is ~1.5 GB); predicting in row
-        # chunks bounds the extra peak memory to one chunk and keeps the result
-        # bit-identical. A single predict_proba/predict call on the full array
-        # is itself one uninterruptible multi-second call on large images.
-        features = np.moveaxis(features, 0, -1)
-        features = np.reshape(features, (-1, nb_features)) # flatten
-
-        chunk_size = 1_000_000
-        num_rows = features.shape[0]
+        # Move features to last dimension; this is a non-contiguous VIEW, so
+        # flattening it all at once would materialize a contiguous copy of the
+        # whole feature stack (for a 2000px VGG16 image that is ~1.5 GB).
+        # Instead, flatten and predict per block of leading rows of the view,
+        # so only one chunk-sized contiguous copy is alive at a time — the
+        # result is bit-identical to a full flatten+predict. A single
+        # predict_proba/predict call on the full array would also be one
+        # uninterruptible multi-second call on large images.
+        features = np.moveaxis(features, 0, -1)  # view [rows, ..., nb_features]
+        num_pixels = features.size // nb_features
+        pixels_per_row = max(1, num_pixels // features.shape[0])
+        rows_per_chunk = max(1, 1_000_000 // pixels_per_row)
         predict_fn = self.classifier.predict_proba if return_proba else self.classifier.predict
-        if num_rows > chunk_size:
-            parts = [predict_fn(features[i:i+chunk_size])
-                     for i in range(0, num_rows, chunk_size)]
+        if features.shape[0] > rows_per_chunk:
+            parts = [predict_fn(np.ascontiguousarray(features[i:i + rows_per_chunk])
+                                .reshape(-1, nb_features))
+                     for i in range(0, features.shape[0], rows_per_chunk)]
             predictions = np.concatenate(parts, axis=0)
         else:
-            predictions = predict_fn(features)
+            predictions = predict_fn(features.reshape(-1, nb_features))
 
         if return_proba:
             predictions = np.moveaxis(predictions, -1, 0) # [nb_classes, width*height]
