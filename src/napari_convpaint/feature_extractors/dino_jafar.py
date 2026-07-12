@@ -84,6 +84,11 @@ class DinoJafarFeatures(FeatureExtractor):
                                   [1, 8],
                                   [1, 8, self.patch_size],
                                   ]
+        # Internal JAFAR upsampling scales; normally (re)set from fe_scalings in
+        # get_enforced_params before extraction, but default it here so direct FE
+        # use (extract_features_from_plane without going through ConvpaintModel)
+        # doesn't hit an AttributeError.
+        self.jafar_scalings = [1]
 
         # Parent .create_model() saves tuple (hr_head, backbone) in self.model
         self.model, self.backbone = self.model
@@ -169,6 +174,13 @@ class DinoJafarFeatures(FeatureExtractor):
         #if not param.fe_scalings:
             #param.fe_scalings = [4]
         return param
+
+    def cache_extra_state(self, param):
+        # The user's fe_scalings are moved out of the Param (forced to [1]) into
+        # self.jafar_scalings by get_enforced_params, and the cached payload
+        # bakes them in — so they must be part of the cache key or changing the
+        # scalings would silently serve stale features.
+        return ("jafar_scalings", tuple(self.jafar_scalings))
 
     # ------------------------------------------------------------------ #
     # Public extraction entry points
