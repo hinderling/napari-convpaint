@@ -1907,7 +1907,7 @@ class ConvpaintModel:
             return pred_reshaped[0]
         return pred_reshaped
 
-    def _parallel_predict_image(self, image, return_proba=True, use_dask=False, fe_use_device=None, plot_tiles=False, out=None):
+    def _parallel_predict_image(self, image, return_proba=True, use_dask=False, fe_use_device=None, out=None):
         """
         Backend method to predict an image using tiling and parallelization.
         Returns the class probabilities and optionally the segmentation of the images.
@@ -1937,12 +1937,26 @@ class ConvpaintModel:
         # tile_annot without alignment).
         fe_block_size = self.fe_model.get_tile_block_size()
         block_size = fe_block_size if fe_block_size is not None else DEFAULT_TARGET_TILE_BLOCK
-        alignment = self._get_fe_alignment(self._param) # scalings_lcm * fe_patch
+        alignment = self._get_fe_alignment(self._param) # scalings_lcm * fe_patch (* downsample)
         fe_margin = self.fe_model.get_padding() * int(np.max(self._param.fe_scalings))
+        if fe_margin == 0:
+            # FEs that declare no receptive-field padding (patch/global-context
+            # FEs like ViTs or cellpose) still produce features that depend on
+            # the surrounding tile content — keep the legacy 50 px overlap so
+            # tile boundaries are blended rather than hard seams.
+            fe_margin = 50
         margin = utils.align_up(fe_margin, alignment)
         maxblock = max(alignment, (block_size // alignment) * alignment)
-        nblocks_rows = image.shape[-2] // maxblock
-        nblocks_cols = image.shape[-1] // maxblock
+        # The kept-region bookkeeping below requires maxblock > margin (each
+        # tile's kept block must start beyond the previous tile's margin);
+        # grow the block for extreme margins (deep CNN layers at large
+        # scalings), otherwise blocks would duplicate/skip rows.
+        if maxblock <= margin:
+            maxblock = margin + alignment
+        # Ceil division: the last (partial) block covers the remainder; an exact
+        # multiple must NOT add an extra empty block (it would reach the FE).
+        nblocks_rows = -(-image.shape[-2] // maxblock)
+        nblocks_cols = -(-image.shape[-1] // maxblock)
 
         image = self._prep_dims_single(image)[0] # NOTE: should technically not be necessary, as done outside
 
@@ -1989,11 +2003,8 @@ class ConvpaintModel:
         new_min_col_ind_collection = []
         new_min_row_ind_collection = []
 
-        if plot_tiles:
-            img_to_plot = image.copy()
-
-        for row in range(nblocks_rows+1):
-            for col in range(nblocks_cols+1):
+        for row in range(nblocks_rows):
+            for col in range(nblocks_cols):
                 min_row = np.max([0, row*maxblock-margin])
                 min_col = np.max([0, col*maxblock-margin])
                 max_row = np.min([image.shape[-2], (row+1)*maxblock+margin])
@@ -2025,18 +2036,6 @@ class ConvpaintModel:
                 # image (np.memmap / zarr / dask) only loads the tile being
                 # processed rather than the whole image.
                 image_block = np.asarray(image[..., min_row:max_row, min_col:max_col])
-
-                # For plotting:
-                # Take the entire image, add boarders for the block
-                if plot_tiles:
-                    img_to_plot[..., min_row, min_col:max_col] = 1
-                    img_to_plot[..., max_row-1, min_col:max_col] = 1
-                    img_to_plot[..., min_row:max_row, min_col] = 1
-                    img_to_plot[..., min_row:max_row, max_col-1] = 1
-                    img_to_plot[..., min_row_ind, min_col_ind:max_col_ind] = 0.5
-                    img_to_plot[..., max_row_ind-1, min_col_ind:max_col_ind] = 0.5
-                    img_to_plot[..., min_row_ind:max_row_ind, min_col_ind] = 0.5
-                    img_to_plot[..., min_row_ind:max_row_ind, max_col_ind-1] = 0.5
 
                 # Predict the block using dask or directly (with no normalization, as it is done outside)
                 if use_dask:
@@ -2080,11 +2079,6 @@ class ConvpaintModel:
                     min_row_ind_collection[k]:max_row_ind_collection[k],
                     min_col_ind_collection[k]:max_col_ind_collection[k]] = crop_out
             client.close()
-
-        if plot_tiles:
-            from matplotlib import pyplot as plt
-            plt.imshow(img_to_plot[0, 0])
-            plt.show()
 
         return predicted_image_complete
 
@@ -2409,7 +2403,16 @@ class ConvpaintModel:
         fe_scalings = param.fe_scalings
         scalings_lcm = lcm(*fe_scalings)
         fe_patch  = self.fe_model.get_patch_size()
-        return scalings_lcm * fe_patch
+        alignment = scalings_lcm * fe_patch
+        # Tiles are cut in original pixel space but downsampled inside
+        # _get_features, so tile origins must also land on the downsample grid —
+        # otherwise the block-mean groups (and hence the features) of a tile are
+        # phase-shifted relative to the whole-image pass. Upscaling (negative
+        # image_downsample) keeps any aligned origin on the grid.
+        downsample = getattr(param, "image_downsample", 1)
+        if downsample and downsample > 1:
+            alignment *= downsample
+        return alignment
 
     def _get_overall_paddings(self, param, img_shape: Tuple[int, ...]):
         """
