@@ -1,4 +1,5 @@
 import pickle
+import threading
 from pathlib import Path
 import importlib
 import inspect
@@ -144,6 +145,11 @@ class ConvpaintModel:
         self.num_features = 0
         self._fe_locked_device = None
         self._clf_locked_device = None
+        # Per-call shape bookkeeping written by _get_features and read back by
+        # _predict_image/_restore_shape. Thread-local because tiled prediction
+        # with use_dask runs tiles as threads sharing this one model instance
+        # (Client(processes=False)) — plain attributes would race across tiles.
+        self._shape_tls = threading.local()
         self._params_to_reset_training = ['channel_mode',
                                           'normalize',
                                         #   'image_downsample',
@@ -1071,6 +1077,40 @@ class ConvpaintModel:
             payload = fe.cacheable_repr(d, param, device)
             cache.put(key, payload, fe.cacheable_nbytes(payload))
         return fe.features_from_cacheable(payload, d.shape, param, patched=keep_patched)
+
+### PER-CALL SHAPE BOOKKEEPING (thread-local, see __init__)
+
+    @property
+    def original_shapes(self):
+        return getattr(self._shape_tls, "original_shapes", None)
+
+    @original_shapes.setter
+    def original_shapes(self, value):
+        self._shape_tls.original_shapes = value
+
+    @property
+    def pre_pad_shapes(self):
+        return getattr(self._shape_tls, "pre_pad_shapes", None)
+
+    @pre_pad_shapes.setter
+    def pre_pad_shapes(self, value):
+        self._shape_tls.pre_pad_shapes = value
+
+    @property
+    def padded_shapes(self):
+        return getattr(self._shape_tls, "padded_shapes", None)
+
+    @padded_shapes.setter
+    def padded_shapes(self, value):
+        self._shape_tls.padded_shapes = value
+
+    @property
+    def paddings(self):
+        return getattr(self._shape_tls, "paddings", None)
+
+    @paddings.setter
+    def paddings(self, value):
+        self._shape_tls.paddings = value
 
 ### BACKEND METHOD FOR FEATURE EXTRACTION
 
