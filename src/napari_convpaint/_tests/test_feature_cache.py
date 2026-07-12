@@ -178,3 +178,85 @@ def test_disk_bytes_never_exceeds_cap():
         c.put((i,), _arr(1))
         assert c.disk_nbytes <= cap  # invariant holds after every put
     c.close()
+
+
+# --- integration with the model-level cache protocol -----------------------
+
+def test_oversized_payload_goes_to_disk_tier():
+    from napari_convpaint.feature_cache import FeatureCache
+    c = FeatureCache(max_bytes=1024 * 1024, headroom_frac=0.0,
+                     disk_max_bytes=64 * 1024 * 1024)
+    try:
+        payload = np.zeros(2 * 1024 * 1024, dtype=np.uint8)  # 2 MB > 1 MB RAM cap
+        c.put(('big',), payload)
+        assert len(c) == 0
+        assert c.stats()['disk_entries'] == 1
+        got = c.get(('big',))
+        assert got is not None and got.nbytes == payload.nbytes
+    finally:
+        c.close()
+
+
+def test_spill_ok_false_never_touches_disk():
+    from napari_convpaint.feature_cache import FeatureCache
+    c = FeatureCache(max_bytes=1024 * 1024, headroom_frac=0.0,
+                     disk_max_bytes=64 * 1024 * 1024)
+    try:
+        c.put(('a',), np.zeros(600 * 1024, dtype=np.uint8), spill_ok=False)
+        c.put(('b',), np.zeros(600 * 1024, dtype=np.uint8))  # evicts 'a' -> dropped
+        assert c.stats()['disk_entries'] == 0
+        assert c.get(('a',)) is None
+        c.put(('huge',), np.zeros(2 * 1024 * 1024, dtype=np.uint8), spill_ok=False)
+        assert c.get(('huge',)) is None
+        assert c.stats()['disk_entries'] == 0
+    finally:
+        c.close()
+
+
+def test_hookmodel_opts_out_of_disk_spill():
+    from napari_convpaint.feature_extractor import FeatureExtractor
+    assert FeatureExtractor.cache_spill_to_disk(object()) is True
+    from napari_convpaint.feature_extractors.nnlayers import Hookmodel
+    assert Hookmodel.cache_spill_to_disk(object()) is False
+
+
+def test_cache_key_includes_fe_instance_state():
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    cp = ConvpaintModel('gaussian')
+    sig_before = cp._fe_cache_signature(cp._param)
+    cp.fe_model.sigma = cp.fe_model.sigma + 1
+    assert cp._fe_cache_signature(cp._param) != sig_before
+    # generic hook: any change in reported extra state must change the key
+    orig = cp.fe_model.cache_extra_state
+    cp.fe_model.cache_extra_state = lambda p: ('jafar_scalings', (1, 8))
+    try:
+        assert cp._fe_cache_signature(cp._param) != sig_before
+    finally:
+        cp.fe_model.cache_extra_state = orig
+
+
+def test_cached_prediction_bit_identical_and_hits():
+    import warnings as _w
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    rng = np.random.RandomState(0)
+    img = rng.rand(1, 96, 96).astype(np.float32)
+    annot = np.zeros((1, 96, 96), dtype=np.uint8)
+    annot[0, :12, :12] = 1
+    annot[0, -12:, -12:] = 2
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        cp = ConvpaintModel('gaussian')
+        fc = cp.enable_feature_cache(max_bytes=64 * 1024 * 1024)
+        cp.train(img, annot)
+        seg_first = cp.segment(img)
+        hits_before = fc.stats()['hits']
+        seg_second = cp.segment(img)
+        assert fc.stats()['hits'] > hits_before          # second pass hits
+        assert np.array_equal(seg_first, seg_second)
+        # peek semantics
+        assert cp._predict(rng.rand(1, 96, 96).astype(np.float32), cache_only=True) is None
+        assert cp._predict(img, cache_only=True) is not None
+        # uncached model produces the identical segmentation
+        cp2 = ConvpaintModel('gaussian')
+        cp2.train(img, annot)
+        assert np.array_equal(seg_second, cp2.segment(img))
