@@ -1042,7 +1042,11 @@ class ConvpaintModel:
         keys = getattr(self, "_params_to_reset_training", [])
         sig = tuple((k, _hashable(getattr(param, k, None))) for k in keys)
         return sig + (("image_downsample", getattr(param, "image_downsample", 1)),
-                      ("patch_size", self.fe_model.get_patch_size()))
+                      ("patch_size", self.fe_model.get_patch_size()),
+                      # FE instance state outside the Param (e.g. jafar_scalings,
+                      # gaussian sigma) — without it, changing that state would
+                      # serve stale cached features.
+                      ("fe_extra", _hashable(self.fe_model.cache_extra_state(param))))
 
     @staticmethod
     def _data_hash(d):

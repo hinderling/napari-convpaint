@@ -179,6 +179,13 @@ class DinoJafarFeatures(FeatureExtractor):
             #param.fe_scalings = [4]
         return param
 
+    def cache_extra_state(self, param):
+        # The user's fe_scalings are moved out of the Param (forced to [1]) into
+        # self.jafar_scalings by get_enforced_params, and the cached payload
+        # bakes them in — so they must be part of the cache key or changing the
+        # scalings would silently serve stale features.
+        return ("jafar_scalings", tuple(self.jafar_scalings))
+
     # ------------------------------------------------------------------ #
     # Public extraction entry points
     # ------------------------------------------------------------------ #
