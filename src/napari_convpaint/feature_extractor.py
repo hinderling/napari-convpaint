@@ -478,6 +478,15 @@ class FeatureExtractor:
         RAM but are dropped instead of pickled to disk."""
         return True
 
+    def cache_extra_state(self, param):
+        """Extraction-relevant state that lives on the FE instance rather than in
+        `param`, to be mixed into the feature-cache key. Any FE whose output
+        depends on constructor/instance state (e.g. sigmas, scalings moved out of
+        the Param by `get_enforced_params`) must return it here, or stale cached
+        features will be served after that state changes. Return value must be
+        hashable (or None)."""
+        return None
+
     def cacheable_repr(self, data, param, device=torch.device("cpu")):
         """Compute the cacheable payload for `data`: the expensive, ideally-small
         intermediate that `features_from_cacheable` turns into full features.
