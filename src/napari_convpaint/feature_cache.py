@@ -80,7 +80,7 @@ class FeatureCache:
                  enabled: bool = True,
                  disk_max_bytes: int = 0,
                  disk_dir: str | None = None):
-        self._store: "OrderedDict[tuple, tuple]" = OrderedDict()  # key -> (payload, nbytes)
+        self._store: "OrderedDict[tuple, tuple]" = OrderedDict()  # key -> (payload, nbytes, spill_ok)
         self._total_bytes = 0
         self._headroom_frac = float(headroom_frac)
         self.enabled = bool(enabled)
@@ -148,33 +148,45 @@ class FeatureCache:
         self.misses += 1
         return None
 
-    def put(self, key, payload, nbytes: int | None = None):
+    def put(self, key, payload, nbytes: int | None = None, spill_ok: bool = True):
         """Store `payload` under `key` if it fits the budget; else evict LRU and
-        retry, and if it still does not fit, skip caching (caller recomputes)."""
+        retry. A payload that can never fit the RAM tier goes straight to the
+        disk tier (if `spill_ok` and it fits the disk budget); otherwise caching
+        is skipped and the caller recomputes. `spill_ok=False` keeps a payload
+        out of the disk tier entirely (RAM only, evict = drop) — for FEs whose
+        payloads are huge relative to their recompute cost."""
         if not self.enabled or payload is None:
             return
         if nbytes is None:
             nbytes = _payload_nbytes(payload)
-        # A single payload larger than the whole cap can never be cached safely.
-        if nbytes > self._max_bytes:
-            return
         # Overwrite of an existing key: drop the old size first.
         if key in self._store:
             self._total_bytes -= self._store.pop(key)[1]
+        # A single payload larger than the whole RAM cap can never be held in
+        # RAM — route it directly to the disk tier instead of dropping it.
+        if nbytes > self._max_bytes:
+            if spill_ok:
+                self._spill_to_disk(key, payload, nbytes)
+            return
         # Evict least-recently-used until the new entry fits.
         while self._store and not self._fits(nbytes):
             self._evict_one()
         if not self._fits(nbytes):
-            return  # even empty it doesn't fit the live headroom → don't cache
-        self._store[key] = (payload, nbytes)
+            # The live headroom refuses it even with the RAM tier empty; the
+            # disk tier can still hold it.
+            if spill_ok:
+                self._spill_to_disk(key, payload, nbytes)
+            return
+        self._store[key] = (payload, nbytes, spill_ok)
         self._store.move_to_end(key)
         self._total_bytes += nbytes
 
     def _evict_one(self):
-        key, (payload, nbytes) = self._store.popitem(last=False)  # LRU = oldest
+        key, (payload, nbytes, spill_ok) = self._store.popitem(last=False)  # LRU = oldest
         self._total_bytes -= nbytes
         # Spill to the disk tier instead of dropping (if disk spillover is on).
-        self._spill_to_disk(key, payload, nbytes)
+        if spill_ok:
+            self._spill_to_disk(key, payload, nbytes)
 
     # -- disk tier ---------------------------------------------------------
 

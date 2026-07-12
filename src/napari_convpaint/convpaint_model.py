@@ -1075,7 +1075,8 @@ class ConvpaintModel:
             if cache_only:
                 return None
             payload = fe.cacheable_repr(d, param, device)
-            cache.put(key, payload, fe.cacheable_nbytes(payload))
+            cache.put(key, payload, fe.cacheable_nbytes(payload),
+                      spill_ok=fe.cache_spill_to_disk())
         return fe.features_from_cacheable(payload, d.shape, param, patched=keep_patched)
 
 ### PER-CALL SHAPE BOOKKEEPING (thread-local, see __init__)

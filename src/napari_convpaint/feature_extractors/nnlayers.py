@@ -201,6 +201,12 @@ class Hookmodel(FeatureExtractor):
         # So we return False here, even if the patch size is >1.
         return False
 
+    def cache_spill_to_disk(self):
+        # CNN native payloads are per-pixel multi-scale feature maps — often
+        # hundreds of MB per slice, far more than the recompute cost justifies
+        # pickling to disk. Keep them RAM-cacheable only.
+        return False
+
     def _compute_nn_properties(self):
         """Walk the network in execution order, accumulating receptive field,
         total stride, and whether any global-context op was encountered, up to
