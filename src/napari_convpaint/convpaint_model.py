@@ -553,6 +553,10 @@ class ConvpaintModel:
             data = safe_load(pkl_path)
             used_compat = True
         new_param = data.get('param', None)
+        # Remap legacy FE names on the loaded param itself (it replaces
+        # self._param below, so the remap in _set_fe alone would be lost).
+        if getattr(new_param, 'fe_name', None) in LEGACY_FE_NAMES:
+            new_param.fe_name = LEGACY_FE_NAMES[new_param.fe_name]
         # If there is the old use_gpu parameter saved, use lock_device to set the device policy for the feature extractor accordingly
         if hasattr(new_param, 'use_gpu'):
             device = 'gpu' if new_param.use_gpu else 'cpu'
@@ -614,6 +618,10 @@ class ConvpaintModel:
                 self.lock_device(device, part='both')
                 del params_to_set['use_gpu']
             new_param.set(**params_to_set)
+        # Remap legacy FE names on the loaded param itself (it replaces
+        # self._param below, so the remap in _set_fe alone would be lost).
+        if new_param.fe_name in LEGACY_FE_NAMES:
+            new_param.fe_name = LEGACY_FE_NAMES[new_param.fe_name]
         self._set_fe(new_param.fe_name, new_param.fe_layers)
         self._param = new_param
 
@@ -1086,8 +1094,9 @@ class ConvpaintModel:
         invalidates extracted features (reusing the model's own train-reset set),
         plus image_downsample and the FE's patch size."""
         def _hashable(v):
-            # fe_scalings / fe_layers are lists -> make them hashable for the key.
-            if isinstance(v, list):
+            # fe_scalings / fe_layers are lists (and FE extra state may nest
+            # lists in tuples) -> make them hashable for the key.
+            if isinstance(v, (list, tuple)):
                 return tuple(_hashable(x) for x in v)
             return v
         keys = getattr(self, "_params_to_reset_training", [])
