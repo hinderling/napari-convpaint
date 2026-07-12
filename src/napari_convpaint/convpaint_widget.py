@@ -2630,8 +2630,9 @@ class ConvpaintWidget(QWidget):
                 setattr(new_param, attr, val) # Set the default value in the param object
         if adjusted_params: show_info(f'The feature extractor adjusted the parameters {adjusted_params}')
 
-        # Create a new model with the new FE
-        self.cp_model = self._cpm_class(param=new_param)
+        # Create a new model with the new FE, reusing the temp FE instance so
+        # heavy extractors (torch weights) are not loaded a second time.
+        self.cp_model = self._cpm_class(param=new_param, _fe_model=temp_fe_model_for_defaults)
         self._apply_feature_cache(recreate=True)
         self._reset_device_options()
         self._reset_clf() # Call to take all actions needed after resetting the clf
