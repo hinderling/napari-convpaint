@@ -108,7 +108,11 @@ def guided_model_download(model_file: str, model_url: str, model_dir: str = None
         pass # Fall back to CLI progress if napari is not available
 
     if use_napari:
-        viewer.window._status_bar._toggle_activity_dock(True)
+        # Private napari API — best-effort only, never let a rename break downloads.
+        try:
+            viewer.window._status_bar._toggle_activity_dock(True)
+        except Exception:
+            pass
 
     try:
         with requests.get(model_url, stream=True) as r:
@@ -122,8 +126,12 @@ def guided_model_download(model_file: str, model_url: str, model_dir: str = None
                 pbr_ctx = napari_progress(total=num_chunks)
                 # No-op display() suppresses the activity-dock ETA label (which would
                 # otherwise overflow the row); the QProgressBar still advances via the
-                # 'value' event emitted by update().
-                pbr_ctx.display = lambda msg=None, pos=None: None
+                # 'value' event emitted by update(). Best-effort: relies on napari's
+                # tqdm-subclass internals.
+                try:
+                    pbr_ctx.display = lambda msg=None, pos=None: None
+                except Exception:
+                    pass
             else:
                 print(f"Downloading {model_file} ({total / 1e6:.2f} MB) from {model_url}...")
                 pbr_ctx = None
@@ -159,18 +167,21 @@ def guided_model_download(model_file: str, model_url: str, model_dir: str = None
         raise RuntimeError(f"Model download failed: {e}")
     finally:
         if use_napari:
-            viewer.window._status_bar._toggle_activity_dock(False)
+            try:
+                viewer.window._status_bar._toggle_activity_dock(False)
+            except Exception:
+                pass
 
     return model_path
 
 
 ### SCALING AND RESCALING
 
-def scale_img(image, scaling_factor, upscale=False, input_type="img", plot_result=False, use_gaussian_scaling=False):
+def scale_img(image, scaling_factor, upscale=False, input_type="img"):
     """
     Downscale an image by averaging over non-overlapping blocks of the specified size.
     OR Upscale by repeating the pixels.
-    
+
     Parameters:
     ----------
     image : np.ndarray
