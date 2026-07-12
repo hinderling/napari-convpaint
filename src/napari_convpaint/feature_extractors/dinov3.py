@@ -1,7 +1,6 @@
-import torch
 import timm
-import numpy as np
-from ..utils import get_device_from_torch_model, guided_model_download
+from ..utils import guided_model_download
+from .dino import Dinov2Features
 
 # Weights are pulled from the open timm-mirrored HuggingFace repos. To add a
 # variant, register it here and in AVAILABLE_MODELS. Requires timm >= 1.0.20.
@@ -26,40 +25,21 @@ STD_MODELS = {
     "dinov3": {"fe_name": "dinov3_small-plus"},
 }
 
-from ..feature_extractor import FeatureExtractor
 
-
-class Dinov3Features(FeatureExtractor):
+class Dinov3Features(Dinov2Features):
     """Feature extractor using DINOv3, a self-supervised vision transformer model from Meta AI Research.
 
     Loaded via the timm library (timm-mirrored HuggingFace weights, no gating).
+    Shares the whole extraction pipeline with Dinov2Features; only model
+    creation and the patch-token slicing differ.
     """
 
+    MODELS = DINOV3_MODELS
+
     def __init__(self, model_name='dinov3_small-plus', **kwargs):
-
-        if model_name not in DINOV3_MODELS:
-            raise ValueError(
-                f"Unknown DINOv3 model '{model_name}'. Available: {list(DINOV3_MODELS)}"
-            )
-        spec = DINOV3_MODELS[model_name]
-
-        super().__init__(model_name=model_name)
-
-        self.patch_size = spec['patch_size']
-        self.padding = 0  # final padding is automatically 1/2 patch size
-        self.num_input_channels = [3]
-        self.norm_mode = "imagenet"
-        self.rgb_input = True
-        # ViT self-attention mixes information across the whole image, so a
-        # pixel's features depend on the entire input — tiling cannot reproduce
-        # whole-image features (matches DINOv2 in dino.py).
-        self.has_global_context = True
-        self.proposed_scalings = [[1]]
-
+        super().__init__(model_name=model_name, **kwargs)
         # CLS + register tokens prefix the patch tokens in forward_features output
         self.num_prefix_tokens = getattr(self.model, 'num_prefix_tokens', 5)
-
-        self.device = get_device_from_torch_model(self.model)
 
     @staticmethod
     def create_model(model_name):
@@ -83,65 +63,6 @@ class Dinov3Features(FeatureExtractor):
         desc += "\n(The ViT-S+ version is used, with 4 register tokens and patch size 16x16.)"
         return desc
 
-    def get_default_params(self, param=None):
-        param = super().get_default_params(param=param)
-        param.fe_name = self.model_name
-        param.fe_layers = None
-        param.fe_scalings = [1]
-        param.fe_order = 0
-        param.tile_image = False
-        param.tile_annotations = False
-        return param
-
-    def get_enforced_params(self, param=None):
-        param = super().get_enforced_params(param=param)
-        param.fe_scalings = [1]
-        return param
-
-    def extract_features_from_stack(self, image, device=torch.device("cpu"), **kwargs):
-        # Stack passed as a single batched tensor.
-        self.move_model_to_device(device)
-
-        image_tensor = self.prep_img(image)
-
-        with torch.no_grad():
-            features = self.model.forward_features(image_tensor)
+    def _get_patch_tokens(self, features_out):
         # timm returns [B, num_prefix_tokens + N_patches, D] — drop the prefix tokens.
-        features = features[:, self.num_prefix_tokens:, :]
-
-        features = features.detach().cpu().numpy()
-        features = np.moveaxis(features, -1, 0)
-
-        patch_size = self.get_patch_size()
-        features_shape = (features.shape[0],
-                          image.shape[1],
-                          int(image.shape[2] / patch_size),
-                          int(image.shape[3] / patch_size))
-
-        features = np.reshape(features, features_shape)
-
-        assert features.shape[-2] == image.shape[-2] / patch_size
-        assert features.shape[-1] == image.shape[-1] / patch_size
-
-        return [features]
-
-    def prep_img(self, image):
-
-        patch_size = self.get_patch_size()
-        assert len(image.shape) == 4
-        assert image.shape[0] == 3
-        assert image.shape[-2] % patch_size == 0
-        assert image.shape[-1] % patch_size == 0
-
-        h, w = image.shape[-2:]
-        new_h = h - (h % patch_size)
-        new_w = w - (w % patch_size)
-        if new_h != h or new_w != w:
-            image = image[:, :new_h, :new_w]
-
-        # Treat z as batch dimension (temporarily).
-        image = np.moveaxis(image, 1, 0)
-
-        image_tensor = torch.tensor(image, dtype=torch.float32, device=self.device)
-
-        return image_tensor
+        return features_out[:, self.num_prefix_tokens:, :]

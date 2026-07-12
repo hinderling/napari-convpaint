@@ -19,24 +19,35 @@ STD_MODELS = {
 from ..feature_extractor import FeatureExtractor
 
 class Dinov2Features(FeatureExtractor):
-    """Feature extractor using DINOv2, a self-supervised vision transformer model from Facebook AI Research (Meta)."""
-    
+    """Feature extractor using DINOv2, a self-supervised vision transformer model from Facebook AI Research (Meta).
+
+    Also serves as the shared base for other DINO-family ViT extractors (see
+    dinov3.py): subclasses override ``MODELS``, ``create_model`` and
+    ``_get_patch_tokens`` and inherit the whole stack-extraction pipeline."""
+
+    # Registry of model specs this class accepts; subclasses override it.
+    MODELS = DINOV2_MODELS
+
     def __init__(self, model_name='dinov2_small-reg', **kwargs):
 
-        if model_name not in DINOV2_MODELS:
+        models = type(self).MODELS
+        if model_name not in models:
             raise ValueError(
-                f"Unknown DINOv2 model '{model_name}'. Available: {list(DINOV2_MODELS)}"
+                f"Unknown {type(self).__name__} model '{model_name}'. Available: {list(models)}"
             )
-        spec = DINOV2_MODELS[model_name]
-        
+        spec = models[model_name]
+
         super().__init__(model_name=model_name)
-        
+
         self.patch_size = spec['patch_size']
         self.padding = 0 # Note: final padding is automatically 1/2 patch size
         self.num_input_channels = [3] # RGB
+        # ViT self-attention mixes information across the whole image, so a
+        # pixel's features depend on the entire input — tiling cannot reproduce
+        # whole-image features.
         self.has_global_context = True
-        self.norm_mode = "imagenet"  # DINOv2 expects ImageNet normalization
-        self.rgb_input = True  # DINOv2 expects RGB input
+        self.norm_mode = "imagenet"  # DINO models expect ImageNet normalization
+        self.rgb_input = True  # DINO models expect RGB input
         self.proposed_scalings = [[1]]
 
         # Register the device of the created model
@@ -88,16 +99,22 @@ class Dinov2Features(FeatureExtractor):
         param.fe_scalings = [1]
         return param
 
+    def _get_patch_tokens(self, features_out):
+        """Return the [B, N_patches, D] patch tokens from the model's
+        forward_features output (hook for DINO variants whose output convention
+        differs, e.g. timm-loaded DINOv3)."""
+        return features_out['x_norm_patchtokens']
+
     def extract_features_from_stack(self, image, device=torch.device("cpu"), **kwargs):
         # NOTE: Use this method, as it can pass a stack as a tensor, processing it as a batch.
         self.move_model_to_device(device)
-        
+
         # Prepare the image (normalize etc.)
         image_tensor = self.prep_img(image)
 
         with torch.no_grad():
-            features_dict = self.model.forward_features(image_tensor)
-        features = features_dict['x_norm_patchtokens']
+            features_out = self.model.forward_features(image_tensor)
+        features = self._get_patch_tokens(features_out)
 
         # Move features first, and reshape to spatial dimensions
         features = features.detach().cpu().numpy()
@@ -118,20 +135,13 @@ class Dinov2Features(FeatureExtractor):
         return [features]
 
     def prep_img(self, image):
-    
+
+        # Upstream padding guarantees patch-size multiples ([C, Z, H, W] input).
         patch_size = self.get_patch_size()
         assert len(image.shape) == 4
         assert image.shape[0] == 3
         assert image.shape[-2] % patch_size == 0
         assert image.shape[-1] % patch_size == 0
-
-        # Crop image to make sure it is divisible by patch size
-        # NOTE: This is not necessary (it's old code), but it does not hurt either
-        h, w = image.shape[-2:]
-        new_h = h - (h % patch_size)
-        new_w = w - (w % patch_size)
-        if new_h != h or new_w != w:
-            image = image[:, :new_h, :new_w]
 
         # Treat z as batch dimension (temporarily)
         image = np.moveaxis(image, 1, 0)
