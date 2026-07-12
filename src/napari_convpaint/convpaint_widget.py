@@ -1876,9 +1876,17 @@ class ConvpaintWidget(QWidget):
             pbr.set_description(f"Training")
             img_name = self._get_selected_img().name
             in_channels = self._parse_in_channels(self.input_channels)
-            # Train the model with the current image and annotations; skip normalization as it is done in the widget
+            # Train the model with the current image and annotations; skip
+            # normalization as it is already done in the widget (image_stack_norm).
+            # Prediction already passes skip_norm=True on the same pre-normalized
+            # data; matching that here avoids a redundant second normalization
+            # pass (a no-op for imagenet FEs, but wasted compute; and it fixes the
+            # erroneous double-application for percentile FEs), and keeps
+            # train/predict consistent so their features match — which also lets
+            # them share feature-cache entries (keys are content hashes of the
+            # prepared image).
             _ = self.cp_model.train(image_stack_norm, annot, memory_mode=mem_mode, img_ids=img_name,
-                                    in_channels=in_channels, skip_norm=False,
+                                    in_channels=in_channels, skip_norm=True,
                                     fe_use_device=self.fe_device, clf_use_device=self.clf_device)
             self._update_training_counts()
     
