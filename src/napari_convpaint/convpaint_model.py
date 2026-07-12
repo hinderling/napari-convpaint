@@ -1979,6 +1979,54 @@ class ConvpaintModel:
             return pred_reshaped[0]
         return pred_reshaped
 
+    def _tile_geometry(self, image_shape):
+        """Block size, margin and block counts for `_parallel_predict_image`.
+
+        Derives the per-tile margin from the FE's required padding at the
+        largest scaling, so every pixel in the kept region sees the same
+        receptive-field context as in whole-image processing. Both the block
+        size and the margin are snapped to the FE's alignment grid so tile
+        origins/sizes are multiples of it — otherwise the deeper feature maps
+        upsample at a slightly different ratio than the whole-image pass and
+        features drift relative to physical pixel positions.
+
+        Kept separate from the prediction loop so tests can pin the geometry
+        (coverage, no empty tiles) without running a feature extractor."""
+        fe_block_size = self.fe_model.get_tile_block_size()
+        block_size = fe_block_size if fe_block_size is not None else DEFAULT_TARGET_TILE_BLOCK
+        alignment = self._get_fe_alignment(self._param) # scalings_lcm * fe_patch (* downsample)
+        fe_margin = self.fe_model.get_padding() * int(np.max(self._param.fe_scalings))
+        if fe_margin == 0:
+            # FEs that declare no receptive-field padding (patch/global-context
+            # FEs like ViTs or cellpose) still produce features that depend on
+            # the surrounding tile content — keep the legacy 50 px overlap so
+            # tile boundaries are blended rather than hard seams.
+            # (Checked BEFORE the downsample scaling below, which would turn a
+            # zero margin into a tiny nonzero one and skip this fallback.)
+            fe_margin = 50
+        # The FE's receptive field applies in DOWNSAMPLED space, but the margin
+        # is cut in original pixel space — scale it by the downsample factor or
+        # tile-boundary pixels lose context and drift from the whole-image pass.
+        # The extra +1 downsampled pixel covers the interpolation halo of the
+        # order-1 upscale back to original resolution (_restore_shape step 4),
+        # which reads one neighbor beyond the kept region.
+        downsample = self._param.image_downsample or 1
+        if downsample > 1:
+            fe_margin = (fe_margin + 1) * downsample
+        margin = utils.align_up(fe_margin, alignment)
+        maxblock = max(alignment, (block_size // alignment) * alignment)
+        # The kept-region bookkeeping requires maxblock > margin (each tile's
+        # kept block must start beyond the previous tile's margin); grow the
+        # block for extreme margins (deep CNN layers at large scalings),
+        # otherwise blocks would duplicate/skip rows.
+        if maxblock <= margin:
+            maxblock = margin + alignment
+        # Ceil division: the last (partial) block covers the remainder; an exact
+        # multiple must NOT add an extra empty block (it would reach the FE).
+        nblocks_rows = -(-image_shape[-2] // maxblock)
+        nblocks_cols = -(-image_shape[-1] // maxblock)
+        return maxblock, margin, nblocks_rows, nblocks_cols
+
     def _parallel_predict_image(self, image, return_proba=True, use_dask=False, fe_use_device=None, out=None):
         """
         Backend method to predict an image using tiling and parallelization.
@@ -1999,45 +2047,7 @@ class ConvpaintModel:
         """
 
         self._warn_if_global_context("tile_image")
-        # Derive the per-tile margin from the FE's required padding at the largest
-        # scaling, so every pixel in the kept region sees the same receptive-field
-        # context it would see during whole-image processing. Snap both the block
-        # size and the margin to the FE's downsampling grid so tile origins and
-        # sizes are multiples of it — otherwise the deeper feature maps upsample
-        # at a slightly different ratio than the whole-image pass and features
-        # drift relative to physical pixel positions (same class of bug as
-        # tile_annot without alignment).
-        fe_block_size = self.fe_model.get_tile_block_size()
-        block_size = fe_block_size if fe_block_size is not None else DEFAULT_TARGET_TILE_BLOCK
-        alignment = self._get_fe_alignment(self._param) # scalings_lcm * fe_patch (* downsample)
-        fe_margin = self.fe_model.get_padding() * int(np.max(self._param.fe_scalings))
-        # The FE's receptive field applies in DOWNSAMPLED space, but the margin
-        # is cut in original pixel space — scale it by the downsample factor or
-        # tile-boundary pixels lose context and drift from the whole-image pass.
-        # The extra +1 downsampled pixel covers the interpolation halo of the
-        # order-1 upscale back to original resolution (_restore_shape step 4),
-        # which reads one neighbor beyond the kept region.
-        downsample = self._param.image_downsample or 1
-        if downsample > 1:
-            fe_margin = (fe_margin + 1) * downsample
-        if fe_margin == 0:
-            # FEs that declare no receptive-field padding (patch/global-context
-            # FEs like ViTs or cellpose) still produce features that depend on
-            # the surrounding tile content — keep the legacy 50 px overlap so
-            # tile boundaries are blended rather than hard seams.
-            fe_margin = 50
-        margin = utils.align_up(fe_margin, alignment)
-        maxblock = max(alignment, (block_size // alignment) * alignment)
-        # The kept-region bookkeeping below requires maxblock > margin (each
-        # tile's kept block must start beyond the previous tile's margin);
-        # grow the block for extreme margins (deep CNN layers at large
-        # scalings), otherwise blocks would duplicate/skip rows.
-        if maxblock <= margin:
-            maxblock = margin + alignment
-        # Ceil division: the last (partial) block covers the remainder; an exact
-        # multiple must NOT add an extra empty block (it would reach the FE).
-        nblocks_rows = -(-image.shape[-2] // maxblock)
-        nblocks_cols = -(-image.shape[-1] // maxblock)
+        maxblock, margin, nblocks_rows, nblocks_cols = self._tile_geometry(image.shape)
 
         image = self._prep_dims_single(image)[0] # NOTE: should technically not be necessary, as done outside
 

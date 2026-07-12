@@ -101,32 +101,40 @@ def test_tiled_equals_whole_image_dask():
 
 def test_tile_block_math_covers_all_sizes():
     """The kept regions of the tile loop must partition the image exactly for
-    any margin/alignment combination (incl. margin >= block size)."""
-    def align_up(x, a):
-        return -(-x // a) * a
+    any padding/scaling/downsample combination (incl. margin >= block size),
+    using the REAL geometry code (_tile_geometry), not a copy of it."""
+    cp = ConvpaintModel('gaussian')
 
-    def check(H, block_size, alignment, fe_margin):
-        if fe_margin == 0:
-            fe_margin = 50
-        margin = align_up(fe_margin, alignment)
-        maxblock = max(alignment, (block_size // alignment) * alignment)
-        if maxblock <= margin:
-            maxblock = margin + alignment
-        n = -(-H // maxblock)
+    def check(H, padding, scalings, downsample):
+        cp.fe_model.padding = padding
+        cp.set_params(fe_scalings=scalings, image_downsample=downsample,
+                      ignore_warnings=True)
+        maxblock, margin, nrows, _ = cp._tile_geometry((H, H))
         kept = []
-        for row in range(n):
+        for row in range(nrows):
             min_row = max(0, row * maxblock - margin)
             min_row_ind = 0 if min_row == 0 else min_row + margin
             max_row_ind = min(min_row_ind + maxblock, H)
             kept.append((min_row_ind, max_row_ind))
-        assert kept[0][0] == 0 and kept[-1][1] == H
+        assert kept[0][0] == 0 and kept[-1][1] == H, (H, padding, scalings, downsample)
         assert all(a2 > a1 for a1, a2 in kept)
         assert all(k1[1] == k2[0] for k1, k2 in zip(kept, kept[1:]))
 
-    for H in range(200, 4000, 137):
-        for alignment in (1, 2, 4, 8, 14, 16, 42, 84, 336):
-            for fe_margin in (0, 24, 50, 100, 400, 1040):
-                check(H, 1000, alignment, fe_margin)
+    for H in range(200, 4000, 379):
+        for padding in (0, 12, 50, 130):
+            for scalings in ([1], [1, 2], [1, 2, 4, 8]):
+                for downsample in (1, 3, 7):
+                    check(H, padding, scalings, downsample)
+
+
+def test_tile_margin_floor_survives_downsample():
+    """Padding-0 FEs must keep (at least) the legacy 50px overlap even with
+    image_downsample > 1 — the fallback must apply before downsample scaling."""
+    cp = ConvpaintModel('gaussian')
+    cp.fe_model.padding = 0
+    cp.set_params(image_downsample=4, ignore_warnings=True)
+    _, margin, _, _ = cp._tile_geometry((2000, 2000))
+    assert margin >= 50 * 4, f"margin {margin} lost the 50px floor under downsampling"
 
 
 def test_fe_alignment_includes_downsample():
