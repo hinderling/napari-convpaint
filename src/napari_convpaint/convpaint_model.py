@@ -40,13 +40,6 @@ TILE_ANNOT_MAX_BBOX_FRACTION = 0.5
 # block so at least a 2-block split happens.
 AUTO_TILE_MIN_SIDE = 1500
 
-# Version of the feature-computation semantics. Bump when a change alters the
-# numerical feature values (and therefore invalidates saved classifiers):
-#   1 (implicit) = pre-2026 releases (gaussian-blur+stride downscaling,
-#       out-of-range floats fed to imagenet normalization unmodified)
-#   2 = block-mean downscaling + percentile stretch of out-of-range floats
-FEATURE_SEMANTICS_VERSION = 2
-
 
 def _tiling_worthwhile(annot, whole_area):
     """Cheaply decide whether tiling around the annotations in `annot` is likely
@@ -491,9 +484,6 @@ class ConvpaintModel:
         """
         if model_path[-4:] == ".pkl" or model_path[-4:] == ".yml":
             model_path = model_path[:-4]
-        # Stamp the feature semantics this model was trained under, so a later
-        # release whose feature computation changed can warn on load.
-        self._param.feature_semantics = FEATURE_SEMANTICS_VERSION
         if create_pkl:
             pkl_path = model_path + ".pkl"
             if self.classifier is None:
@@ -550,17 +540,6 @@ class ConvpaintModel:
         self._set_fe(new_param.fe_name, new_param.fe_layers)
         self._param = new_param.copy()
         self.classifier = data.get('classifier', None)
-        # A classifier trained under older feature semantics (different
-        # downscaling / normalization) will silently mis-predict on the current
-        # feature values — warn so the user knows to retrain.
-        if (self.classifier is not None and
-                getattr(new_param, 'feature_semantics', None) != FEATURE_SEMANTICS_VERSION):
-            warnings.warn(
-                f"This model was saved with an older Convpaint whose feature computation "
-                f"differed (multi-scale downscaling and normalization of out-of-range float "
-                f"images have changed). Its classifier may predict poorly on features computed "
-                f"by this version — consider retraining and re-saving the model."
-            )
         if self.classifier is None:
             self.num_features = 0
         else:

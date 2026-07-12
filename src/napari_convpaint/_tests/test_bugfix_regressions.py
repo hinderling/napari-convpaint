@@ -2,15 +2,9 @@
 
 Each test pins one of the fixed bugs so it cannot silently return:
 tiling block math, downsample-aware tile alignment, feature-cache disk
-routing / spill opt-out / FE-state keys, legacy FE name mapping, the
-feature-semantics load warning, memory-mode img_ids alignment, chunked
-classifier prediction, and nnlayers empty-selection defaults.
-Uses the gaussian FE throughout (no weight downloads, fast)."""
-
-import os
-import pickle
-import tempfile
-import warnings
+routing / spill opt-out / FE-state cache keys, memory-mode img_ids
+alignment, chunked classifier prediction, and nnlayers empty-selection
+defaults. Uses the gaussian FE throughout (no weight downloads, fast)."""
 
 import numpy as np
 import pytest
@@ -209,33 +203,6 @@ def test_cache_key_includes_jafar_scalings_state():
     finally:
         cp.fe_model.cache_extra_state = orig
     assert sig1 != sig2
-
-
-# --------------------------------------------------------------------------
-# Saved-model compatibility
-# --------------------------------------------------------------------------
-
-def test_old_model_without_semantics_stamp_warns_on_load():
-    cp = _trained_gaussian(32)
-    with tempfile.TemporaryDirectory() as td:
-        path = os.path.join(td, 'model.pkl')
-        cp.save(os.path.join(td, 'model'), create_yml=False)
-        # Simulate a model saved by an older release: no feature_semantics
-        with open(path, 'rb') as f:
-            data = pickle.load(f)
-        data['param'].feature_semantics = None
-        with open(path, 'wb') as f:
-            pickle.dump(data, f)
-        with warnings.catch_warnings(record=True) as rec:
-            warnings.simplefilter('always')
-            ConvpaintModel(model_path=path)
-        assert any('feature computation' in str(w.message) for w in rec)
-        # A freshly saved model must NOT warn
-        cp.save(os.path.join(td, 'fresh'), create_yml=False)
-        with warnings.catch_warnings(record=True) as rec:
-            warnings.simplefilter('always')
-            ConvpaintModel(model_path=os.path.join(td, 'fresh.pkl'))
-        assert not any('feature computation' in str(w.message) for w in rec)
 
 
 # --------------------------------------------------------------------------
