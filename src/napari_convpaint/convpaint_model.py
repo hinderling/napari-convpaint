@@ -2002,6 +2002,15 @@ class ConvpaintModel:
         block_size = fe_block_size if fe_block_size is not None else DEFAULT_TARGET_TILE_BLOCK
         alignment = self._get_fe_alignment(self._param) # scalings_lcm * fe_patch (* downsample)
         fe_margin = self.fe_model.get_padding() * int(np.max(self._param.fe_scalings))
+        # The FE's receptive field applies in DOWNSAMPLED space, but the margin
+        # is cut in original pixel space — scale it by the downsample factor or
+        # tile-boundary pixels lose context and drift from the whole-image pass.
+        # The extra +1 downsampled pixel covers the interpolation halo of the
+        # order-1 upscale back to original resolution (_restore_shape step 4),
+        # which reads one neighbor beyond the kept region.
+        downsample = self._param.image_downsample or 1
+        if downsample > 1:
+            fe_margin = (fe_margin + 1) * downsample
         if fe_margin == 0:
             # FEs that declare no receptive-field padding (patch/global-context
             # FEs like ViTs or cellpose) still produce features that depend on
