@@ -1680,11 +1680,17 @@ class ConvpaintWidget(QWidget):
         # plugin itself removes/recreates its own probabilities/features layers
         # (e.g. after a class-count change), which must never wipe the cache.
         removed = getattr(event, 'value', None) if event is not None else None
-        plugin_layer_names = {self.proba_prefix, self.features_prefix}
+
+        def _is_plugin_image(name):
+            # Live plugin layers are named exactly proba_prefix/features_prefix;
+            # backups renamed on image switch get a '<prefix>_<tag>' suffix.
+            return any(name == p or name.startswith(p + '_')
+                       for p in (self.proba_prefix, self.features_prefix))
+
         if (isinstance(removed, napari.layers.Image)
-                and removed.name not in plugin_layer_names):
+                and not _is_plugin_image(removed.name)):
             user_images_left = any(
-                isinstance(l, napari.layers.Image) and l.name not in plugin_layer_names
+                isinstance(l, napari.layers.Image) and not _is_plugin_image(l.name)
                 for l in self.viewer.layers)
             if not user_images_left:
                 fc = getattr(getattr(self, 'cp_model', None), '_feature_cache', None)
