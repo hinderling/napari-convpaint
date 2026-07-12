@@ -215,17 +215,6 @@ def test_cache_key_includes_jafar_scalings_state():
 # Saved-model compatibility
 # --------------------------------------------------------------------------
 
-def test_legacy_names_map_to_registered_models():
-    if not ConvpaintModel.FE_MODELS_TYPES_DICT:
-        ConvpaintModel._init_fe_models_dict()
-    for old, new in cpm_mod.LEGACY_FE_NAMES.items():
-        assert old not in ConvpaintModel.FE_MODELS_TYPES_DICT
-        assert new in ConvpaintModel.FE_MODELS_TYPES_DICT, (old, new)
-    for old, new in cpm_mod.LEGACY_ALIASES.items():
-        assert old not in ConvpaintModel.STD_MODELS
-        assert new in ConvpaintModel.STD_MODELS, (old, new)
-
-
 def test_old_model_without_semantics_stamp_warns_on_load():
     cp = _trained_gaussian(32)
     with tempfile.TemporaryDirectory() as td:

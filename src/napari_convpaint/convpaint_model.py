@@ -40,17 +40,6 @@ TILE_ANNOT_MAX_BBOX_FRACTION = 0.5
 # block so at least a 2-block split happens.
 AUTO_TILE_MIN_SIDE = 1500
 
-# FE model names / aliases from earlier releases → their current equivalents,
-# so models saved (or scripts written) under the old names keep working.
-LEGACY_FE_NAMES = {
-    'dinov2_vits14_reg': 'dinov2_small-reg',
-    'dino_jafar_small': 'dinov2_small-reg_jafar',
-}
-LEGACY_ALIASES = {
-    'dino': 'dinov2',
-    'dino-jafar': 'dinov2-jafar',
-}
-
 # Version of the feature-computation semantics. Bump when a change alters the
 # numerical feature values (and therefore invalidates saved classifiers):
 #   1 (implicit) = pre-2026 releases (gaussian-blur+stride downscaling,
@@ -218,7 +207,6 @@ class ConvpaintModel:
 
         # If an alias is given, create an corresponding model
         if alias is not None:
-            alias = LEGACY_ALIASES.get(alias, alias)
             if alias in ConvpaintModel.STD_MODELS:
                 param = ConvpaintModel.STD_MODELS[alias]
             else:
@@ -553,10 +541,6 @@ class ConvpaintModel:
             data = safe_load(pkl_path)
             used_compat = True
         new_param = data.get('param', None)
-        # Remap legacy FE names on the loaded param itself (it replaces
-        # self._param below, so the remap in _set_fe alone would be lost).
-        if getattr(new_param, 'fe_name', None) in LEGACY_FE_NAMES:
-            new_param.fe_name = LEGACY_FE_NAMES[new_param.fe_name]
         # If there is the old use_gpu parameter saved, use lock_device to set the device policy for the feature extractor accordingly
         if hasattr(new_param, 'use_gpu'):
             device = 'gpu' if new_param.use_gpu else 'cpu'
@@ -618,10 +602,6 @@ class ConvpaintModel:
                 self.lock_device(device, part='both')
                 del params_to_set['use_gpu']
             new_param.set(**params_to_set)
-        # Remap legacy FE names on the loaded param itself (it replaces
-        # self._param below, so the remap in _set_fe alone would be lost).
-        if new_param.fe_name in LEGACY_FE_NAMES:
-            new_param.fe_name = LEGACY_FE_NAMES[new_param.fe_name]
         self._set_fe(new_param.fe_name, new_param.fe_layers)
         self._param = new_param
 
@@ -694,10 +674,6 @@ class ConvpaintModel:
         self.reset_classifier()
         self.reset_training()
 
-        # Remap FE names from earlier releases so the new name is also what
-        # gets stored in the param (and in future saves of this model).
-        fe_name = LEGACY_FE_NAMES.get(fe_name, fe_name)
-
         # Check if we need to create a new FE model
         fe_name_changed = fe_name != self._param.get("fe_name")
         fe_layers_changed = fe_layers != self._param.get("fe_layers")
@@ -740,12 +716,6 @@ class ConvpaintModel:
             The created feature extractor model
         """
         
-        # Remap FE names from earlier releases (e.g. saved models)
-        if name in LEGACY_FE_NAMES:
-            new_name = LEGACY_FE_NAMES[name]
-            warnings.warn(f"Feature extractor '{name}' was renamed to '{new_name}'; using the new name.")
-            name = new_name
-
         # Check if name is valid and create the feature extractor object
         if not name in ConvpaintModel.FE_MODELS_TYPES_DICT:
             raise ValueError(f'Feature extractor model {name} not found.')
