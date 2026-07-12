@@ -3541,7 +3541,7 @@ class ConvpaintWidget(QWidget):
 
     def _get_current_plane_norm(self):
         """Get the current image plane to predict on, normalized according to the settings."""
-        from .utils import normalize_image, normalize_image_imagenet
+        from .utils import normalize_image
         
         # Get image and the info needed about normalization
         img = self._get_selected_img(check=True)
@@ -3561,11 +3561,16 @@ class ConvpaintWidget(QWidget):
             self._compute_image_stats(img)
 
         # Get image data and stats depending on the data dim and norm mode
-        if fe_norm != "percentile":
-            # For default and imagenet norm, we want unnormalized data to apply normalization only on the current plane
+        if use_default:
+            # For default norm, we want unnormalized data to apply normalization only on the current plane
             img = self._get_data_channel_first(img.data, img.ndim) if img is not None else None
-        else: # "percentile"
-            # For percentile norm, we want already normalized data to avoid artifacts when normalizing only the current plane
+        else: # "percentile" or "imagenet"
+            # For percentile AND imagenet norm, we want already normalized data
+            # (stack-scope stats) to avoid artifacts when normalizing only the
+            # current plane: imagenet norm percentile-stretches out-of-range
+            # float input, so normalizing a single plane would use different
+            # lo/hi than training on the whole stack did — the same pixels
+            # would get different features between train and predict.
             img = self._get_data_channel_first_norm(img)
 
         if data_dims in ['2D', '2D_RGB', '3D_multi'] or data_dims not in self.supported_data_dims:
@@ -3601,19 +3606,13 @@ class ConvpaintWidget(QWidget):
                 image_mean = self.image_mean[:,step]
                 image_std = self.image_std[:,step]
 
-        # Normalize image (for default: use the stats based on the radio buttons; for imagenet: stats are fixed)
+        # Normalize image (for default: use the stats based on the radio buttons)
         if norm_scope != 1:
             if use_default:
                 image_plane = normalize_image(image=image_plane, image_mean=image_mean, image_std=image_std)
-            elif fe_norm == "imagenet":
-                # Only if rgb image --> array with 3 or 4 dims, with C=3 first
-                if self.cp_model.get_param("channel_mode") == 'rgb': # Double-check (actually redundant due to check above)
-                    image_plane = normalize_image_imagenet(image=image_plane)
-                else:
-                    print("WIDGET _ON_PREDICT(): THIS SHOULD NOT BE HAPPENING, AS WE CHECKED ABOVE FOR RGB")
-                    image_plane = normalize_image(image=image_plane, image_mean=image_mean, image_std=image_std)
-            # For percentile norm, image is already normalized above (before selecting the plane)
-        
+            # For percentile and imagenet norm, the image is already normalized
+            # above with stack-scope statistics (before selecting the plane)
+
         return image_plane
 
     def _compute_image_stats(self, img):
