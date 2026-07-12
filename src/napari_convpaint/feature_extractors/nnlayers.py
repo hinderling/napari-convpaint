@@ -230,7 +230,12 @@ class Hookmodel(FeatureExtractor):
         no finite padding makes tile features match whole-image features.
         """
         if len(self.selected_layers) == 0:
-            return 1, False
+            # Neutral defaults — without this, a re-hook with an empty selection
+            # would silently keep the previous selection's values.
+            self.padding = 0
+            self.patch_size = 1
+            self.has_global_context = False
+            return
         rf = 1
         stride = 1
         has_global = False
