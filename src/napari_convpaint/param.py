@@ -86,7 +86,7 @@ class Param:
     clf_learning_rate: float = None
     clf_depth: int = None
     clf_use_gpu: bool = None # LEAVE THIS FOR NOW, FOR BACKWARDS COMPATIBILITY, BUT THIS SHOULD BE DEPRECATED EVENTUALLY
-
+    
     def get(self, key):
         """
         Get the value of a parameter.
