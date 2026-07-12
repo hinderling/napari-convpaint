@@ -40,6 +40,24 @@ TILE_ANNOT_MAX_BBOX_FRACTION = 0.5
 # block so at least a 2-block split happens.
 AUTO_TILE_MIN_SIDE = 1500
 
+# FE model names / aliases from earlier releases → their current equivalents,
+# so models saved (or scripts written) under the old names keep working.
+LEGACY_FE_NAMES = {
+    'dinov2_vits14_reg': 'dinov2_small-reg',
+    'dino_jafar_small': 'dinov2_small-reg_jafar',
+}
+LEGACY_ALIASES = {
+    'dino': 'dinov2',
+    'dino-jafar': 'dinov2-jafar',
+}
+
+# Version of the feature-computation semantics. Bump when a change alters the
+# numerical feature values (and therefore invalidates saved classifiers):
+#   1 (implicit) = pre-2026 releases (gaussian-blur+stride downscaling,
+#       out-of-range floats fed to imagenet normalization unmodified)
+#   2 = block-mean downscaling + percentile stretch of out-of-range floats
+FEATURE_SEMANTICS_VERSION = 2
+
 
 def _tiling_worthwhile(annot, whole_area):
     """Cheaply decide whether tiling around the annotations in `annot` is likely
@@ -200,6 +218,7 @@ class ConvpaintModel:
 
         # If an alias is given, create an corresponding model
         if alias is not None:
+            alias = LEGACY_ALIASES.get(alias, alias)
             if alias in ConvpaintModel.STD_MODELS:
                 param = ConvpaintModel.STD_MODELS[alias]
             else:
@@ -484,6 +503,9 @@ class ConvpaintModel:
         """
         if model_path[-4:] == ".pkl" or model_path[-4:] == ".yml":
             model_path = model_path[:-4]
+        # Stamp the feature semantics this model was trained under, so a later
+        # release whose feature computation changed can warn on load.
+        self._param.feature_semantics = FEATURE_SEMANTICS_VERSION
         if create_pkl:
             pkl_path = model_path + ".pkl"
             if self.classifier is None:
@@ -540,6 +562,17 @@ class ConvpaintModel:
         self._set_fe(new_param.fe_name, new_param.fe_layers)
         self._param = new_param.copy()
         self.classifier = data.get('classifier', None)
+        # A classifier trained under older feature semantics (different
+        # downscaling / normalization) will silently mis-predict on the current
+        # feature values — warn so the user knows to retrain.
+        if (self.classifier is not None and
+                getattr(new_param, 'feature_semantics', None) != FEATURE_SEMANTICS_VERSION):
+            warnings.warn(
+                f"This model was saved with an older Convpaint whose feature computation "
+                f"differed (multi-scale downscaling and normalization of out-of-range float "
+                f"images have changed). Its classifier may predict poorly on features computed "
+                f"by this version — consider retraining and re-saving the model."
+            )
         if self.classifier is None:
             self.num_features = 0
         else:
@@ -648,16 +681,23 @@ class ConvpaintModel:
         self.reset_classifier()
         self.reset_training()
 
+        # Remap FE names from earlier releases so the new name is also what
+        # gets stored in the param (and in future saves of this model).
+        fe_name = LEGACY_FE_NAMES.get(fe_name, fe_name)
+
         # Check if we need to create a new FE model
         fe_name_changed = fe_name != self._param.get("fe_name")
         fe_layers_changed = fe_layers != self._param.get("fe_layers")
 
         # Create the feature extractor model
         if fe_name_changed or fe_layers_changed:
-            self.fe_model = ConvpaintModel.create_fe(
-                name=fe_name,
-                layers=fe_layers
-            )
+            if fe_model is not None and fe_model.model_name == fe_name:
+                self.fe_model = fe_model
+            else:
+                self.fe_model = ConvpaintModel.create_fe(
+                    name=fe_name,
+                    layers=fe_layers
+                )
         
         # Set the parameters
         self._param.set(fe_name=fe_name, fe_layers=fe_layers)
@@ -687,6 +727,12 @@ class ConvpaintModel:
             The created feature extractor model
         """
         
+        # Remap FE names from earlier releases (e.g. saved models)
+        if name in LEGACY_FE_NAMES:
+            new_name = LEGACY_FE_NAMES[name]
+            warnings.warn(f"Feature extractor '{name}' was renamed to '{new_name}'; using the new name.")
+            name = new_name
+
         # Check if name is valid and create the feature extractor object
         if not name in ConvpaintModel.FE_MODELS_TYPES_DICT:
             raise ValueError(f'Feature extractor model {name} not found.')

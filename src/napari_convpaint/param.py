@@ -58,6 +58,11 @@ class Param:
         Learning rate for the classifier
     clf_depth : int
         Depth of the classifier
+    feature_semantics : int
+        Version of the feature-computation semantics the model was saved with
+        (stamped on save). Bumped when normalization/downscaling change the
+        numerical feature values, so loading warns that a classifier trained
+        under older semantics should be retrained.
     """
     classifier: str = None
 
@@ -86,6 +91,9 @@ class Param:
     clf_learning_rate: float = None
     clf_depth: int = None
     clf_use_gpu: bool = None # LEAVE THIS FOR NOW, FOR BACKWARDS COMPATIBILITY, BUT THIS SHOULD BE DEPRECATED EVENTUALLY
+
+    # Version of the feature-computation semantics (see docstring); stamped on save.
+    feature_semantics: int = None
     
     def get(self, key):
         """
