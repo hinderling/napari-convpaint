@@ -75,29 +75,48 @@ class ConvpaintWidget(QWidget):
         self.tab_names += ['Multifile']
         tab_layouts = [None if name not in ['Models', 'Multifile'] else QGridLayout() for name in self.tab_names]
         self.tabs = TabSet(self.tab_names, tab_layouts=tab_layouts) # [None, None, QGridLayout()])
+        # Left-aligned tabs; scroll buttons let the bar collapse gracefully
+        # when the dock is narrow.
         tab_bar = self.tabs.tabBar()
-        tab_bar.setSizePolicy(tab_bar.sizePolicy().horizontalPolicy(), tab_bar.sizePolicy().verticalPolicy())
+        tab_bar.setUsesScrollButtons(True)
 
-        # Create docs button
-        docs_button = QtWidgets.QToolButton()
-        docs_button.setText("Documentation")
-        docs_button.setStyleSheet("QToolButton {color: #999; text-decoration: underline; margin-left: 4px; margin-right: 8px}")
-        docs_button.clicked.connect(lambda: QtGui.QDesktopServices.openUrl(QUrl("https://guiwitz.github.io/napari-convpaint/book/Landing.html")))
-        docs_button.setToolTip("Open the documentation in your default browser.")
-
-        # Create a widget to hold tab bar and button side by side
-        tab_header_widget = QWidget()
-        tab_header_layout = QtWidgets.QHBoxLayout(tab_header_widget)
-        tab_header_layout.setContentsMargins(0, 0, 0, 0)
-        tab_header_layout.setSpacing(0)
-
-        tab_header_layout.addWidget(tab_bar)
-        tab_header_layout.addWidget(docs_button)
+        # (Do NOT reparent the tab bar into a custom header row: QTabWidget
+        # keeps managing its bar's geometry on every resize and re-centers it,
+        # fighting any outside layout. The docs link lives on the Home tab.)
 
         # Add to your main layout
-        self.main_layout.addWidget(tab_header_widget)
         self.main_layout.addWidget(self.tabs)
-        
+
+        # Remove the dead space around the tab content: no pane frame, tabs
+        # left-aligned on the bar row, and a tight top margin on each tab page.
+        self.main_layout.setSpacing(0)
+        # Tight outer margins so the widget sits in its dock like napari's own
+        # panels (the default ~20px on every side reads as extra indentation
+        # compared to e.g. the layer controls); top matches the 4px gap
+        # between the tab bar and the first item.
+        self.main_layout.setContentsMargins(6, 4, 6, 6)
+        self.tabs.setStyleSheet(
+            "QTabWidget::pane { border: 0; margin: 0; padding: 0; } "
+            "QTabWidget::tab-bar { alignment: left; } "
+            # Joined segmented-control look: adjacent tabs share square inner
+            # corners (rounded inner corners leave notches that expose
+            # tab-colored nubs of the neighbor when the bar is squeezed);
+            # only the outer corners of the first/last tab stay rounded.
+            "QTabBar { background: transparent; } "
+            "QTabBar::tab { margin-right: 0px; border-radius: 0px; } "
+            "QTabBar::tab:first { border-top-left-radius: 4px; border-bottom-left-radius: 4px; } "
+            "QTabBar::tab:last { border-top-right-radius: 4px; border-bottom-right-radius: 4px; } "
+            "QTabBar::tab:only-one { border-radius: 4px; }")
+        for i in range(self.tabs.count()):
+            page_layout = self.tabs.widget(i).layout()
+            if page_layout is not None:
+                # Zero left margin: the first tab starts exactly at the bar's
+                # left edge (x=0, measured), and a group box draws its frame at
+                # its widget edge — so any left page margin shows up as
+                # misalignment between tab headers and content. The small right
+                # margin keeps a gap between items and the vertical scrollbar.
+                page_layout.setContentsMargins(0, 4, 6, 8)
+
         # Align rows in some tabs on top
         for tab_name in ['Home', 'Models', 'Advanced']:
             if tab_name in self.tabs.tab_names:
@@ -691,12 +710,35 @@ class ConvpaintWidget(QWidget):
             self.multifile_segmentation_suffix_txt.setText('segmentation')
             self.multifile_settings_group.glayout.addWidget(self.multifile_annotations_suffix_txt, 1, 1, 1, 1)
             self.multifile_settings_group.glayout.addWidget(self.multifile_segmentation_suffix_txt, 1, 2, 1, 1)
-        
+
+        # === Match napari's control density ===
+        # Qt's default grid spacing is looser than napari's own panels; tighten
+        # the vertical spacing between rows inside all group boxes (and the
+        # Classes grid, which lives in a plain widget).
+        for gbox in self.findChildren(QtWidgets.QGroupBox):
+            gbox_layout = gbox.layout()
+            if isinstance(gbox_layout, QGridLayout):
+                gbox_layout.setVerticalSpacing(4)
+                gbox_layout.setHorizontalSpacing(4)
+        if hasattr(self, 'classes_layout'):
+            self.classes_layout.setVerticalSpacing(4)
+            self.classes_layout.setHorizontalSpacing(4)
+
+        # === Make all tabs scrollable ===
+        # All tab content is added by now — wrap every tab in a scroll area so
+        # nothing can be cut off on small screens.
+        for tab_name in self.tab_names:
+            self._make_tab_scrollable(tab_name)
+        # The remove/insert dance above moves the current-tab index around;
+        # make sure a fresh widget always opens on the first (Home) tab.
+        self.tabs.setCurrentIndex(0)
+
         # === Show tooltips by default ===
 
         self._setup_init_tooltips()
         # Set device dropdown tooltip separately, as we want to show these dynamically and permanently, even when the "Show tooltips" checkbox is unchecked
         self.device_dropdown.setToolTip('Select device policy for feature extraction and classifier.')
+
 
     def _setup_init_tooltips(self):
 
@@ -907,6 +949,28 @@ class ConvpaintWidget(QWidget):
         if not hasattr(self, "_cpm_class"):
             from .convpaint_model import ConvpaintModel
             self._cpm_class = ConvpaintModel
+
+    def _make_tab_scrollable(self, tab_name):
+        """Wrap a tab's content in a scroll area so it cannot be cut off on
+        small screens. Must be called AFTER everything has been added to the
+        tab (add_named_tab resolves the tab's widget by index, which becomes
+        the scroll area after wrapping)."""
+        idx = self.tabs.tab_names.index(tab_name)
+        content = self.tabs.widget(idx)
+        # Detach the page BEFORE handing it to the scroll area: setWidget()
+        # reparents it, which would already remove it from the tab widget and
+        # shift the indices under removeTab().
+        self.tabs.removeTab(idx)
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        # No width floor: the dock may be made thinner than any tab's content
+        # (the widest tab must not dictate the plugin's minimum width). A tab
+        # whose content doesn't fit gets a horizontal scrollbar on demand
+        # instead of clipping.
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setWidget(content)
+        self.tabs.insertTab(idx, scroll, tab_name)
 
     def _apply_feature_cache(self, recreate=False):
         """Apply the current caching settings (enabled + max RAM) to the active
