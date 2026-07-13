@@ -127,21 +127,33 @@ class ConvpaintWidget(QWidget):
         # Create groups and separate labels
         self.model_group = VHGroup('Model', orientation='G')
         self.layer_selection_group = VHGroup('Layer selection', orientation='G')
-        self.image_processing_group = VHGroup('Image type and normalization', orientation='G')
-        self.train_group = VHGroup('Train/Segment', orientation='G')
+        self.image_processing_group = VHGroup('Image type && Normalization', orientation='G')
+        self.train_group = VHGroup('Train / Segment', orientation='G')
         # self.segment_group = VHGroup('Segment', orientation='G')
         # self.load_save_group = VHGroup('Load/Save', orientation='G')
-        self.acceleration_group = VHGroup('Acceleration and post-processing', orientation='G')
+        self.acceleration_group = VHGroup('Acceleration && Post-processing', orientation='G')
         # Create the shortcuts info
-        shortcuts_text1 = 'Shift+a: Toggle annotations\nShift+s: Train\nShift+d: Predict\nShift+f: Toggle prediction'
-        shortcuts_text2 = 'Shift+q: Set annotations label 1\nShift+w: Set annotations label 2\nShift+e: Set annotations label 3\nShift+r: Set annotations label 4'
+        shortcuts_text1 = 'Shift+a: Toggle annot.\nShift+s: Train\nShift+d: Predict\nShift+f: Toggle prediction'
+        shortcuts_text2 = 'Shift+q: Set annot. label 1\nShift+w: Set annot. label 2\nShift+e: Set annot. label 3\nShift+r: Set annot. label 4'
         shortcuts_label1 = QLabel(shortcuts_text1)
         shortcuts_label2 = QLabel(shortcuts_text2)
         shortcuts_label1.setStyleSheet(style_for_shortcut_info)
         shortcuts_label2.setStyleSheet(style_for_shortcut_info)
+        # Docs link above the shortcut hints
+        docs_link = QLabel(
+            'Information and tutorials in '
+            '<a href="https://guiwitz.github.io/napari-convpaint/book/Landing.html" '
+            'style="color: #787878;">documentation</a>')  # same grey as the hint text
+        docs_link.setOpenExternalLinks(True)
+        docs_link.setToolTip("Open the documentation in your default browser.")
+        docs_link.setStyleSheet(style_for_shortcut_info)
         shortcuts_grid = QGridLayout()
-        shortcuts_grid.addWidget(shortcuts_label1, 0, 0)
-        shortcuts_grid.addWidget(shortcuts_label2, 0, 1)
+        # No grid margins: the hints are plain info text, so the usual widget
+        # margins just read as a large gap below the last group box.
+        shortcuts_grid.setContentsMargins(4, 0, 4, 0)
+        shortcuts_grid.addWidget(docs_link, 0, 0, 1, 2)
+        shortcuts_grid.addWidget(shortcuts_label1, 1, 0)
+        shortcuts_grid.addWidget(shortcuts_label2, 1, 1)
         shortcuts_widget = QWidget()
         shortcuts_widget.setLayout(shortcuts_grid)
 
@@ -163,6 +175,8 @@ class ConvpaintWidget(QWidget):
         # Add buttons for "Model" group
         # Current model description label
         self.model_description1 = QLabel('None')
+        # Word wrap so the summary never dictates the dock's minimum width
+        self.model_description1.setWordWrap(True)
         self.model_group.glayout.addWidget(self.model_description1, 0,0,1,2)
         # Save and load model buttons
         self.save_model_btn = QPushButton('Save model')
@@ -185,7 +199,7 @@ class ConvpaintWidget(QWidget):
         self.image_layer_label = QLabel('Image layer')
         self.layer_selection_group.glayout.addWidget(self.image_layer_label, 0,0,1,1)
         self.layer_selection_group.glayout.addWidget(self.image_layer_selection_widget.native, 0,1,1,1)
-        self.annotations_layer_label = QLabel('annotations layer')
+        self.annotations_layer_label = QLabel('Annotations layer')
         self.layer_selection_group.glayout.addWidget(self.annotations_layer_label, 1,0,1,1)
         self.layer_selection_group.glayout.addWidget(self.annotations_layer_selection_widget.native, 1,1,1,1)
 
@@ -197,9 +211,9 @@ class ConvpaintWidget(QWidget):
         # Add buttons for "Image Processing" group
         # Radio buttons for "Data Dimensions"
         self.button_group_channels = QButtonGroup()
-        self.radio_single_channel = QRadioButton('Single channel image')
-        self.radio_multi_channel = QRadioButton('Multichannel image')
-        self.radio_rgb = QRadioButton('RGB image')
+        self.radio_single_channel = QRadioButton('Single channel img')
+        self.radio_multi_channel = QRadioButton('Multichannel img')
+        self.radio_rgb = QRadioButton('RGB img')
         self.radio_single_channel.setChecked(True)
         self.channel_buttons = [self.radio_single_channel, self.radio_multi_channel, self.radio_rgb]
         for x in self.channel_buttons: x.setEnabled(False)
@@ -217,16 +231,23 @@ class ConvpaintWidget(QWidget):
         # "Normalize" radio buttons
         self.button_group_normalize = QButtonGroup()
         self.radio_no_normalize = QRadioButton('No normalization')
-        self.radio_normalize_over_stack = QRadioButton('Normalize over stack')
-        self.radio_normalize_by_image = QRadioButton('Normalized by plane')
+        self.radio_normalize_over_stack = QRadioButton('Norm. over stack')
+        self.radio_normalize_by_image = QRadioButton('Norm. by plane')
         self.radio_normalize_over_stack.setChecked(True)
         self.norm_buttons = [self.radio_no_normalize, self.radio_normalize_over_stack, self.radio_normalize_by_image]
         self.button_group_normalize.addButton(self.radio_no_normalize, id=1)
         self.button_group_normalize.addButton(self.radio_normalize_over_stack, id=2)
         self.button_group_normalize.addButton(self.radio_normalize_by_image, id=3)
-        self.image_processing_group.glayout.addWidget(self.radio_no_normalize, 0,2,1,1)
-        self.image_processing_group.glayout.addWidget(self.radio_normalize_over_stack, 1,2,1,1)
-        self.image_processing_group.glayout.addWidget(self.radio_normalize_by_image, 2,2,1,1)
+        # Left-align the right radio column within its cells
+        self.image_processing_group.glayout.addWidget(self.radio_no_normalize, 0,2,1,1, Qt.AlignLeft)
+        self.image_processing_group.glayout.addWidget(self.radio_normalize_over_stack, 1,2,1,1, Qt.AlignLeft)
+        self.image_processing_group.glayout.addWidget(self.radio_normalize_by_image, 2,2,1,1, Qt.AlignLeft)
+        # Extra width goes to the two radio columns, not the divider column —
+        # otherwise the divider's cell grows and pushes the right column away
+        # from it (looks centered instead of left-aligned).
+        self.image_processing_group.glayout.setColumnStretch(0, 1)
+        self.image_processing_group.glayout.setColumnStretch(1, 0)
+        self.image_processing_group.glayout.setColumnStretch(2, 1)
 
         # Add buttons for "Train/Segment" group
         self.train_classifier_btn = QPushButton('Train')
@@ -245,35 +266,37 @@ class ConvpaintWidget(QWidget):
         # "Tile annotations" checkbox
         self.check_tile_annotations = QCheckBox('Tile annotations for training')
         self.check_tile_annotations.setChecked(False)
-        self.acceleration_group.glayout.addWidget(self.check_tile_annotations, 0,0,1,1)
+        # Stacked vertically: side by side these two are the widest row of the
+        # Home tab and would dictate the dock's minimum width.
+        self.acceleration_group.glayout.addWidget(self.check_tile_annotations, 0,0,1,2)
         # "Tile image" checkbox
         self.check_tile_image = QCheckBox('Tile image for segmentation')
         self.check_tile_image.setChecked(False)
-        self.acceleration_group.glayout.addWidget(self.check_tile_image, 0,1,1,1)
+        self.acceleration_group.glayout.addWidget(self.check_tile_image, 1,0,1,2)
         # Use Device/GPU dropdown
         self.device_options_default = ['auto', 'gpu', 'cpu']
         self.device_options_gpu_only_clf = ['auto', 'gpu (only classifier)', 'cpu']
         self.device_dropdown = QComboBox()
         self.device_dropdown.addItems(self.device_options_default)
         self.device_label = QLabel('Device (GPU/CPU)')
-        self.acceleration_group.glayout.addWidget(self.device_label, 1,0,1,1)
-        self.acceleration_group.glayout.addWidget(self.device_dropdown, 1,1,1,1)
+        self.acceleration_group.glayout.addWidget(self.device_label, 2,0,1,1)
+        self.acceleration_group.glayout.addWidget(self.device_dropdown, 2,1,1,1)
         # "Downsample" spinbox
         self.spin_downsample = QSpinBox()
         self.spin_downsample.setMinimum(-20)
         self.spin_downsample.setMaximum(20)
         self.spin_downsample.setValue(1)
         self.downsample_label = QLabel('Downsample input')
-        self.acceleration_group.glayout.addWidget(self.downsample_label, 2,0,1,1)
-        self.acceleration_group.glayout.addWidget(self.spin_downsample, 2,1,1,1)
+        self.acceleration_group.glayout.addWidget(self.downsample_label, 3,0,1,1)
+        self.acceleration_group.glayout.addWidget(self.spin_downsample, 3,1,1,1)
         # "Smoothen output" spinbox
         self.spin_smoothen = QSpinBox()
         self.spin_smoothen.setMinimum(1)
         self.spin_smoothen.setMaximum(20)
         self.spin_smoothen.setValue(1)
         self.smoothen_label = QLabel('Smoothen output')
-        self.acceleration_group.glayout.addWidget(self.smoothen_label, 3,0,1,1)
-        self.acceleration_group.glayout.addWidget(self.spin_smoothen, 3,1,1,1)
+        self.acceleration_group.glayout.addWidget(self.smoothen_label, 4,0,1,1)
+        self.acceleration_group.glayout.addWidget(self.spin_smoothen, 4,1,1,1)
 
         # === MODEL TAB ===
 
@@ -290,6 +313,8 @@ class ConvpaintWidget(QWidget):
         
         # Current model
         self.model_description2 = QLabel('None')
+        # Word wrap so the summary never dictates the dock's minimum width
+        self.model_description2.setWordWrap(True)
         self.current_model_group.glayout.addWidget(self.model_description2, 0, 0, 1, 2)
 
         # Add "FE architecture" combo box to FE group
@@ -299,6 +324,8 @@ class ConvpaintWidget(QWidget):
         # Add "FE description" label to FE group
         self.FE_description = QLabel('None')
         self.FE_description.setWordWrap(True)
+        # Info-text styling (italic, dimmed), like the notes on other tabs
+        self.FE_description.setStyleSheet(style_for_infos)
         self.fe_group.glayout.addWidget(self.FE_description, 2, 0, 1, 2)
 
         # Add "FE layers" list to FE group
@@ -389,21 +416,14 @@ class ConvpaintWidget(QWidget):
             # class_names_text.setStyleSheet("font-size: 11px; color: rgba(120, 120, 120, 70%)")#; font-style: italic")
             self.classes_layout.addWidget(class_names_text, 0, 0, 1, 10)
 
-            # Add buttons ("add class", "remove class" and reset)
+            # Add buttons ("add class", "remove class", import/export and reset)
             self.add_class_btn = QPushButton('Add class')
-            self.classes_layout.addWidget(self.add_class_btn, len(self.initial_names)+1, 0, 1, 5)
             self.remove_class_btn = QPushButton('Remove class')
-            self.classes_layout.addWidget(self.remove_class_btn, len(self.initial_names)+1, 5, 1, 5)
-            # Minimal import/export buttons (CSV)
             self.export_class_names_btn = QPushButton('Export class names (csv)')
-            self.classes_layout.addWidget(self.export_class_names_btn, len(self.initial_names)+2, 0, 1, 5)
             self.import_class_names_btn = QPushButton('Import class names (csv/txt)')
-            self.classes_layout.addWidget(self.import_class_names_btn, len(self.initial_names)+2, 5, 1, 5)
-            # Reset to initial state
             self.reset_class_names_btn = QPushButton('Reset to default')
-            self.classes_layout.addWidget(self.reset_class_names_btn, len(self.initial_names)+3, 0, 1, 10)
             self.btn_class_distribution_annot = QPushButton('Show class distribution (in annotation)')
-            self.classes_layout.addWidget(self.btn_class_distribution_annot, len(self.initial_names)+4, 0, 1, 10)
+            self._place_class_buttons(len(self.initial_names))
 
             # Create the class names
             self._create_default_class_names()
@@ -418,22 +438,18 @@ class ConvpaintWidget(QWidget):
         if 'Advanced' in self.tab_names:
             # Create group boxes
             self.advanced_note_group = VHGroup('Important note', orientation='G')
-            self.advanced_appearance_group = VHGroup('Appearance', orientation='G')
-            self.advanced_labels_group = VHGroup('Layers handling', orientation='G')
+            self.advanced_labels_group = VHGroup('Layers handling && Appearance', orientation='G')
             self.advanced_training_group = VHGroup('Training', orientation='G')
             # self.advanced_multifile_group = VHGroup('Multifile Training', orientation='G')
-            self.advanced_prediction_group = VHGroup('Prediction', orientation='G')
             self.advanced_input_group = VHGroup('Input', orientation='G')
             self.advanced_output_group = VHGroup('Output', orientation='G')
             self.advanced_unsupervised_group = VHGroup('Unsupervised extraction (without annotations)', orientation='G')
 
-            # Add groups to the tab
+            # Add groups to the tab (the 'Performance' group is added below)
             self.tabs.add_named_tab('Advanced', self.advanced_note_group.gbox)
-            self.tabs.add_named_tab('Advanced', self.advanced_appearance_group.gbox)
             self.tabs.add_named_tab('Advanced', self.advanced_labels_group.gbox)
             self.tabs.add_named_tab('Advanced', self.advanced_training_group.gbox)
             # self.tabs.add_named_tab('Advanced', self.advanced_multifile_group.gbox)$
-            self.tabs.add_named_tab('Advanced', self.advanced_prediction_group.gbox)
             self.tabs.add_named_tab('Advanced', self.advanced_input_group.gbox)
             self.tabs.add_named_tab('Advanced', self.advanced_output_group.gbox)
             self.tabs.add_named_tab('Advanced', self.advanced_unsupervised_group.gbox)
@@ -446,10 +462,10 @@ class ConvpaintWidget(QWidget):
             self.advanced_note.setWordWrap(True)
             self.advanced_note_group.glayout.addWidget(self.advanced_note, 0, 0, 1, 2)
 
-            # Appearance: show/hide tooltips
+            # Show/hide tooltips
             self.check_show_tooltips = QCheckBox('Show tooltips')
             self.check_show_tooltips.setChecked(True)
-            self.advanced_appearance_group.glayout.addWidget(self.check_show_tooltips, 0, 0, 1, 1)
+            self.advanced_labels_group.glayout.addWidget(self.check_show_tooltips, 5, 0, 1, 1)
             # Wire the checkbox to toggle the promoted widgets' tooltips
             self.check_show_tooltips.toggled.connect(lambda checked: self._setup_init_tooltips() if checked else self._remove_init_tooltips())
 
@@ -463,14 +479,17 @@ class ConvpaintWidget(QWidget):
             self.check_keep_layers.setChecked(self.keep_layers)
             self.advanced_labels_group.glayout.addWidget(self.check_keep_layers, 1, 1, 1, 1)
 
-            # Button for adding annotations layers for selected images
-            self.btn_add_all_annot_layers = QPushButton('Add for all selected')
-            self.advanced_labels_group.glayout.addWidget(self.btn_add_all_annot_layers, 2, 0, 1, 1)
-
             # Checkbox for auto-selecting annotations layers
-            self.check_auto_select_annot = QCheckBox('Auto-select annotations layer')
+            self.check_auto_select_annot = QCheckBox('Auto-select annot. layer')
             self.check_auto_select_annot.setChecked(self.auto_select_annot)
-            self.advanced_labels_group.glayout.addWidget(self.check_auto_select_annot, 2, 1, 1, 1)
+            self.advanced_labels_group.glayout.addWidget(self.check_auto_select_annot, 2, 0, 1, 2)
+
+            # Button for adding annotations layers for selected images
+            self.btn_add_all_annot_layers = QPushButton('Add annot. layers for all selected images')
+            self.advanced_labels_group.glayout.addWidget(self.btn_add_all_annot_layers, 3, 0, 1, 2)
+
+            # --- dashed divider between the layer settings and appearance ---
+            self.advanced_labels_group.glayout.addWidget(self._dashed_divider(), 4, 0, 1, 2)
 
             # Textbox to define the prefix for the annotations layers; NOTE: DISABLED FOR NOW
             # self.text_annot_prefix = QtWidgets.QLineEdit()
@@ -505,20 +524,16 @@ class ConvpaintWidget(QWidget):
 
             # Label for number of trainings performed
             self.label_training_count = QLabel('')
-            self.advanced_training_group.glayout.addWidget(self.label_training_count, 3, 0, 1, 2)
+            self.advanced_training_group.glayout.addWidget(self.label_training_count, 3, 0, 1, 4)
 
             # Button to display a diagram of class distribution
             self.btn_class_distribution_trained = QPushButton('Show class distr. (trained)')
-            self.advanced_training_group.glayout.addWidget(self.btn_class_distribution_trained, 3, 2, 1, 2)
+            # Below the counts label (side by side they would be the widest row)
+            self.advanced_training_group.glayout.addWidget(self.btn_class_distribution_trained, 4, 0, 1, 4)
 
             # Reset training button
             self.btn_reset_training = QPushButton('Reset continuous training')
-            self.advanced_training_group.glayout.addWidget(self.btn_reset_training, 4, 0, 1, 4)
-
-            # Dask option
-            self.check_use_dask = QCheckBox('Use Dask when tiling image for segmentation')
-            self.check_use_dask.setChecked(self.use_dask)
-            self.advanced_prediction_group.glayout.addWidget(self.check_use_dask, 0, 0, 1, 1)
+            self.advanced_training_group.glayout.addWidget(self.btn_reset_training, 5, 0, 1, 4)
 
             # Input channels option
             self.text_input_channels = QtWidgets.QLineEdit()
@@ -530,7 +545,7 @@ class ConvpaintWidget(QWidget):
 
             # Button to switch first to axes
             self.btn_switch_axes = QPushButton('Switch channels axis')
-            self.advanced_input_group.glayout.addWidget(self.btn_switch_axes, 1, 0, 1, 2)
+            self.advanced_input_group.glayout.addWidget(self.btn_switch_axes, 1, 0, 1, 4)
 
             # Checkbox for adding segmentation
             self.check_add_seg = QCheckBox('Segmentation')
@@ -566,10 +581,10 @@ class ConvpaintWidget(QWidget):
             self.advanced_unsupervised_group.glayout.addWidget(self.kmeans_label, 1, 0, 1, 2)
             self.advanced_unsupervised_group.glayout.addWidget(self.text_features_kmeans, 1, 2, 1, 2)
 
-        # === PERFORMANCE TAB ===
+        # === ADVANCED TAB: PERFORMANCE SECTION (feature caching + Dask) ===
 
         if 'Advanced' in self.tab_names:
-            self.advanced_cache_group = VHGroup('Feature caching', orientation='G')
+            self.advanced_cache_group = VHGroup('Performance', orientation='G')
             self.tabs.add_named_tab('Advanced', self.advanced_cache_group.gbox)
 
             # Explanatory note
@@ -598,7 +613,7 @@ class ConvpaintWidget(QWidget):
 
             # Max disk spinbox (MB) — features evicted from RAM spill here instead
             # of being recomputed. 0 disables disk spillover.
-            self.cache_max_disk_label = QLabel('Max cache disk (MB, 0 = RAM only)')
+            self.cache_max_disk_label = QLabel('Max cache disk (MB)')
             self.advanced_cache_group.glayout.addWidget(self.cache_max_disk_label, 3, 0, 1, 2)
             self.cache_max_disk_spinbox = QSpinBox()
             self.cache_max_disk_spinbox.setRange(0, 8 * 1024 * 1024)  # 0 .. 8 TB
@@ -610,14 +625,28 @@ class ConvpaintWidget(QWidget):
             self.cache_size_label = QLabel('Current cache size: 0 MB')
             self.advanced_cache_group.glayout.addWidget(self.cache_size_label, 4, 0, 1, 3)
 
+            # --- dashed divider between the caching and Dask parts ---
+            self.advanced_cache_group.glayout.addWidget(self._dashed_divider(), 5, 0, 1, 3)
+
+            # Dask option (applies to tiled segmentation)
+            dask_note = QLabel(
+                "Distribute the tiles of a tiled segmentation to parallel Dask "
+                "workers (only applies when 'Tile for segmentation' is enabled).")
+            dask_note.setStyleSheet(style_for_infos)
+            dask_note.setWordWrap(True)
+            self.advanced_cache_group.glayout.addWidget(dask_note, 6, 0, 1, 3)
+            self.check_use_dask = QCheckBox('Use Dask')
+            self.check_use_dask.setChecked(self.use_dask)
+            self.advanced_cache_group.glayout.addWidget(self.check_use_dask, 7, 0, 1, 3)
+
         # === MULTIFILE TAB ===
 
         if 'Multifile' in self.tab_names:
             # Create three groups for the Multifile tab to match other tabs' style
             self.multifile_files_group = VHGroup('Files', orientation='G')
-            self.multifile_train_group = VHGroup('Train/Segment', orientation='G')
-            self.multifile_reset_group = VHGroup('Clear/Close', orientation='G')
-            self.multifile_export_import_group = VHGroup('Export/Import', orientation='G')
+            self.multifile_train_group = VHGroup('Train / Segment', orientation='G')
+            self.multifile_reset_group = VHGroup('Clear / Close', orientation='G')
+            self.multifile_export_import_group = VHGroup('Export / Import', orientation='G')
             self.multifile_settings_group = VHGroup('Preferences', orientation='G')
 
             # Add groups to the Multifile tab
@@ -643,6 +672,14 @@ class ConvpaintWidget(QWidget):
             self.multifile_list = QTableWidget()
             self.multifile_list.setColumnCount(3)
             self.multifile_list.setHorizontalHeaderLabels(['Annot.', 'Image Filename', 'Segm.'])
+            # Flat header and list in the ACTIVE napari theme's colors; re-apply
+            # whenever the theme changes (dark <-> light).
+            self._style_multifile_list()
+            self.viewer.events.theme.connect(self._style_multifile_list)
+            # Same font as the rest of the plugin (tables default to the
+            # platform's smaller 'small-widget' font on some systems).
+            self.multifile_list.setFont(self.font())
+            self.multifile_list.horizontalHeader().setFont(self.font())
             # Align the 'Image Filename' header label to the left for readability
             try:
                 header_item = self.multifile_list.horizontalHeaderItem(1)
@@ -667,21 +704,25 @@ class ConvpaintWidget(QWidget):
             self.multifile_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
             self.multifile_files_group.glayout.addWidget(self.multifile_list, 1, 0, 1, 3)
 
+            # 2+1 rows: three buttons side by side would be the widest row of
+            # the tab and dictate the dock's minimum width.
             self.multifile_clear_annotations_btn = QPushButton('Clear selected annot.')
             self.multifile_reset_group.glayout.addWidget(self.multifile_clear_annotations_btn, 1, 0, 1, 1)
-            self.multifile_reset_folder_btn = QPushButton('Close folder')
-            self.multifile_reset_group.glayout.addWidget(self.multifile_reset_folder_btn, 1, 1, 1, 1)
             self.multifile_clear_segmentations_btn = QPushButton('Clear selected segm.')
-            self.multifile_reset_group.glayout.addWidget(self.multifile_clear_segmentations_btn, 1, 2, 1, 1)
+            self.multifile_reset_group.glayout.addWidget(self.multifile_clear_segmentations_btn, 1, 1, 1, 1)
+            self.multifile_reset_folder_btn = QPushButton('Close folder')
+            self.multifile_reset_group.glayout.addWidget(self.multifile_reset_folder_btn, 2, 0, 1, 2)
 
             # --- Train/Segment group: action buttons (placeholders for now)
-            self.multifile_train_all_annot_btn = QPushButton('Train on annotated')
+            self.multifile_train_all_annot_btn = QPushButton('Train on annot.')
             self.multifile_preview_btn = QPushButton('Preview segmentation')
             self.multifile_segment_selected_btn = QPushButton('Segment selected')
 
+            # 2+1 rows: three buttons side by side would be the widest row of
+            # the tab and dictate the dock's minimum width.
             self.multifile_train_group.glayout.addWidget(self.multifile_train_all_annot_btn, 0, 0, 1, 1)
             self.multifile_train_group.glayout.addWidget(self.multifile_preview_btn, 0, 1, 1, 1)
-            self.multifile_train_group.glayout.addWidget(self.multifile_segment_selected_btn, 0, 2, 1, 1)
+            self.multifile_train_group.glayout.addWidget(self.multifile_segment_selected_btn, 1, 0, 1, 2)
 
             # --- Import/Export group: action buttons (placeholders for now)
             self.multifile_export_annot_btn = QPushButton('Export annotations')
@@ -1357,12 +1398,61 @@ class ConvpaintWidget(QWidget):
         self._create_default_class_names()
 
         # Re-add the buttons below the class names
-        self.classes_layout.addWidget(self.add_class_btn, len(self.class_names)+1, 0, 1, 5)
-        self.classes_layout.addWidget(self.remove_class_btn, len(self.class_names)+1, 5, 1, 5)
-        self.classes_layout.addWidget(self.export_class_names_btn, len(self.class_names)+2, 0, 1, 5)
-        self.classes_layout.addWidget(self.import_class_names_btn, len(self.class_names)+2, 5, 1, 5)
-        self.classes_layout.addWidget(self.reset_class_names_btn, len(self.class_names)+3, 0, 1, 10)
-        self.classes_layout.addWidget(self.btn_class_distribution_annot, len(self.class_names)+4, 0, 1, 10)
+        self._place_class_buttons(len(self.class_names))
+
+    def _style_multifile_list(self, event=None):
+        """(Re-)apply the active napari theme's colors to the multifile list.
+        Palette roles can't be used: napari themes via stylesheet only, so the
+        Qt palette keeps the platform's light look (a Win95-style bevel).
+        Connected to viewer.events.theme so dark <-> light switches restyle."""
+        def _hex(color):
+            as_hex = getattr(color, 'as_hex', None)
+            return as_hex() if callable(as_hex) else str(color)
+        try:
+            from napari.utils.theme import get_theme
+            theme = get_theme(self.viewer.theme)
+            if isinstance(theme, dict):
+                bg, fg, txt = (_hex(theme['background']), _hex(theme['foreground']),
+                               _hex(theme['text']))
+            else:
+                bg, fg, txt = _hex(theme.background), _hex(theme.foreground), _hex(theme.text)
+        except Exception:
+            bg, fg, txt = '#262930', '#414851', '#f0f1f2'  # napari dark
+        self.multifile_list.setStyleSheet(
+            f"QHeaderView::section {{ background-color: {fg}; color: {txt};"
+            f" border: none; border-right: 1px solid {bg}; padding: 3px 6px; }}"
+            f"QHeaderView::section:first {{ border-top-left-radius: 4px; }}"
+            f"QHeaderView::section:last {{ border-top-right-radius: 4px; border-right: none; }}"
+            f"QTableWidget {{ border: 1px solid {fg}; border-radius: 4px;"
+            f" gridline-color: {fg}; background-color: {bg}; }}"
+            f"QTableCornerButton::section {{ background-color: {fg}; border: none; }}")
+
+    @staticmethod
+    def _dashed_divider():
+        """A thin dashed horizontal line used to separate subsections,
+        with breathing room above and below."""
+        divider = QtWidgets.QFrame()
+        divider.setFixedHeight(13)  # 6px margin + 1px line + 6px margin
+        divider.setStyleSheet(
+            "border: none; border-top: 1px dashed rgba(120, 120, 120, 50%); margin: 6px 0;")
+        return divider
+
+    def _place_class_buttons(self, n_classes):
+        """(Re-)place the static buttons below the class-name rows.
+        Export/import are stacked vertically: side by side they would be the
+        widest row of the Classes tab and dictate the dock's minimum width."""
+        # Dividers are created once and re-placed on layout rebuilds.
+        if not hasattr(self, '_classes_divider1'):
+            self._classes_divider1 = self._dashed_divider()
+            self._classes_divider2 = self._dashed_divider()
+        self.classes_layout.addWidget(self.add_class_btn, n_classes+1, 0, 1, 5)
+        self.classes_layout.addWidget(self.remove_class_btn, n_classes+1, 5, 1, 5)
+        self.classes_layout.addWidget(self._classes_divider1, n_classes+2, 0, 1, 10)
+        self.classes_layout.addWidget(self.export_class_names_btn, n_classes+3, 0, 1, 10)
+        self.classes_layout.addWidget(self.import_class_names_btn, n_classes+4, 0, 1, 10)
+        self.classes_layout.addWidget(self._classes_divider2, n_classes+5, 0, 1, 10)
+        self.classes_layout.addWidget(self.reset_class_names_btn, n_classes+6, 0, 1, 10)
+        self.classes_layout.addWidget(self.btn_class_distribution_annot, n_classes+7, 0, 1, 10)
 
     def _on_add_class(self, text=None):
         """Add a new class name and icon to the layout and update all annotations and segmentation layers."""
@@ -1401,12 +1491,7 @@ class ConvpaintWidget(QWidget):
         self.classes_layout.removeWidget(self.remove_class_btn)
         self.classes_layout.removeWidget(self.reset_class_names_btn)
         self.classes_layout.removeWidget(self.btn_class_distribution_annot)
-        self.classes_layout.addWidget(self.add_class_btn, class_num+1, 0, 1, 5)
-        self.classes_layout.addWidget(self.remove_class_btn, class_num+1, 5, 1, 5)
-        self.classes_layout.addWidget(self.export_class_names_btn, class_num+2, 0, 1, 5)
-        self.classes_layout.addWidget(self.import_class_names_btn, class_num+2, 5, 1, 5)
-        self.classes_layout.addWidget(self.reset_class_names_btn, class_num+3, 0, 1, 10)
-        self.classes_layout.addWidget(self.btn_class_distribution_annot, class_num+4, 0, 1, 10)
+        self._place_class_buttons(class_num)
 
     def _on_remove_class(self, del_annots=True, event=None):
         """Remove the last class name and icon from the layout and update all annotations and segmentation layers."""
@@ -1431,12 +1516,7 @@ class ConvpaintWidget(QWidget):
             self.classes_layout.removeWidget(self.remove_class_btn)
             self.classes_layout.removeWidget(self.reset_class_names_btn)
             self.classes_layout.removeWidget(self.btn_class_distribution_annot)
-            self.classes_layout.addWidget(self.add_class_btn, len(self.class_names)+1, 0, 1, 5)
-            self.classes_layout.addWidget(self.remove_class_btn, len(self.class_names)+1, 5, 1, 5)
-            self.classes_layout.addWidget(self.export_class_names_btn, len(self.class_names)+2, 0, 1, 5)
-            self.classes_layout.addWidget(self.import_class_names_btn, len(self.class_names)+2, 5, 1, 5)
-            self.classes_layout.addWidget(self.reset_class_names_btn, len(self.class_names)+3, 0, 1, 10)
-            self.classes_layout.addWidget(self.btn_class_distribution_annot, len(self.class_names)+4, 0, 1, 10)
+            self._place_class_buttons(len(self.class_names))
             # Update the icons and class names
             self._update_class_names()
         else:
@@ -2446,12 +2526,7 @@ class ConvpaintWidget(QWidget):
             self._create_default_class_names()
 
             # Re-add the buttons below the class names
-            self.classes_layout.addWidget(self.add_class_btn, len(self.class_names)+1, 0, 1, 5)
-            self.classes_layout.addWidget(self.remove_class_btn, len(self.class_names)+1, 5, 1, 5)
-            self.classes_layout.addWidget(self.export_class_names_btn, len(self.class_names)+2, 0, 1, 5)
-            self.classes_layout.addWidget(self.import_class_names_btn, len(self.class_names)+2, 5, 1, 5)
-            self.classes_layout.addWidget(self.reset_class_names_btn, len(self.class_names)+3, 0, 1, 10)
-            self.classes_layout.addWidget(self.btn_class_distribution_annot, len(self.class_names)+4, 0, 1, 10)
+            self._place_class_buttons(len(self.class_names))
         
         if 'Multifile' in self.tab_names:
             self._reset_multifile_folder()
@@ -3933,7 +4008,7 @@ class ConvpaintWidget(QWidget):
         pix = len(self.cp_model.table)
         imgs = len(np.unique(self.cp_model.table['img_id']))
         lbls = len(np.unique(self.cp_model.table['label']))
-        self.label_training_count.setText(f'{pix} pixels, {imgs} image{"s"*(imgs>1)}, {lbls} labels')
+        self.label_training_count.setText(f'{pix} px / {imgs} img{"s"*(imgs>1)} / {lbls} labels')
 
     def _on_show_class_distribution(self, trained_data=False):
         """Show the class distribution of the data used with continuous_training/memory_mode (saved in self.cp_model.table)

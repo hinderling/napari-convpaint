@@ -718,7 +718,7 @@ class ConvpaintModel:
         new_param : Param
             Convpaint model defaults adjusted to the feature extractor defaults
         """
-        cpm_defaults = ConvpaintModel.get_default_params() # Get ConvPaint defaults
+        cpm_defaults = ConvpaintModel.get_default_params() # Get Convpaint defaults
         new_param = self.fe_model.get_default_params(cpm_defaults) # Overwrite defaults defined in the FE model
         return new_param
 
