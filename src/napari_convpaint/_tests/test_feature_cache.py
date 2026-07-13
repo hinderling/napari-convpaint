@@ -260,3 +260,52 @@ def test_cached_prediction_bit_identical_and_hits():
         cp2 = ConvpaintModel('gaussian')
         cp2.train(img, annot)
         assert np.array_equal(seg_second, cp2.segment(img))
+
+
+def test_thread_safety_under_concurrent_use(tmp_path):
+    """Hammer the cache from worker threads while the "GUI" thread clears it and
+    changes limits (exactly what the napari widget does during a threaded op).
+    Correctness bar: no exceptions and consistent bookkeeping afterwards."""
+    import threading
+
+    c = FeatureCache(max_bytes=int(3 * 10**6), headroom_frac=0.0,
+                     disk_max_bytes=int(5 * 10**6), disk_dir=str(tmp_path))
+    errors = []
+    start = threading.Barrier(5)
+
+    def worker(tid):
+        try:
+            start.wait()
+            for i in range(200):
+                key = ("img", tid, i % 7)
+                if c.get(key) is None:
+                    c.put(key, _arr(0.1))
+                len(c), c.stats()
+        except Exception as e:  # pragma: no cover - only on regression
+            errors.append(e)
+
+    def gui():
+        try:
+            start.wait()
+            for i in range(100):
+                c.set_max_bytes(int((2 + i % 3) * 10**6))
+                c.set_disk_max_bytes(int((i % 2) * 5 * 10**6))
+                c.stats()
+                if i % 10 == 0:
+                    c.clear()
+        except Exception as e:  # pragma: no cover - only on regression
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker, args=(t,)) for t in range(4)]
+    threads.append(threading.Thread(target=gui))
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []
+    # Bookkeeping must be consistent: recompute sizes from the stores.
+    assert c.nbytes == sum(item[1] for item in c._store.values())
+    assert c.disk_nbytes == sum(item[1] for item in c._disk_store.values())
+    assert c.nbytes <= c.stats()["max_bytes"]
+    c.close()
