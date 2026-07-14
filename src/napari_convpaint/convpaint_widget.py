@@ -2432,8 +2432,6 @@ class ConvpaintWidget(QWidget):
             else: # If data is compatible, set the model's default multichannel setting; also assume this in case data_dims is None/invalid
                 adjusted_params.append('channel_mode')
                 new_param.channel_mode = fe_defaults.channel_mode
-                self._reset_radio_channel_mode_choices()
-                self._reset_radio_norm_choices() # Update norm options, since channel_mode changed
             # else: # If data is compatible, set the model's default RGB setting
             #     adjusted_params.append('rgb_img')
             #     if fe_defaults.rgb_img: # If the default model is RGB, set it
@@ -2475,6 +2473,9 @@ class ConvpaintWidget(QWidget):
 
         # Create a new model with the new FE
         self.cp_model = self._cpm_class(param=new_param)
+        # Sync the channel-mode and normalization radios with the new model's params
+        self._reset_radio_channel_mode_choices()
+        self._reset_radio_norm_choices()
         self._reset_device_options()
         self._reset_clf() # Call to take all actions needed after resetting the clf
         # Reset the features for continuous training
