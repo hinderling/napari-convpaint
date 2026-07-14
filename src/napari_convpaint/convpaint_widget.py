@@ -2865,8 +2865,10 @@ class ConvpaintWidget(QWidget):
             self.radio_single_channel.setEnabled(True)
             self.radio_multi_channel.setEnabled(True)
             self.radio_rgb.setEnabled(False)
-            self.radio_single_channel.setChecked(self.cp_model.get_param("channel_mode") == "single")
-            self.radio_multi_channel.setChecked(self.cp_model.get_param("channel_mode") != "single") # If it was multi or rgb, set multi
+            # Keep only an explicit "multi" choice; anything else defaults to "single"
+            keep_multi = self.cp_model.get_param("channel_mode") == "multi"
+            self.radio_single_channel.setChecked(not keep_multi)
+            self.radio_multi_channel.setChecked(keep_multi)
         elif self.image_layer_selection_widget.value.ndim == 4: # If non-rgb 4D, it must be multi channel
             self.radio_single_channel.setEnabled(False)
             self.radio_multi_channel.setEnabled(True)
@@ -2896,8 +2898,12 @@ class ConvpaintWidget(QWidget):
             self.radio_no_normalize.setEnabled(True)
             self.radio_normalize_over_stack.setEnabled(False)
             self.radio_normalize_by_image.setEnabled(True)
-            if norm_scope == 2: # If initially over stack, reset to by image
+            if norm_scope == 2: # Over-stack unavailable without a z stack; show per-plane, but block
+                # the toggle handler so it does not overwrite the "over stack" param (same result
+                # here anyway), keeping it to be restored when a stacked image is selected again
+                self.radio_normalize_by_image.blockSignals(True)
                 self.radio_normalize_by_image.setChecked(True)
+                self.radio_normalize_by_image.blockSignals(False)
             else: # Otherwise, keep the current setting
                 self.button_group_normalize.button(norm_scope).setChecked(True)
         elif data_dims in ['3D_single', '3D_RGB', '4D']: # With z dim available -> all options
@@ -3527,9 +3533,11 @@ class ConvpaintWidget(QWidget):
                 if data.shape[-1] in (3, 4):
                     return '3D_RGB'
                 else:
-                    warnings.warn('Image is 3D, but does not have 3 or 4 channels as last dimension. Setting channel_mode to "multi".')
-                    self.cp_model.set_param("channel_mode", "multi", ignore_warnings=True)
-                    return '3D_multi'
+                    # Only reached with a stale "rgb" (e.g. after an RGB image); recover to the
+                    # default "single", so a stack opened next behaves like a freshly opened one
+                    warnings.warn('Image is 3D, but does not have 3 or 4 channels as last dimension. Setting channel_mode to "single".')
+                    self.cp_model.set_param("channel_mode", "single", ignore_warnings=True)
+                    return '3D_single'
             if self.cp_model.get_param("channel_mode") == "multi":
                 return '3D_multi'
             else: # single
