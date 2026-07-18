@@ -1890,6 +1890,11 @@ class ConvpaintWidget(QWidget):
         # here unconditionally is what keeps it clickable after a predict run.
         for b in op.disabled_buttons:
             b.setEnabled(True)
+        # Apply a classifier reset that was requested while the op was running
+        # (also flips self.trained off before the auto-segment check below).
+        if getattr(self, '_pending_clf_reset', False):
+            self._pending_clf_reset = False
+            self._reset_clf()
         with warnings.catch_warnings():
             warnings.simplefilter(action="ignore", category=FutureWarning)
             self.viewer.window._status_bar._toggle_activity_dock(False)
@@ -3344,6 +3349,13 @@ class ConvpaintWidget(QWidget):
 
     def _reset_clf(self):
         """Discard the trained classifier."""
+        # A running worker predicts with this model's classifier — resetting it
+        # mid-op crashes the worker at its next _clf_predict. Triggers that are
+        # not op buttons (layer switch, channel-mode/norm radios, classifier
+        # params) can fire during an op, so defer the reset until it finishes.
+        if getattr(self, '_op', None) is not None:
+            self._pending_clf_reset = True
+            return
         self.cp_model.reset_classifier()
         self.current_model_path = 'not trained'
         self.trained = False

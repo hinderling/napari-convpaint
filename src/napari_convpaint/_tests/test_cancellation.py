@@ -352,3 +352,46 @@ def test_widget_async_worker_completes_without_main_thread_violation(make_napari
             assert widget.trained
     finally:
         ConvpaintWidget._sync_workers = orig_sync
+
+
+def test_clf_reset_is_deferred_while_op_running(make_napari_viewer):
+    """Regression test: resetting the classifier while a worker op is running
+    (layer switch, channel-mode/norm radio click, classifier-param change —
+    none of which are disabled op buttons) must not null the classifier under
+    the worker's feet ('NoneType' object has no attribute 'predict_proba').
+    The reset is deferred and applied when the op finishes."""
+    from qtpy.QtWidgets import QPushButton
+    from napari_convpaint.convpaint_widget import ConvpaintWidget, _ActiveOp
+
+    viewer = make_napari_viewer()
+    widget = ConvpaintWidget(viewer)
+    widget.ensure_init()
+    widget.cp_model = ConvpaintModel(fe_name='gaussian_features')
+    widget.auto_seg = False
+    rng = np.random.default_rng(0)
+    viewer.add_image(rng.random((64, 64)), name='img')
+    widget._on_add_annot_layer()
+    annot = np.zeros((64, 64), dtype=np.uint8)
+    annot[10:20, 10:20] = 1
+    annot[30:40, 30:40] = 2
+    viewer.layers['annotations'].data[...] = annot
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        widget._on_train()
+    assert widget.trained and widget.cp_model.classifier is not None
+
+    # Simulate a running op, then a mid-op reset trigger.
+    btn = widget.train_classifier_btn
+    widget._op = _ActiveOp(name='predict_all', cancel_token=CancelToken(),
+                           button=btn, button_orig_text=btn.text())
+    widget._reset_clf()
+    assert widget.cp_model.classifier is not None, \
+        "classifier was nulled while an op was running"
+    assert widget.trained
+
+    # When the op finishes, the deferred reset is applied.
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        widget._on_worker_finished()
+    assert widget.cp_model.classifier is None
+    assert not widget.trained
