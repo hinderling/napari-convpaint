@@ -4,6 +4,13 @@ import warnings
 from .param import Param
 from .utils import scale_img, rescale_features, reduce_to_patch_multiple, pad_to_shape, get_device_from_torch_model
 
+def _concat(arrays, axis=0):
+    """Concatenate along `axis`, staying on-device for torch tensors."""
+    if len(arrays) and isinstance(arrays[0], torch.Tensor):
+        return torch.cat(arrays, dim=axis)
+    return np.concatenate(arrays, axis=axis)
+
+
 class FeatureExtractor:
     def __init__(self, model_name="vgg16", model=None, **kwargs):
         """
@@ -367,15 +374,20 @@ class FeatureExtractor:
 
     def _pyramid_native(self, data, param, device=torch.device("cpu")):
         """Expensive half of the pyramid: extract the per-scale *native*
-        (pre-rescale) features. Returns a payload — one entry per scale of
-        ``(features_list, pre_reduction_shape, reduced_shape)`` with the features
-        as CPU numpy arrays — that ``_pyramid_reconstruct`` turns into the final
-        feature stack.
+        (pre-rescale) features. Returns one entry per scale of
+        ``(features_list, pre_reduction_shape, reduced_shape)`` that
+        ``_pyramid_reconstruct`` turns into the final feature stack.
 
-        This is the cacheable representation: it is independent of the requested
-        output resolution (``patched``), and for patched FEs (ViTs) it is the
-        small patch-grid features rather than the full-resolution stack. See the
-        feature-cache protocol below (``cacheable_repr``)."""
+        The features stay in whatever form the extractor produced them — for
+        NN FEs, torch tensors on the extraction device — so
+        ``_pyramid_reconstruct`` rescales on-device. Only the feature-cache
+        payload is cast to device-independent CPU numpy
+        (``_native_to_payload``).
+
+        This is the (pre-cast) cacheable representation: it is independent of
+        the requested output resolution (``patched``), and for patched FEs
+        (ViTs) it is the small patch-grid features rather than the
+        full-resolution stack. See the feature-cache protocol below."""
         # Check if the given selection of scalings is in the proposed scalings, and if not, give a warning
         if not param.fe_scalings in self.get_proposed_scalings():
             warnings.warn(f"The selected scalings {param.fe_scalings} are not in the proposed scalings {self.proposed_scalings}. Please check if this is intentional.")
@@ -399,10 +411,6 @@ class FeatureExtractor:
             # In case the features are not a list, but a single array, make it a list
             if not isinstance(features, list):
                 features = [features]
-            # Convert any torch tensors to CPU numpy so the payload is
-            # device-independent and safe to cache.
-            features = [f.detach().cpu().numpy() if isinstance(f, torch.Tensor) else f
-                        for f in features]
             native.append((features, pre_reduction_shape, reduced_shape))
         return native
 
@@ -444,8 +452,10 @@ class FeatureExtractor:
                                 order=param.fe_order)
                         for f in features]
 
-            # Put together features for each input_channels procession (and layers if applicable)
-            features = np.concatenate(features, axis=0)
+            # Put together features for each input_channels procession (and
+            # layers if applicable), staying on the extraction device for torch
+            # tensors; the single host transfer happens at the very end.
+            features = _concat(features)
 
             # If use_min_features is True, shorten features
             if param.fe_use_min_features:
@@ -458,8 +468,11 @@ class FeatureExtractor:
             # Add the features to the list of features
             features_all_scales.append(features)
 
-        # Concatenate the features from all scales along the first axis
-        features_all_scales = np.concatenate(features_all_scales, axis=0)
+        # Concatenate all scales along the first axis, then move to CPU numpy
+        # in a single host transfer.
+        features_all_scales = _concat(features_all_scales)
+        if isinstance(features_all_scales, torch.Tensor):
+            features_all_scales = features_all_scales.detach().cpu().numpy()
 
         return features_all_scales
 
@@ -478,34 +491,60 @@ class FeatureExtractor:
         RAM but are dropped instead of pickled to disk."""
         return True
 
-    def cache_extra_state(self, param):
-        """Extraction-relevant state that lives on the FE instance rather than in
-        `param`, to be mixed into the feature-cache key. Any FE whose output
+    def cache_extra_state(self):
+        """Extraction-relevant state that lives on the FE instance (rather than
+        in the Param), to be mixed into the feature-cache key. Any FE whose output
         depends on constructor/instance state (e.g. sigmas, scalings moved out of
         the Param by `get_enforced_params`) must return it here, or stale cached
         features will be served after that state changes. Return value must be
         hashable (or None)."""
         return None
 
-    def cacheable_repr(self, data, param, device=torch.device("cpu")):
-        """Compute the cacheable payload for `data`: the expensive, ideally-small
-        intermediate that `features_from_cacheable` turns into full features.
-        Default = the pre-rescale native pyramid features (patch tokens for ViTs,
-        per-scale maps for CNNs), which are resolution-independent so one cached
-        payload serves both training (unpatched) and prediction (patched)."""
-        return self._pyramid_native(data, param, device)
+    @staticmethod
+    def _native_to_payload(native):
+        """Cast a native pyramid (whose feature arrays may be on-device torch
+        tensors) to a device-independent cache payload: CPU numpy arrays, safe
+        to hold in RAM and pickle to the disk tier. ``was_torch`` records the
+        native form, so reconstruction from the cache can lift the payload back
+        to tensors and use the same rescale backend as a fresh extraction —
+        cached results must be identical to fresh ones."""
+        was_torch = any(isinstance(f, torch.Tensor)
+                        for features, _, _ in native for f in features)
+        scales = [([f.detach().cpu().numpy() if isinstance(f, torch.Tensor) else f
+                    for f in features], pre_shape, red_shape)
+                  for features, pre_shape, red_shape in native]
+        return {"scales": scales, "was_torch": was_torch}
 
-    def features_from_cacheable(self, payload, data_shape, param, patched=True):
-        """Reconstruct the features the pipeline needs from a cached payload."""
-        return self._pyramid_reconstruct(payload, data_shape, param, patched)
+    def cacheable_repr_and_features(self, data, param, device=torch.device("cpu"), patched=True):
+        """Compute the features AND the cache payload in one extraction pass.
+        This is THE extension point for FEs with a custom payload (override
+        together with `features_from_cacheable`); the cache's miss path calls
+        only this method.
 
-    def cacheable_nbytes(self, payload):
-        """Byte size of a payload from `cacheable_repr`, for the cache budget."""
-        total = 0
-        for features, _, _ in payload:
-            for f in features:
-                total += getattr(f, "nbytes", 0)
-        return total
+        The reconstruction runs from the on-device native form (fast torch
+        rescale for NN FEs); only the stored payload is cast to CPU numpy."""
+        native = self._pyramid_native(data, param, device)
+        payload = self._native_to_payload(native)
+        features = self._pyramid_reconstruct(native, data.shape, param, patched)
+        return features, payload
+
+    def features_from_cacheable(self, payload, data_shape, param, patched=True, device=None):
+        """Reconstruct the features the pipeline needs from a cached payload.
+        If the payload originated from torch tensors, lift it back onto
+        `device` first, so cache hits use the same (fast, on-device) rescale
+        backend as fresh extractions — both for speed and so hit and miss
+        results are identical.
+
+        Contract: pass the SAME resolved device the fresh extraction would use
+        (as `_extract_pyramid_cached` does). `device=None` reconstructs on the
+        CPU, which matches a CPU extraction but not bit-exactly a GPU one
+        (torch's CPU and GPU interpolation kernels may differ at order>0)."""
+        native = payload["scales"]
+        if payload.get("was_torch"):
+            native = [([torch.from_numpy(f).to(device if device is not None else "cpu")
+                        for f in features], pre_shape, red_shape)
+                      for features, pre_shape, red_shape in native]
+        return self._pyramid_reconstruct(native, data_shape, param, patched)
 
     def extract_features_from_multichannel_stack(self, image, rgb_data=False, device=torch.device("cpu")):
         """

@@ -16,17 +16,19 @@ fit (a single payload larger than the budget), it is simply not cached and the
 caller recomputes. The cache never exceeds the budget, so it degrades to
 recomputation rather than pushing the system into swap.
 
-FE-specific behaviour lives in the FeatureExtractor (see the `cacheable_repr` /
-`features_from_cacheable` / `cacheable_nbytes` / `supports_feature_cache`
-protocol on the base class): the cache never needs to know what is inside a
+FE-specific behaviour lives in the FeatureExtractor (see the
+`cacheable_repr_and_features` / `features_from_cacheable` /
+`supports_feature_cache` protocol on the base class): the cache never needs to know what is inside a
 payload.
 """
 from __future__ import annotations
 
+import functools
 import os
 import pickle
 import shutil
 import tempfile
+import threading
 from collections import OrderedDict
 
 try:
@@ -48,19 +50,36 @@ _DISK_HEADROOM_BYTES = 2 * 1024 ** 3  # 2 GiB
 
 def _payload_nbytes(payload) -> int:
     """Best-effort byte size of an opaque payload (array, list/tuple of arrays,
-    or anything exposing .nbytes). Unknown → 0 (treated as free, but such
-    payloads should provide a size via the FE's cacheable_nbytes)."""
+    or anything exposing .nbytes, recursing into lists/tuples/dicts).
+    Unknown → 0 (treated as free)."""
     if payload is None:
         return 0
     if hasattr(payload, "nbytes"):
         return int(payload.nbytes)
     if isinstance(payload, (list, tuple)):
         return sum(_payload_nbytes(p) for p in payload)
+    if isinstance(payload, dict):
+        return sum(_payload_nbytes(v) for v in payload.values())
     return 0
+
+
+def _locked(method):
+    """Run `method` under the cache's re-entrant lock. The cache is shared
+    across threads (e.g. the napari GUI thread changing limits or clearing
+    while a worker thread is inside get/put), so every public entry point must
+    hold the lock; private helpers are only called from within one."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
 
 
 class FeatureCache:
     """LRU feature cache bounded by a memory budget.
+
+    Thread-safe: all public methods take a re-entrant lock, so a worker thread
+    can extract/cache while the GUI thread clears the cache or changes limits.
 
     Parameters
     ----------
@@ -78,8 +97,8 @@ class FeatureCache:
     def __init__(self, max_bytes: int | None = None,
                  headroom_frac: float = _DEFAULT_HEADROOM_FRAC,
                  enabled: bool = True,
-                 disk_max_bytes: int = 0,
-                 disk_dir: str | None = None):
+                 disk_max_bytes: int = 0):
+        self._lock = threading.RLock()
         self._store: "OrderedDict[tuple, tuple]" = OrderedDict()  # key -> (payload, nbytes, spill_ok)
         self._total_bytes = 0
         self._headroom_frac = float(headroom_frac)
@@ -101,8 +120,7 @@ class FeatureCache:
         # cheaper than recomputing it, so a stack too large for the RAM tier still
         # benefits on the next iteration.
         self._disk_max_bytes = int(disk_max_bytes)
-        self._disk_dir = disk_dir            # a caller dir, or a temp dir made lazily
-        self._owns_disk_dir = disk_dir is None
+        self._disk_dir = None                # temp dir, made lazily on first spill
         self._disk_store: "OrderedDict[tuple, tuple]" = OrderedDict()  # key -> (path, nbytes)
         self._disk_bytes = 0
         self._disk_seq = 0
@@ -116,18 +134,22 @@ class FeatureCache:
         # No psutil: rely solely on the configured cap (assume plenty free).
         return self._max_bytes
 
-    def _fits(self, nbytes: int) -> bool:
+    def _fits(self, nbytes: int, available: int | None = None) -> bool:
         """Whether adding `nbytes` keeps the cache under its cap AND leaves the
-        configured headroom of currently-available RAM free."""
+        configured headroom of currently-available RAM free. Pass `available`
+        to reuse one RAM snapshot across repeated checks (e.g. put's eviction
+        loop) instead of re-querying psutil per call."""
         if self._total_bytes + nbytes > self._max_bytes:
             return False
+        if available is None:
+            available = self._available_bytes()
         # available RAM already accounts for the cache's current allocation, so
         # only the *new* bytes reduce it further.
-        avail_after = self._available_bytes() - nbytes
-        return avail_after >= self._headroom_frac * self._available_bytes()
+        return available - nbytes >= self._headroom_frac * available
 
     # -- public API --------------------------------------------------------
 
+    @_locked
     def get(self, key):
         """Return the cached payload for `key`, or None. Checks RAM, then the disk
         tier. A disk hit returns the loaded payload but leaves it on disk (no
@@ -148,6 +170,7 @@ class FeatureCache:
         self.misses += 1
         return None
 
+    @_locked
     def put(self, key, payload, nbytes: int | None = None, spill_ok: bool = True):
         """Store `payload` under `key` if it fits the budget; else evict LRU and
         retry. A payload that can never fit the RAM tier goes straight to the
@@ -168,17 +191,21 @@ class FeatureCache:
             if spill_ok:
                 self._spill_to_disk(key, payload, nbytes)
             return
-        # Evict least-recently-used until the new entry fits.
-        while self._store and not self._fits(nbytes):
+        # Evict least-recently-used until the new entry fits. One RAM snapshot
+        # serves the whole loop: eviction only increases availability, so the
+        # snapshot errs conservative.
+        available = self._available_bytes()
+        while self._store and not self._fits(nbytes, available):
             self._evict_one()
-        if not self._fits(nbytes):
+        if not self._fits(nbytes, available):
             # The live headroom refuses it even with the RAM tier empty; the
             # disk tier can still hold it.
             if spill_ok:
                 self._spill_to_disk(key, payload, nbytes)
             return
+        # The key is absent at this point (popped above if present), so
+        # assignment appends at the MRU end.
         self._store[key] = (payload, nbytes, spill_ok)
-        self._store.move_to_end(key)
         self._total_bytes += nbytes
 
     def _evict_one(self):
@@ -193,7 +220,6 @@ class FeatureCache:
     def _ensure_disk_dir(self) -> str:
         if self._disk_dir is None:
             self._disk_dir = tempfile.mkdtemp(prefix="convpaint_fcache_")
-            self._owns_disk_dir = True
         os.makedirs(self._disk_dir, exist_ok=True)
         return self._disk_dir
 
@@ -264,28 +290,22 @@ class FeatureCache:
 
     # -- invalidation / limits --------------------------------------------
 
-    def invalidate(self, predicate=None):
-        """Drop entries (both RAM and disk tiers). With no predicate, clears
-        everything; otherwise drops keys for which `predicate(key)` is True."""
-        if predicate is None:
-            self._store.clear()
-            self._total_bytes = 0
-            self._clear_disk()
-            return
-        for key in [k for k in self._store if predicate(k)]:
-            self._total_bytes -= self._store.pop(key)[1]
-        for key in [k for k in self._disk_store if predicate(k)]:
-            self._remove_disk_entry(key)
-
+    @_locked
     def clear(self):
-        self.invalidate(None)
+        """Drop all entries (both RAM and disk tiers). Entries are
+        content-addressed and never go stale; clearing only frees memory."""
+        self._store.clear()
+        self._total_bytes = 0
+        self._clear_disk()
 
+    @_locked
     def set_max_bytes(self, max_bytes: int):
         """Change the RAM cap in place, evicting (spilling) LRU entries if over."""
         self._max_bytes = int(max_bytes)
         while self._store and self._total_bytes > self._max_bytes:
             self._evict_one()
 
+    @_locked
     def set_disk_max_bytes(self, disk_max_bytes: int):
         """Change the disk cap in place, evicting disk LRU if over (0 = off)."""
         self._disk_max_bytes = int(disk_max_bytes)
@@ -295,16 +315,18 @@ class FeatureCache:
             while self._disk_store and self._disk_bytes > self._disk_max_bytes:
                 self._evict_disk_one()
 
+    @_locked
     def set_enabled(self, enabled: bool):
         """Enable/disable in place; disabling clears both tiers to free space."""
         self.enabled = bool(enabled)
         if not self.enabled:
             self.clear()
 
+    @_locked
     def close(self):
         """Free the disk tier and remove the temp directory this cache created."""
         self._clear_disk()
-        if self._owns_disk_dir and self._disk_dir:
+        if self._disk_dir:
             shutil.rmtree(self._disk_dir, ignore_errors=True)
             self._disk_dir = None
 
@@ -322,11 +344,12 @@ class FeatureCache:
     def disk_nbytes(self) -> int:
         return self._disk_bytes
 
+    @_locked
     def __len__(self):
         return len(self._store)
 
+    @_locked
     def stats(self) -> dict:
-        total = self.hits + self.misses
         return {
             "entries": len(self._store),
             "bytes": self._total_bytes,
@@ -335,6 +358,5 @@ class FeatureCache:
             "disk_hits": self.disk_hits,
             "hits": self.hits,
             "misses": self.misses,
-            "hit_rate": (self.hits / total) if total else 0.0,
             "max_bytes": self._max_bytes,
         }

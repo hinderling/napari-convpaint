@@ -1013,19 +1013,25 @@ class ConvpaintWidget(QWidget):
         scroll.setWidget(content)
         self.tabs.insertTab(idx, scroll, tab_name)
 
-    def _apply_feature_cache(self, recreate=False):
-        """Apply the current caching settings (enabled + max RAM) to the active
-        model. Pass recreate=True right after the model is (re)created; otherwise
-        the existing cache is updated in place so its entries survive a settings
-        change."""
+    def _apply_feature_cache(self, *args, recreate=False):
+        """Apply the caching settings from the GUI controls to the active model
+        (connected directly to the controls' change signals). The cache_*
+        attributes hold the pre-GUI defaults and simply mirror the controls
+        afterwards. Pass recreate=True right after the model is (re)created;
+        otherwise the existing cache is updated in place so its entries survive
+        a settings change (disabling clears it, freeing RAM+disk)."""
         model = getattr(self, "cp_model", None)
         if model is None:
             return
+        if hasattr(self, "check_use_cache"):
+            self.cache_enabled = self.check_use_cache.isChecked()
+            self.cache_max_mb = self.cache_max_ram_spinbox.value()
+            self.cache_disk_max_mb = self.cache_max_disk_spinbox.value()
         # Use decimal MB (1e6) here to match the size shown in the label (also
         # /1e6), so the number the user types is exactly the max size displayed.
         max_bytes = int(self.cache_max_mb) * 1_000_000
         disk_max_bytes = int(self.cache_disk_max_mb) * 1_000_000
-        fc = getattr(model, "_feature_cache", None)
+        fc = model._feature_cache
         if fc is None or recreate:
             model.enable_feature_cache(enabled=self.cache_enabled, max_bytes=max_bytes,
                                        disk_max_bytes=disk_max_bytes)
@@ -1035,29 +1041,19 @@ class ConvpaintWidget(QWidget):
             fc.set_enabled(self.cache_enabled)
         self._refresh_cache_size_label()
 
-    def _on_cache_enabled_toggled(self, checked=None):
-        self.cache_enabled = self.check_use_cache.isChecked()
-        self._apply_feature_cache()  # set_enabled(False) clears it, freeing RAM+disk
-
-    def _on_cache_max_ram_changed(self, value=None):
-        self.cache_max_mb = self.cache_max_ram_spinbox.value()
-        self._apply_feature_cache()
-
-    def _on_cache_max_disk_changed(self, value=None):
-        self.cache_disk_max_mb = self.cache_max_disk_spinbox.value()
-        self._apply_feature_cache()
-
     def _refresh_cache_size_label(self):
         if not hasattr(self, "cache_size_label"):
             return
         model = getattr(self, "cp_model", None)
-        fc = getattr(model, "_feature_cache", None) if model is not None else None
+        fc = model._feature_cache if model is not None else None
         if fc is None:
             self.cache_size_label.setText('Current cache size: 0 MB')
             return
-        self.cache_size_label.setText(
-            f'Current cache size: RAM {fc.nbytes / 1e6:.0f} MB ({len(fc)}), '
-            f'disk {fc.disk_nbytes / 1e6:.0f} MB ({fc.stats()["disk_entries"]})')
+        s = fc.stats()  # one lock acquisition for all fields
+        text = (f'Current cache size: RAM {s["bytes"] / 1e6:.0f} MB ({s["entries"]}), '
+                f'disk {s["disk_bytes"] / 1e6:.0f} MB ({s["disk_entries"]})')
+        if text != self.cache_size_label.text():
+            self.cache_size_label.setText(text)
 
     def _late_init(self):
         """Populate UI widgets with defaults from ConvpaintModel, set up connections, and reset model.
@@ -1252,9 +1248,10 @@ class ConvpaintWidget(QWidget):
                 self, 'use_dask', self.check_use_dask.isChecked()))
 
             if hasattr(self, 'check_use_cache'):
-                self.check_use_cache.stateChanged.connect(self._on_cache_enabled_toggled)
-                self.cache_max_ram_spinbox.valueChanged.connect(self._on_cache_max_ram_changed)
-                self.cache_max_disk_spinbox.valueChanged.connect(self._on_cache_max_disk_changed)
+                # All three controls apply the full settings set in one go.
+                self.check_use_cache.stateChanged.connect(self._apply_feature_cache)
+                self.cache_max_ram_spinbox.valueChanged.connect(self._apply_feature_cache)
+                self.cache_max_disk_spinbox.valueChanged.connect(self._apply_feature_cache)
                 # Keep the "current cache size" label live.
                 self._cache_size_timer = QTimer(self)
                 self._cache_size_timer.setInterval(1000)
@@ -2020,15 +2017,13 @@ class ConvpaintWidget(QWidget):
             pbr.set_description(f"Training")
             img_name = self._get_selected_img().name
             in_channels = self._parse_in_channels(self.input_channels)
-            # Train the model with the current image and annotations; skip
-            # normalization as it is already done in the widget (image_stack_norm).
-            # Prediction already passes skip_norm=True on the same pre-normalized
-            # data; matching that here avoids a redundant second normalization
-            # pass (a no-op for imagenet FEs, but wasted compute; and it fixes the
-            # erroneous double-application for percentile FEs), and keeps
-            # train/predict consistent so their features match — which also lets
-            # them share feature-cache entries (keys are content hashes of the
-            # prepared image).
+            # skip_norm: the widget already normalized the stack
+            # (image_stack_norm), and prediction passes skip_norm=True on the
+            # same pre-normalized data. Matching it here keeps normalization
+            # single-pass (data-dependent modes like percentile must not be
+            # applied twice) and keeps train/predict features identical — so
+            # they can share feature-cache entries (keys are content hashes of
+            # the prepared image).
             _ = self.cp_model.train(image_stack_norm, annot, memory_mode=mem_mode, img_ids=img_name,
                                     in_channels=in_channels, skip_norm=True,
                                     fe_use_device=self.fe_device, clf_use_device=self.clf_device)
@@ -2198,7 +2193,6 @@ class ConvpaintWidget(QWidget):
         # Step through the stack and predict each image.
         num_steps = image_stack_norm.shape[-3]
         in_channels = self._parse_in_channels(self.input_channels)
-        self._predict_all_probas_ready = False
 
         def _predict_and_write(step, cache_only):
             """Predict one slice and write it to the layers. With cache_only=True,
@@ -2212,13 +2206,12 @@ class ConvpaintWidget(QWidget):
             if out is None:  # cache_only peek: this slice is not cached yet
                 return False
             probas, seg = out
-            # Create the probabilities layer on the first actual prediction (we
-            # need the class count); with cache-first ordering this may not be
-            # step 0.
-            if self.add_probas and not self._predict_all_probas_ready:
+            if self.add_probas:
+                # Creates the probabilities layer on the first actual prediction
+                # (we need the class count); with cache-first ordering this may
+                # not be step 0. A no-op once new_proba is cleared.
                 self._check_create_probas_layer(probas.shape[0])
                 self.new_proba = False
-                self._predict_all_probas_ready = True
             if self.add_seg:
                 self.viewer.layers[self.seg_tag].data[step] = seg
                 self.viewer.layers[self.seg_tag].refresh()
@@ -2227,32 +2220,26 @@ class ConvpaintWidget(QWidget):
                 self.viewer.layers[self.proba_prefix].refresh()
             return True
 
-        fc = getattr(self.cp_model, "_feature_cache", None)
+        fc = self.cp_model._feature_cache
         cache_primed = (fc is not None and fc.enabled
-                        and (len(fc) + fc.stats().get("disk_entries", 0)) > 0)
-        if self.cache_enabled and cache_primed:
-            # Cache-first ordering: serve slices already in the cache before
-            # computing the rest. A plain sequential scan over a stack larger than
-            # the cache evicts the very slices the next pass needs first (classic
-            # LRU thrash) — so cached slices would be recomputed for no benefit.
-            # Predicting cached slices first guarantees they are used before the
-            # compute pass evicts them. Both phases share ONE progress bar over all
-            # slices. (Skipped when the cache is empty — nothing to serve first.)
-            with progress(total=num_steps) as pbr:
-                pbr.set_description("Predicting")
-                done = [False] * num_steps
-                for step in range(num_steps):          # phase 1: already-cached slices
+                        and (len(fc) + fc.stats()["disk_entries"]) > 0)
+        done = [False] * num_steps
+        with progress(total=num_steps) as pbr:
+            pbr.set_description("Predicting")
+            if cache_primed:
+                # Cache-first ordering: serve slices already in the cache before
+                # computing the rest. A plain sequential scan over a stack larger
+                # than the cache evicts the very slices the next pass needs first
+                # (classic LRU thrash) — so cached slices would be recomputed for
+                # no benefit. Predicting cached slices first guarantees they are
+                # used before the compute pass evicts them. (Skipped when the
+                # cache is empty — nothing to serve first.)
+                for step in range(num_steps):      # phase 1: already-cached slices
                     if _predict_and_write(step, cache_only=True):
                         done[step] = True
                         pbr.update(1)
-                for step in range(num_steps):          # phase 2: compute the rest
-                    if not done[step]:
-                        _predict_and_write(step, cache_only=False)
-                        pbr.update(1)
-        else:
-            with progress(total=num_steps) as pbr:
-                pbr.set_description("Predicting")
-                for step in range(num_steps):
+            for step in range(num_steps):          # phase 2: compute the rest
+                if not done[step]:
                     _predict_and_write(step, cache_only=False)
                     pbr.update(1)
 
