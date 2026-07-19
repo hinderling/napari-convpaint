@@ -2926,13 +2926,22 @@ class ConvpaintWidget(QWidget):
         # Track annotations data changes to keep in-memory store in sync (for Multifile)
         self.store_annot = from_multifile # Only store if the annot was added from Multifile, to avoid storing unnecessarily when not using Multifile
 
+    def _restore_active_layer(self, prev_active):
+        """Re-activate `prev_active` after adding an output layer. napari
+        selects newly added layers, which would silently steer the user's
+        brush into the segmentation/probabilities/features layer instead of
+        the annotations layer they were painting on."""
+        if prev_active is not None and prev_active in self.viewer.layers:
+            self.viewer.layers.selection.active = prev_active
+
     def _check_create_segmentation_layer(self):
         """Check if segmentation layer exists and create it if not."""
-        
+
         img = self._get_selected_img(check=True)
         if img is None:
             warnings.warn('No image selected. No layers added.')
             return
+        prev_active = self.viewer.layers.selection.active
         layer_shape = self._get_annot_shape(img)
         num_spatial = len(layer_shape)
         transform_kwargs = self._get_layer_transform_kwargs(img, num_spatial_dims=num_spatial, num_leading_dims=0)
@@ -2962,6 +2971,7 @@ class ConvpaintWidget(QWidget):
             # Add it to the list of layers where class names shall be updated
             self.seg_layers.add(self.viewer.layers[self.seg_tag])
             self.update_all_class_names_and_cmaps()
+        self._restore_active_layer(prev_active)
 
     def _check_create_probas_layer(self, num_classes):
         """Check if class probabilities layer exists and create it if not."""
@@ -2971,6 +2981,7 @@ class ConvpaintWidget(QWidget):
             warnings.warn('No image selected. No layers added.')
             return
         
+        prev_active = self.viewer.layers.selection.active
         spatial_dims = self._get_annot_shape(img)
         if isinstance(num_classes, int):
             num_classes = (num_classes,)
@@ -3004,6 +3015,7 @@ class ConvpaintWidget(QWidget):
             self.viewer.layers[self.proba_prefix].colormap = "turbo"
             # Save information about the probabilities layer to be able to rename it later
             self._set_old_proba_tag()
+        self._restore_active_layer(prev_active)
 
     def _check_create_features_layer(self, num_features):
         """Check if feature image layer exists and create it if not."""
@@ -3013,6 +3025,7 @@ class ConvpaintWidget(QWidget):
             warnings.warn('No image selected. No layers added.')
             return
         
+        prev_active = self.viewer.layers.selection.active
         spatial_dims = self._get_annot_shape(img)
 
         # Create a new features layer if it doesn't exist yet or we need a new one
@@ -3056,6 +3069,7 @@ class ConvpaintWidget(QWidget):
                     )
             # Save information about the features layer to be able to rename it later
             self._set_old_features_tag()
+        self._restore_active_layer(prev_active)
 
     def _rename_annot_for_backup(self):
         """Name the annotations with a unique name according to its image,
