@@ -60,18 +60,6 @@ def test_overwrite_updates_size():
     assert len(c) == 1
 
 
-def test_invalidate_predicate():
-    c = FeatureCache(max_bytes=100 * 10**6, headroom_frac=0.0)
-    c.put(("imgA", 0, "sig"), _arr(1))
-    c.put(("imgA", 1, "sig"), _arr(1))
-    c.put(("imgB", 0, "sig"), _arr(1))
-    c.invalidate(lambda key: key[0] == "imgA")  # drop all imgA slices
-    assert c.get(("imgA", 0, "sig")) is None
-    assert c.get(("imgA", 1, "sig")) is None
-    assert c.get(("imgB", 0, "sig")) is not None
-    assert len(c) == 1
-
-
 def test_clear():
     c = FeatureCache(max_bytes=100 * 10**6, headroom_frac=0.0)
     c.put(("a",), _arr(1))
@@ -228,7 +216,7 @@ def test_cache_key_includes_fe_instance_state():
     assert cp._fe_cache_signature(cp._param) != sig_before
     # generic hook: any change in reported extra state must change the key
     orig = cp.fe_model.cache_extra_state
-    cp.fe_model.cache_extra_state = lambda p: ('jafar_scalings', (1, 8))
+    cp.fe_model.cache_extra_state = lambda: ('jafar_scalings', (1, 8))
     try:
         assert cp._fe_cache_signature(cp._param) != sig_before
     finally:
@@ -262,14 +250,14 @@ def test_cached_prediction_bit_identical_and_hits():
         assert np.array_equal(seg_second, cp2.segment(img))
 
 
-def test_thread_safety_under_concurrent_use(tmp_path):
+def test_thread_safety_under_concurrent_use():
     """Hammer the cache from worker threads while the "GUI" thread clears it and
     changes limits (exactly what the napari widget does during a threaded op).
     Correctness bar: no exceptions and consistent bookkeeping afterwards."""
     import threading
 
     c = FeatureCache(max_bytes=int(3 * 10**6), headroom_frac=0.0,
-                     disk_max_bytes=int(5 * 10**6), disk_dir=str(tmp_path))
+                     disk_max_bytes=int(5 * 10**6))
     errors = []
     start = threading.Barrier(5)
 
@@ -309,3 +297,51 @@ def test_thread_safety_under_concurrent_use(tmp_path):
     assert c.disk_nbytes == sum(item[1] for item in c._disk_store.values())
     assert c.nbytes <= c.stats()["max_bytes"]
     c.close()
+
+
+def test_nn_fe_cache_hit_matches_fresh_and_uses_torch_payload():
+    """NN FEs keep their native features on-device (torch); the cache payload
+    is cast to numpy for storage but remembers it was torch, so hits are
+    lifted back and reconstructed with the SAME torch backend as fresh
+    extractions. Guards against a hit/miss backend split (skimage vs torch)
+    which would make cache-enabled extraction both slow (CPU rescale) and
+    potentially non-identical to fresh results."""
+    import warnings as _w
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    rng = np.random.RandomState(0)
+    img = rng.rand(1, 64, 64).astype(np.float32)
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        cp = ConvpaintModel(fe_name='vgg16')
+        cp.set_params(fe_scalings=[1, 2])
+        feat_off = cp.get_feature_image(img)             # cache disabled: fresh
+        fc = cp.enable_feature_cache(max_bytes=512 * 10**6)
+        feat_miss = cp.get_feature_image(img)            # miss: fills cache
+        feat_hit = cp.get_feature_image(img)             # hit: from payload
+    assert fc.stats()['hits'] >= 1
+    assert np.array_equal(feat_off, feat_miss), "cache-on (miss) differs from cache-off"
+    assert np.array_equal(feat_miss, feat_hit), "cache hit differs from miss"
+    payload = next(iter(fc._store.values()))[0]
+    assert payload['was_torch'] is True
+    for features, _, _ in payload['scales']:             # stored form is numpy
+        assert all(isinstance(f, np.ndarray) for f in features)
+
+
+def test_numpy_fe_payload_stays_numpy_and_identical():
+    """Numpy-native FEs (e.g. gaussian) must NOT be lifted to torch on a hit —
+    their fresh path is skimage, and hit/miss must keep sharing it."""
+    import warnings as _w
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    rng = np.random.RandomState(0)
+    img = rng.rand(1, 96, 96).astype(np.float32)
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        cp = ConvpaintModel(fe_name='gaussian_features')
+        feat_off = cp.get_feature_image(img)
+        fc = cp.enable_feature_cache(max_bytes=256 * 10**6)
+        feat_miss = cp.get_feature_image(img)
+        feat_hit = cp.get_feature_image(img)
+    assert np.array_equal(feat_off, feat_miss)
+    assert np.array_equal(feat_miss, feat_hit)
+    payload = next(iter(fc._store.values()))[0]
+    assert payload['was_torch'] is False

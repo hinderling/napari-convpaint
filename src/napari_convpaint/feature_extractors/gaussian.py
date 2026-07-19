@@ -27,7 +27,7 @@ class GaussianFeatures(FeatureExtractor):
         param.fe_layers = None
         return param
 
-    def cache_extra_state(self, param):
+    def cache_extra_state(self):
         # sigma lives on the instance, not the Param — it must enter the cache
         # key or a model rebuilt with a different sigma could hit stale entries.
         return ("sigma", self.sigma)

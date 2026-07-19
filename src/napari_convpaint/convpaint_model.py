@@ -110,6 +110,7 @@ class ConvpaintModel:
         self.num_features = 0
         self._fe_locked_device = None
         self._clf_locked_device = None
+        self._feature_cache = None  # created by enable_feature_cache
         self._params_to_reset_training = ['channel_mode',
                                           'normalize',
                                         #   'image_downsample',
@@ -943,14 +944,14 @@ class ConvpaintModel:
             if isinstance(v, (list, tuple)):
                 return tuple(_hashable(x) for x in v)
             return v
-        keys = getattr(self, "_params_to_reset_training", [])
+        keys = self._params_to_reset_training
         sig = tuple((k, _hashable(getattr(param, k, None))) for k in keys)
         return sig + (("image_downsample", getattr(param, "image_downsample", 1)),
                       ("patch_size", self.fe_model.get_patch_size()),
                       # FE instance state outside the Param (e.g. jafar_scalings,
                       # gaussian sigma) — without it, changing that state would
                       # serve stale cached features.
-                      ("fe_extra", _hashable(self.fe_model.cache_extra_state(param))))
+                      ("fe_extra", _hashable(self.fe_model.cache_extra_state())))
 
     @staticmethod
     def _data_hash(d):
@@ -973,19 +974,26 @@ class ConvpaintModel:
         they are already cached, else return None WITHOUT running the (expensive)
         feature extractor. This lets a stack prediction serve already-cached
         slices first, before a sequential scan evicts them (see the widget)."""
-        cache = getattr(self, "_feature_cache", None)
+        cache = self._feature_cache
         fe = self.fe_model
         if cache is None or not cache.enabled or not fe.supports_feature_cache(param):
             return None if cache_only else fe.extract_features_pyramid(d, param, patched=keep_patched, device=device)
         key = (self._data_hash(d), self._fe_cache_signature(param))
         payload = cache.get(key)
-        if payload is None:
-            if cache_only:
-                return None
-            payload = fe.cacheable_repr(d, param, device)
-            cache.put(key, payload, fe.cacheable_nbytes(payload),
-                      spill_ok=fe.cache_spill_to_disk())
-        return fe.features_from_cacheable(payload, d.shape, param, patched=keep_patched)
+        if payload is not None:
+            # Hit: reconstruct on `device` (the payload is lifted back to torch
+            # if that is the FE's native form) — same backend as a fresh
+            # extraction, so hits are as fast as (and identical to) misses.
+            return fe.features_from_cacheable(payload, d.shape, param,
+                                              patched=keep_patched, device=device)
+        if cache_only:
+            return None
+        # Miss: one extraction pass yields both the features (reconstructed
+        # from the on-device native form) and the numpy payload to store.
+        features, payload = fe.cacheable_repr_and_features(d, param, device,
+                                                           patched=keep_patched)
+        cache.put(key, payload, spill_ok=fe.cache_spill_to_disk())
+        return features
 
 ### BACKEND METHOD FOR FEATURE EXTRACTION
 
@@ -1612,20 +1620,18 @@ class ConvpaintModel:
             data = [self._norm_single_image(d) for d in data]
 
         # Get class probabilities, using tiling if enabled
-        if cache_only:
-            # Peek: only serve images whose features are already cached; return
-            # None on any miss so the caller defers them to the compute pass.
-            # The tiled path doesn't support the peek, so it counts as a miss.
-            if self._param.tile_image:
+        if self._param.tile_image:
+            if cache_only:
+                # The tiled path doesn't support the peek, so it counts as a miss.
                 return None
-            probas = self._predict_image(data, return_proba=True, fe_use_device=fe_use_device, cache_only=True)
-            if probas is None:
-                return None
-        elif self._param.tile_image:
             probas = [self._parallel_predict_image(d, return_proba=True, use_dask=use_dask, fe_use_device=fe_use_device)
                       for d in data]
         else:
-            probas = self._predict_image(data, return_proba=True, fe_use_device=fe_use_device) # Can handle lists directly
+            # cache_only is a peek: only serve images whose features are already
+            # cached; None on any miss defers them to the caller's compute pass.
+            probas = self._predict_image(data, return_proba=True, fe_use_device=fe_use_device, cache_only=cache_only) # Can handle lists directly
+            if probas is None:
+                return None
 
         # Restore input dimensionality (especially see if we want to remove z dimension)
         probas = [self._restore_dims(probas[i], input_shapes[i])
