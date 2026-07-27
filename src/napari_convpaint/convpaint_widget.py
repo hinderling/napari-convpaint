@@ -95,18 +95,8 @@ class ConvpaintWidget(QWidget):
         # compared to e.g. the layer controls); top matches the 4px gap
         # between the tab bar and the first item.
         self.main_layout.setContentsMargins(6, 4, 6, 6)
-        self.tabs.setStyleSheet(
-            "QTabWidget::pane { border: 0; margin: 0; padding: 0; } "
-            "QTabWidget::tab-bar { alignment: left; } "
-            # Joined segmented-control look: adjacent tabs share square inner
-            # corners (rounded inner corners leave notches that expose
-            # tab-colored nubs of the neighbor when the bar is squeezed);
-            # only the outer corners of the first/last tab stay rounded.
-            "QTabBar { background: transparent; } "
-            "QTabBar::tab { margin-right: 0px; border-radius: 0px; } "
-            "QTabBar::tab:first { border-top-left-radius: 4px; border-bottom-left-radius: 4px; } "
-            "QTabBar::tab:last { border-top-right-radius: 4px; border-bottom-right-radius: 4px; } "
-            "QTabBar::tab:only-one { border-radius: 4px; }")
+        self._style_tabs()
+        self.viewer.events.theme.connect(self._style_tabs)
         for i in range(self.tabs.count()):
             page_layout = self.tabs.widget(i).layout()
             if page_layout is not None:
@@ -1396,6 +1386,37 @@ class ConvpaintWidget(QWidget):
 
         # Re-add the buttons below the class names
         self._place_class_buttons(len(self.class_names))
+
+    def _style_tabs(self, event=None):
+        """(Re-)apply the tab-bar style with the active theme's colors as SOLID
+        fills — napari's own tab rule paints a vertical gradient, which clashes
+        with the joined segmented-control look. Connected to viewer.events.theme
+        so dark <-> light switches restyle."""
+        def _hex(color):
+            as_hex = getattr(color, 'as_hex', None)
+            return as_hex() if callable(as_hex) else str(color)
+        try:
+            from napari.utils.theme import get_theme
+            theme = get_theme(self.viewer.theme)
+            if isinstance(theme, dict):
+                fg, cur = _hex(theme['foreground']), _hex(theme['current'])
+            else:
+                fg, cur = _hex(theme.foreground), _hex(theme.current)
+        except Exception:
+            fg, cur = '#414851', '#0f6285'  # napari dark
+        self.tabs.setStyleSheet(
+            "QTabWidget::pane { border: 0; margin: 0; padding: 0; } "
+            "QTabWidget::tab-bar { alignment: left; } "
+            # Joined segmented-control look: adjacent tabs share square inner
+            # corners (rounded inner corners leave notches that expose
+            # tab-colored nubs of the neighbor when the bar is squeezed);
+            # only the outer corners of the first/last tab stay rounded.
+            "QTabBar { background: transparent; } "
+            f"QTabBar::tab {{ margin-right: 0px; border-radius: 0px; background: {fg}; }} "
+            f"QTabBar::tab:selected {{ background: {cur}; }} "
+            "QTabBar::tab:first { border-top-left-radius: 4px; border-bottom-left-radius: 4px; } "
+            "QTabBar::tab:last { border-top-right-radius: 4px; border-bottom-right-radius: 4px; } "
+            "QTabBar::tab:only-one { border-radius: 4px; }")
 
     def _style_multifile_list(self, event=None):
         """(Re-)apply the active napari theme's colors to the multifile list.
