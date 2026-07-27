@@ -41,3 +41,153 @@ def test_output_layers_do_not_steal_selection(make_napari_viewer):
     w._check_create_features_layer(4)
     assert viewer.layers.selection.active is annot
     assert {'segmentation'} <= {l.name for l in viewer.layers}
+
+
+def test_classes_tab_value_model(make_napari_viewer):
+    """Value-based class rows: placeholder icons before any layer; 'Remove
+    class' targets the SELECTED class (grayed without a selection or at the
+    two-class floor) and never renumbers others; sync adds exactly the painted
+    values (sparse — no gap filling)."""
+    import numpy as np
+    from napari_convpaint.convpaint_widget import ConvpaintWidget
+
+    viewer = make_napari_viewer()
+    w = ConvpaintWidget(viewer)
+    w.ensure_init()
+
+    # Startup: NO classes — two empty placeholder slots, Remove grayed
+    assert w.class_rows == []
+    assert len(w._placeholder_rows) == 2
+    assert all(not r['icon'].pixmap().isNull() for r in w._placeholder_rows)
+    assert not w.remove_class_btn.isEnabled()
+    # Create the two classes the rest of this test works with
+    w._on_add_class(text='Background', value=1)
+    w._on_add_class(text='Foreground', value=2)
+
+    viewer.add_image(np.random.random((64, 64)), name='img')
+    w._on_add_annot_layer()
+    annot = viewer.layers['annotations']
+
+    # A selected real class is removable even at two classes (no floor)
+    annot.selected_label = 1
+    assert w.remove_class_btn.isEnabled()
+
+    # Sparse sync: painting 7 adds EXACTLY value 7 (no gap rows 3..6)
+    annot.data[5:10, 5:10] = 7
+    w._on_sync_classes_from_annotations()
+    assert [r['value'] for r in w.class_rows] == [1, 2, 7]
+
+    # Remove the selected middle-by-value class: value 2 goes, 7 keeps its value
+    annot.selected_label = 2
+    assert w.remove_class_btn.isEnabled()
+    w._on_remove_class()
+    assert [r['value'] for r in w.class_rows] == [1, 7]
+    # ...and its annotations were erased, others kept
+    assert not (annot.data == 2).any()
+    assert (annot.data == 7).any()
+
+    # Selection now points at a value with no row -> Remove grayed
+    assert annot.selected_label == 2
+    assert not w.remove_class_btn.isEnabled()
+
+    # Add class assigns max+1
+    w._on_add_class()
+    assert [r['value'] for r in w.class_rows] == [1, 7, 8]
+
+
+def test_classes_tab_no_floor_and_placeholders(make_napari_viewer):
+    """No class-count floor; placeholders are pure UI (not clickable classes)
+    that pad the display to two slots; typing into a placeholder's name field
+    creates the class in place."""
+    import numpy as np
+    from napari_convpaint.convpaint_widget import ConvpaintWidget
+
+    viewer = make_napari_viewer()
+    w = ConvpaintWidget(viewer)
+    w.ensure_init()
+    viewer.add_image(np.random.random((64, 64)), name='img')
+    w._on_add_annot_layer()
+    annot = viewer.layers['annotations']
+    w._on_add_class(text='Background', value=1)
+    w._on_add_class(text='Foreground', value=2)
+
+    # Remove both classes, one by one — no floor
+    annot.selected_label = 2
+    w._on_remove_class()
+    assert [r['value'] for r in w.class_rows] == [1]
+    assert len(w._placeholder_rows) == 1
+    annot.selected_label = 1
+    w._on_remove_class()
+    assert w.class_rows == []
+    assert len(w._placeholder_rows) == 2
+
+    # Placeholders: editable italic 'add class' fields, no class behavior
+    for ph in w._placeholder_rows:
+        assert ph['name'].isEnabled()
+        assert ph['name'].placeholderText() == 'add class'
+        assert 'italic' in ph['name'].styleSheet()
+    # Selecting a placeholder's value (e.g. via the label spinbox) grays Remove
+    annot.selected_label = w._placeholder_rows[0]['value']
+    assert not w.remove_class_btn.isEnabled()
+
+    # Typing into a placeholder creates the class with that text, in place
+    ph = w._placeholder_rows[0]
+    v = ph['value']
+    w._on_placeholder_name_edited(ph, 'Nu')
+    assert [r['value'] for r in w.class_rows] == [v]
+    assert w._row_for_value(v)['name'].text() == 'Nu'
+
+
+def test_classes_selectable_without_annotations_layer(make_napari_viewer):
+    """Deleting the annotations layer must not strand the class list: the
+    widget keeps its own selection memory, so swatch clicks still select and
+    Remove still works with no layer present."""
+    import numpy as np
+    from napari_convpaint.convpaint_widget import ConvpaintWidget
+
+    viewer = make_napari_viewer()
+    w = ConvpaintWidget(viewer)
+    w.ensure_init()
+    viewer.add_image(np.random.random((64, 64)), name='img')
+    w._on_add_annot_layer()
+    annot = viewer.layers['annotations']
+    w._on_add_class(text='Background', value=1)
+    w._on_add_class(text='Foreground', value=2)
+    annot.selected_label = 2                     # mirrored into widget memory
+    viewer.layers.remove('annotations')          # layer gone
+
+    assert w._selected_class_value() == 2        # selection survives
+    w._update_selected_class_highlight()
+    assert w.remove_class_btn.isEnabled()
+    w._on_remove_class()                         # removable without a layer
+    assert [r['value'] for r in w.class_rows] == [1]
+
+    # Swatch click selects widget-side with no layer at all
+    w._on_class_swatch_clicked(1)
+    assert w._selected_class_value() == 1
+    assert w.remove_class_btn.isEnabled()
+
+
+def test_selected_class_highlight_follows_selected_label(make_napari_viewer):
+    """The Classes tab outlines the row matching the annotations layer's
+    selected label (by VALUE), in both directions."""
+    import numpy as np
+    from napari_convpaint.convpaint_widget import ConvpaintWidget
+
+    viewer = make_napari_viewer()
+    w = ConvpaintWidget(viewer)
+    w.ensure_init()
+    viewer.add_image(np.random.random((64, 64)), name='img')
+    w._on_add_annot_layer()
+    annot = viewer.layers['annotations']
+    w._on_add_class(value=1)
+    w._on_add_class(value=2)
+
+    def outlined():
+        return [r['value'] for r in w.class_rows
+                if 'transparent' not in r['icon'].styleSheet()]
+
+    annot.selected_label = 2
+    assert outlined() == [2]
+    annot.selected_label = 1
+    assert outlined() == [1]
