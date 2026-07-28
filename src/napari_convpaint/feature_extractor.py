@@ -541,7 +541,11 @@ class FeatureExtractor:
         (torch's CPU and GPU interpolation kernels may differ at order>0)."""
         native = payload["scales"]
         if payload.get("was_torch"):
-            native = [([torch.from_numpy(f).to(device if device is not None else "cpu")
+            # NOTE: device=None falls back to CPU (see docstring contract) — the
+            # caller (_extract_pyramid_cached) always passes the extraction device,
+            # so a hit reconstructs on the same backend as the miss that stored it.
+            lift_device = device if device is not None else "cpu"
+            native = [([torch.from_numpy(f).to(lift_device)
                         for f in features], pre_shape, red_shape)
                       for features, pre_shape, red_shape in native]
         return self._pyramid_reconstruct(native, data_shape, param, patched)
