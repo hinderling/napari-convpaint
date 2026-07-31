@@ -41,6 +41,11 @@ class ConvpaintWidget(QWidget):
         by default.
     """
 
+    # Highest usable class label value: annotation layers are uint8 and the
+    # predicted segmentation is cast to uint8 (required by the smoothening
+    # filter), so larger values would wrap around.
+    MAX_CLASS_VALUE = 255
+
 ### Define the basic structure of the widget
 
     def __init__(self, napari_viewer, parent=None, third_party=False):
@@ -1594,9 +1599,13 @@ class ConvpaintWidget(QWidget):
 
     def _on_add_class(self, text=None, value=None):
         """Add a class row. Without an explicit value, the next value after the
-        current maximum is used (values are never reused automatically)."""
+        current maximum is used (values are never reused automatically).
+        Values above MAX_CLASS_VALUE are rejected."""
         if value is None:
             value = max(self._class_values(), default=0) + 1
+        if value > self.MAX_CLASS_VALUE:
+            show_info(f'Class values above {self.MAX_CLASS_VALUE} are not supported.')
+            return
         if self._row_for_value(value) is not None:
             return
         self._create_class_row(value, text)
@@ -1804,6 +1813,13 @@ class ConvpaintWidget(QWidget):
         # selection is no real class (e.g. a placeholder slot, or nothing).
         self.remove_class_btn.setEnabled(
             selected is not None and self._row_for_value(selected) is not None)
+        # 'Add class' uses the next value after the current maximum; gray it
+        # out when that value would exceed the label-value limit.
+        at_limit = max(self._class_values(), default=0) >= self.MAX_CLASS_VALUE
+        self.add_class_btn.setEnabled(not at_limit)
+        self.add_class_btn.setToolTip(
+            f'No class values left (limit: {self.MAX_CLASS_VALUE}).' if at_limit
+            else 'Add a class name to the list.')
 
     def _on_change_annot_cmap(self, event=None):
         """Update class icons and segmentation colormap when annotations colormap changes."""
@@ -1871,7 +1887,8 @@ class ConvpaintWidget(QWidget):
           the class' actual label value — sparse values are preserved.
         - The index==0 row ("No label") is ignored.
         - Name-only rows get sequential values after the highest explicit one.
-        - The two-class floor is kept by padding with the next free values.
+        - Values above MAX_CLASS_VALUE raise a ValueError (annotation and
+          segmentation data are uint8), leaving the current classes untouched.
         """
         if file_path is None:
             raise ValueError("file_path must be provided")
@@ -1932,6 +1949,15 @@ class ConvpaintWidget(QWidget):
                 next_v += 1
                 v = next_v
             resolved.append((v, name))
+
+        # Reject values beyond the label-value limit before touching the
+        # current classes, so a bad file leaves the widget unchanged.
+        too_high = sorted(v for v, _ in resolved if v > self.MAX_CLASS_VALUE)
+        if too_high:
+            raise ValueError(
+                f'Class values above {self.MAX_CLASS_VALUE} are not supported '
+                f'(annotation data is uint8); got {too_high[0]}'
+                + (f' and {len(too_high) - 1} more' if len(too_high) > 1 else '') + '.')
 
         # Rebuild the class rows from the imported values
         self._clear_class_rows()

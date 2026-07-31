@@ -191,3 +191,40 @@ def test_selected_class_highlight_follows_selected_label(make_napari_viewer):
     assert outlined() == [2]
     annot.selected_label = 1
     assert outlined() == [1]
+
+
+def test_class_value_limit(make_napari_viewer, tmp_path):
+    """Class values are capped at 255 (annotation/segmentation data are
+    uint8): adding beyond the limit is refused, the Add button grays out at
+    the limit, and a CSV with too-high values fails without side effects."""
+    import pytest
+    from napari_convpaint.convpaint_widget import ConvpaintWidget
+
+    viewer = make_napari_viewer()
+    w = ConvpaintWidget(viewer)
+    w.ensure_init()
+
+    # Adding a value above the limit is a no-op
+    w._on_add_class(value=300)
+    assert w._class_values() == []
+
+    # At the limit the Add button grays out; below it stays enabled
+    w._on_add_class(value=254)
+    assert w.add_class_btn.isEnabled()
+    w._on_add_class(value=255)
+    assert w._class_values() == [254, 255]
+    assert not w.add_class_btn.isEnabled()
+
+    # A CSV holding a too-high value raises and leaves the classes untouched
+    bad = tmp_path / 'bad.csv'
+    bad.write_text('index,name\n1,ok\n300,too high\n')
+    with pytest.raises(ValueError, match='255'):
+        w.import_class_names_csv(str(bad))
+    assert w._class_values() == [254, 255]
+
+    # A valid sparse CSV still round-trips
+    good = tmp_path / 'good.csv'
+    good.write_text('index,name\n1,bg\n7,rare\n')
+    w.import_class_names_csv(str(good))
+    assert w._class_values() == [1, 7]
+    assert w.add_class_btn.isEnabled()
