@@ -534,7 +534,7 @@ class ConvpaintWidget(QWidget):
             self.advanced_output_group.glayout.setColumnStretch(2, 1)
 
             # Instance size option
-            self.inst_min_size_label = QLabel('Instance min_num_pix (0 = ignore)')
+            self.inst_min_size_label = QLabel('Min. instance size (px, 0 = off)')
             self.text_inst_min_size = QtWidgets.QLineEdit()
             self.text_inst_min_size.setStyleSheet("font-size: 12px;")
             self.text_inst_min_size.setPlaceholderText('e.g. 100')
@@ -3971,7 +3971,7 @@ class ConvpaintWidget(QWidget):
         """Parse the minimum instance size from text (empty or invalid -> 0 = ignore)."""
         if not self.inst_min_size.isdigit():
             if self.inst_min_size: # Only warn for invalid text, not for an empty field
-                warnings.warn('Instance min_num_pix must be a non-negative integer. Using 0 (= ignore).')
+                warnings.warn('Min. instance size must be a non-negative integer. Using 0 (= off).')
             self.text_inst_min_size.setText('0') # Also updates self.inst_min_size via the textChanged signal
         return int(self.inst_min_size)
         
