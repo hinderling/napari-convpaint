@@ -68,7 +68,7 @@ def apply_kmeans_to_f_image(feature_img, n_clusters, random_state=None):
 
 ### Instance creation from semantic segmentaiton
 
-def create_instances_from_semantic(segmentations, min_size=300, classes=None, per_plane=False, warn=True):
+def create_instances_from_semantic(segmentations, min_size=100, classes=None, per_plane=False, warn=True):
     """
     Create instance masks from semantic segmentation masks.
 
@@ -77,9 +77,10 @@ def create_instances_from_semantic(segmentations, min_size=300, classes=None, pe
     segmentations : list of np.ndarray or a single np.ndarray
         List of semantic segmentation masks. Each mask should have shape (H, W) or (Z, H, W).
     min_size : int
-        Minimum size of objects to keep. Smaller objects will be removed, and smaller holes will be filled. Use 0 to ignore.
+        Minimum size (in pixels) of objects to keep. Smaller objects will be removed, and smaller holes will be filled.
+        Also determines the minimum distance for separating touching objects with watershed. Use 0 to ignore (only connected components).
     classes : list of int, optional
-        List of classes to create instances for. If None, all classes in the segmentations will be used, except 1 (background).
+        List of classes to create instances for. If None, all classes in the segmentations will be used. Always skips 1 (background).
     per_plane : bool
         If True, and the segmentation masks are 3D, each plane will be labeled separately. If False, the 3D mask will be labeled as a whole.
     warn : bool
@@ -118,11 +119,11 @@ def create_instances_from_semantic(segmentations, min_size=300, classes=None, pe
             
             semantic_class_mask = segmentation == c
 
-            semantic_class_mask = remove_small_holes(semantic_class_mask, max_size=min_size)
-            semantic_class_mask = remove_small_objects(semantic_class_mask, max_size=min_size)
+            if min_size > 0: # Remove objects and fill holes smaller than min_size (skimage removes sizes <= max_size)
+                semantic_class_mask = remove_small_holes(semantic_class_mask, max_size=min_size-1)
+                semantic_class_mask = remove_small_objects(semantic_class_mask, max_size=min_size-1)
 
             if per_plane and semantic_class_mask.ndim == 3: # If we do NOT want true 3D interpretation, but have 3D masks, we loop over the planes and label them separately
-                labels_stack = np.zeros_like(semantic_class_mask, dtype=np.int32)
                 for z in range(semantic_class_mask.shape[0]):
                     semantic_mask_plane = semantic_class_mask[z]
                     instance_mask_plane = instance_mask[z]
@@ -133,9 +134,8 @@ def create_instances_from_semantic(segmentations, min_size=300, classes=None, pe
                         l = label(semantic_mask_plane)
                     else:
                         l = distance_watershed(semantic_mask_plane, min_distance=min_distance) # Use distance transform and watershed to separate touching objects
-                    labels_stack[z] = l
 
-                    new_slice = labels_stack[z] + global_max
+                    new_slice = l + global_max # Offset the labels by the current global max to ensure unique instance IDs across planes
                     instance_mask_plane[semantic_mask_plane] = new_slice[semantic_mask_plane]
 
                     global_max = instance_mask.max()

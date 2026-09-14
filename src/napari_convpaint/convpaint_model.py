@@ -873,7 +873,7 @@ class ConvpaintModel:
         return probas
 
     def get_instances(self, image, in_channels=None, skip_norm=False, use_dask=False, fe_use_device=None,
-                      min_size=0, classes=None, per_plane=False, warn=True):
+                      min_size=100, classes=None, per_plane=False, warn=True):
         """
         Creates instance masks from the semantic segmentation of an image.
 
@@ -890,9 +890,11 @@ class ConvpaintModel:
         fe_use_device : str, optional
             Device policy for feature extractor ("auto", "gpu", "cpu")
         min_size : int, optional
-            Minimum size of instances to keep (default: 0)
+            Minimum size (in pixels) of instances to keep; also used to separate touching objects (default: 100, 0 = ignore)
         classes : list[int], optional
-            List of classes to create instances for (default: all classes)
+            List of classes to create instances for (default: all classes). Always skips 1 (background).
+        per_plane : bool, optional
+            If True and the segmentation is 3D, label each plane separately (default: False, label the stack as a whole)
         warn : bool, optional
             Whether to show warnings (default: True)
 

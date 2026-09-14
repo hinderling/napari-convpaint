@@ -3968,12 +3968,11 @@ class ConvpaintWidget(QWidget):
             return None
 
     def _parse_inst_min_size(self):
-        """Parse the minimum instance size from text."""
-        if not self.inst_min_size:
-            self.inst_min_size = '100'
-        elif not self.inst_min_size.isdigit():
-            warnings.warn('Instance min_num_pix must be an integer. Using 100.')
-            self.inst_min_size = '100'
+        """Parse the minimum instance size from text (empty or invalid -> 0 = ignore)."""
+        if not self.inst_min_size.isdigit():
+            if self.inst_min_size: # Only warn for invalid text, not for an empty field
+                warnings.warn('Instance min_num_pix must be a non-negative integer. Using 0 (= ignore).')
+            self.text_inst_min_size.setText('0') # Also updates self.inst_min_size via the textChanged signal
         return int(self.inst_min_size)
         
 
