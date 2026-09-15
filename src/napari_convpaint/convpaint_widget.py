@@ -407,6 +407,7 @@ class ConvpaintWidget(QWidget):
             self.advanced_input_group = VHGroup('Input', orientation='G')
             self.advanced_output_group = VHGroup('Output', orientation='G')
             self.advanced_unsupervised_group = VHGroup('Unsupervised extraction (without annotations)', orientation='G')
+            self.advanced_cache_group = VHGroup('Feature caching', orientation='G')
 
             # Add groups to the tab
             self.tabs.add_named_tab('Advanced', self.advanced_note_group.gbox)
@@ -418,6 +419,7 @@ class ConvpaintWidget(QWidget):
             self.tabs.add_named_tab('Advanced', self.advanced_input_group.gbox)
             self.tabs.add_named_tab('Advanced', self.advanced_output_group.gbox)
             self.tabs.add_named_tab('Advanced', self.advanced_unsupervised_group.gbox)
+            self.tabs.add_named_tab('Advanced', self.advanced_cache_group.gbox)
 
             # Text to warn the user about their responsibility
             self.advanced_note = QLabel("Applying these options may lead to situations where the tool does not function as expected. " +
@@ -547,13 +549,7 @@ class ConvpaintWidget(QWidget):
             self.advanced_unsupervised_group.glayout.addWidget(self.kmeans_label, 1, 0, 1, 2)
             self.advanced_unsupervised_group.glayout.addWidget(self.text_features_kmeans, 1, 2, 1, 2)
 
-        # === PERFORMANCE TAB ===
-
-        if 'Advanced' in self.tab_names:
-            self.advanced_cache_group = VHGroup('Feature caching', orientation='G')
-            self.tabs.add_named_tab('Advanced', self.advanced_cache_group.gbox)
-
-            # Explanatory note
+            # Feature caching: explanatory note
             cache_note = QLabel(
                 "Reuse extracted features when segmenting or training the same image "
                 "repeatedly (e.g. while refining annotations), instead of recomputing "
@@ -905,35 +901,27 @@ class ConvpaintWidget(QWidget):
         afterwards. Pass recreate=True right after the model is (re)created;
         otherwise the existing cache is updated in place so its entries survive
         a settings change (disabling clears it, freeing RAM)."""
-        model = getattr(self, "cp_model", None)
-        if model is None:
-            return
-        if hasattr(self, "check_use_cache"):
-            self.cache_enabled = self.check_use_cache.isChecked()
-            self.cache_max_mb = self.cache_max_ram_spinbox.value()
+        self.cache_enabled = self.check_use_cache.isChecked()
+        self.cache_max_mb = self.cache_max_ram_spinbox.value()
         # Use decimal MB (1e6) here to match the size shown in the label (also
         # /1e6), so the number the user types is exactly the max size displayed.
         max_bytes = int(self.cache_max_mb) * 1_000_000
-        fc = model._feature_cache
+        fc = self.cp_model._feature_cache
         if fc is None or recreate:
-            model.enable_feature_cache(enabled=self.cache_enabled, max_bytes=max_bytes)
+            self.cp_model.enable_feature_cache(enabled=self.cache_enabled, max_bytes=max_bytes)
         else:
             fc.set_max_bytes(max_bytes)
             fc.set_enabled(self.cache_enabled)
         self._refresh_cache_size_label()
 
     def _refresh_cache_size_label(self):
-        if not hasattr(self, "cache_size_label"):
-            return
-        model = getattr(self, "cp_model", None)
-        fc = model._feature_cache if model is not None else None
+        """Show the current size of the feature cache (called after ops that change it)."""
+        fc = self.cp_model._feature_cache
         if fc is None:
             self.cache_size_label.setText('Current cache size: 0 MB')
             return
         s = fc.stats()
-        text = f'Current cache size: {s["bytes"] / 1e6:.0f} MB ({s["entries"]} entries)'
-        if text != self.cache_size_label.text():
-            self.cache_size_label.setText(text)
+        self.cache_size_label.setText(f'Current cache size: {s["bytes"] / 1e6:.0f} MB ({s["entries"]} entries)')
 
     def _warn_cache_ram(self):
         """Warn if the feature cache limit exceeds half of the currently available RAM."""
@@ -1135,16 +1123,10 @@ class ConvpaintWidget(QWidget):
             self.check_use_dask.stateChanged.connect(lambda: setattr(
                 self, 'use_dask', self.check_use_dask.isChecked()))
 
-            if hasattr(self, 'check_use_cache'):
-                # Both controls apply the full settings set in one go.
-                self.check_use_cache.stateChanged.connect(self._apply_feature_cache)
-                self.cache_max_ram_spinbox.valueChanged.connect(self._apply_feature_cache)
-                self.cache_max_ram_spinbox.editingFinished.connect(self._warn_cache_ram)
-                # Keep the "current cache size" label live.
-                self._cache_size_timer = QTimer(self)
-                self._cache_size_timer.setInterval(1000)
-                self._cache_size_timer.timeout.connect(self._refresh_cache_size_label)
-                self._cache_size_timer.start()
+            # Both cache controls apply the full settings set in one go.
+            self.check_use_cache.stateChanged.connect(self._apply_feature_cache)
+            self.cache_max_ram_spinbox.valueChanged.connect(self._apply_feature_cache)
+            self.cache_max_ram_spinbox.editingFinished.connect(self._warn_cache_ram)
 
             self.text_input_channels.textChanged.connect(lambda: setattr(
                 self, 'input_channels', self.text_input_channels.text()))
@@ -1663,31 +1645,6 @@ class ConvpaintWidget(QWidget):
         self.annot_layers = {l for l in self.annot_layers if l is None or l.name in self.viewer.layers}
         self.seg_layers = {l for l in self.seg_layers if l is None or l.name in self.viewer.layers}
 
-        # Clear the feature cache only when the LAST user image layer is removed.
-        # The cache is content-addressed (a removed image's entries simply stop
-        # hitting and age out via LRU), so clearing on every removal would throw
-        # away valid entries for the images still open — including when the
-        # plugin itself removes/recreates its own probabilities/features layers
-        # (e.g. after a class-count change), which must never wipe the cache.
-        removed = getattr(event, 'value', None) if event is not None else None
-
-        def _is_plugin_image(name):
-            # Live plugin layers are named exactly proba_prefix/features_prefix;
-            # backups renamed on image switch get a '<prefix>_<tag>' suffix.
-            return any(name == p or name.startswith(p + '_')
-                       for p in (self.proba_prefix, self.features_prefix))
-
-        if (isinstance(removed, napari.layers.Image)
-                and not _is_plugin_image(removed.name)):
-            user_images_left = any(
-                isinstance(l, napari.layers.Image) and not _is_plugin_image(l.name)
-                for l in self.viewer.layers)
-            if not user_images_left:
-                fc = getattr(getattr(self, 'cp_model', None), '_feature_cache', None)
-                if fc is not None:
-                    fc.clear()
-                    self._refresh_cache_size_label()
-
     # Layer selection
 
     def _on_select_layer(self, newtext=None):
@@ -1887,6 +1844,7 @@ class ConvpaintWidget(QWidget):
         self.trained = True
         self._reset_predict_buttons()
         self._set_model_description()
+        self._refresh_cache_size_label()
 
         # Automatically segment the image if the option is activated
         if self.auto_seg:
@@ -1962,6 +1920,8 @@ class ConvpaintWidget(QWidget):
             # Case `data_dims is None` and other invalid cases are already caught above, so we don't need an else statement here
             self.viewer.layers[self.proba_prefix].refresh()
 
+        self._refresh_cache_size_label()
+
     def _on_get_feature_image(self, event=None):
         """Get the feature image for the currently viewed frame based
         on the current feature extractor and show it in a new layer."""
@@ -2010,6 +1970,7 @@ class ConvpaintWidget(QWidget):
             self.viewer.layers[self.features_prefix].data[..., step, :, :] = feature_image
         # Case `data_dims is None` and other invalid cases are already caught above, so we don't need an else statement here
         self.viewer.layers[self.features_prefix].refresh()
+        self._refresh_cache_size_label()
 
     def _on_predict_all(self):
         """Predict the segmentation of all frames based 
@@ -2072,6 +2033,7 @@ class ConvpaintWidget(QWidget):
         with warnings.catch_warnings():
             warnings.simplefilter(action="ignore", category=FutureWarning)
             self.viewer.window._status_bar._toggle_activity_dock(False)
+        self._refresh_cache_size_label()
 
     def _on_get_feature_image_all(self):
         """Get the feature image for all frames based
@@ -2145,6 +2107,7 @@ class ConvpaintWidget(QWidget):
             with warnings.catch_warnings():
                 warnings.simplefilter(action="ignore", category=FutureWarning)
                 self.viewer.window._status_bar._toggle_activity_dock(False)
+        self._refresh_cache_size_label()
 
 
     # Load/Save
