@@ -1150,6 +1150,7 @@ class ConvpaintWidget(QWidget):
             self.btn_add_features_stack.clicked.connect(self._on_get_feature_image_all)
 
         # === Multifile tab ===
+
         if 'Multifile' in self.tab_names:
             self.multifile_select_btn.clicked.connect(self._select_multifile_img_folder)
             self.multifile_list.cellDoubleClicked.connect(self._on_multifile_open_file)
@@ -3027,9 +3028,6 @@ class ConvpaintWidget(QWidget):
 
     def _reset_device_options(self):
         """Reset device dropdown availability and synchronize FE/CLF device policies."""
-        if not hasattr(self, "device_dropdown"):
-            return
-
         default_tooltip = 'Select device policy for feature extraction and classifier.'
         no_gpu_tooltip = 'No CUDA/MPS backend available. Device is fixed to CPU.'
         cuda_both_tooltip = 'CUDA is available and supported by this feature extractor. GPU can be used for both feature extraction and classifier.'
