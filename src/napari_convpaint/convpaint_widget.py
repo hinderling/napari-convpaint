@@ -790,6 +790,11 @@ class ConvpaintWidget(QWidget):
                  w.setToolTip('Number of PCA components to use for the features image.\nSet to 0 to disable PCA.')
             for w in [self.kmeans_label, self.text_features_kmeans]:
                 w.setToolTip('Number of Kmeans clusters to use for the features image.\nSet to 0 to disable Kmeans.')
+            self.check_use_cache.setToolTip('Keep the extracted features of recently processed images in memory,\n' +
+                                            'so that re-training or re-segmenting the same image does not extract them again.')
+            for w in [self.cache_max_ram_label, self.cache_max_ram_spinbox]:
+                w.setToolTip('Maximum memory (RAM) the feature cache may use.\nWhen full, the least recently used features are dropped.')
+            self.cache_size_label.setToolTip('Memory currently used by the feature cache (and number of cached images/planes).')
 
         if 'Multifile' in self.tab_names:
             self.multifile_select_btn.setToolTip('Select the folder containing the images to segment.\n' +
@@ -854,7 +859,8 @@ class ConvpaintWidget(QWidget):
                       self.btn_train_on_selected, self.radio_img_training, self.radio_global_training, self.radio_single_training, # self.check_cont_training,
                       self.btn_class_distribution_trained, self.btn_reset_training, self.check_use_dask, self.channels_label,
                       self.text_input_channels, self.btn_switch_axes, self.check_add_seg, self.check_add_probas, self.btn_add_features, self.btn_add_features_stack,
-                      self.pca_label, self.text_features_pca, self.kmeans_label, self.text_features_kmeans]:
+                      self.pca_label, self.text_features_pca, self.kmeans_label, self.text_features_kmeans,
+                      self.check_use_cache, self.cache_max_ram_label, self.cache_max_ram_spinbox, self.cache_size_label]:
                 w.setToolTip('')
 
         if 'Multifile' in self.tab_names:
