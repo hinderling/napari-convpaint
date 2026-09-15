@@ -1824,11 +1824,23 @@ class ConvpaintWidget(QWidget):
             pbr.set_description(f"Training")
             img_name = self._get_selected_img().name
             in_channels = self._parse_in_channels(self.input_channels)
+            # With auto-segment and the feature cache on, train on the whole plane(s) instead of annotation
+            # tiles (unless the image is tiled for prediction): the prediction needs the whole plane anyway,
+            # so one extraction serves both (annotation tiles are never cached)
+            fc = self.cp_model._feature_cache
+            untile = (self.auto_seg and fc is not None and fc.enabled
+                      and self.cp_model.get_param('tile_annotations') and not self.cp_model.get_param('tile_image'))
+            if untile:
+                self.cp_model.set_param('tile_annotations', False, ignore_warnings=True)
             # Train the model with the current image and annotations; skip normalization as it is done in the widget
             # (as in prediction, so train and predict hash identical data and share feature-cache entries)
-            _ = self.cp_model.train(image_stack_norm, annot, memory_mode=mem_mode, img_ids=img_name,
-                                    in_channels=in_channels, skip_norm=True,
-                                    fe_use_device=self.fe_device, clf_use_device=self.clf_device)
+            try:
+                _ = self.cp_model.train(image_stack_norm, annot, memory_mode=mem_mode, img_ids=img_name,
+                                        in_channels=in_channels, skip_norm=True,
+                                        fe_use_device=self.fe_device, clf_use_device=self.clf_device)
+            finally:
+                if untile:
+                    self.cp_model.set_param('tile_annotations', True, ignore_warnings=True)
             self._update_training_counts()
     
         with warnings.catch_warnings():
