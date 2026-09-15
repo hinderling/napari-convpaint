@@ -560,6 +560,12 @@ def pad_to_shape(feat, target_shape):
         return torch.nn.functional.pad(feat, (pad[3][0], pad[3][1], pad[2][0], pad[2][1]))
     return np.pad(feat, pad, mode='constant')
 
+def concat_features(arrays, axis=0):
+    """Concatenate along `axis`, staying on-device for torch tensors."""
+    if len(arrays) and isinstance(arrays[0], torch.Tensor):
+        return torch.cat(arrays, dim=axis)
+    return np.concatenate(arrays, axis=axis)
+
 def align_up(val, alignment):
     """Smallest multiple of `alignment` that is >= `val`. Alignment must be >= 1."""
     return ((val + alignment - 1) // alignment) * alignment

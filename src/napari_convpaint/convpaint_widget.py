@@ -1823,13 +1823,8 @@ class ConvpaintWidget(QWidget):
             pbr.set_description(f"Training")
             img_name = self._get_selected_img().name
             in_channels = self._parse_in_channels(self.input_channels)
-            # skip_norm: the widget already normalized the stack
-            # (image_stack_norm), and prediction passes skip_norm=True on the
-            # same pre-normalized data. Matching it here keeps normalization
-            # single-pass (data-dependent modes like percentile must not be
-            # applied twice) and keeps train/predict features identical — so
-            # they can share feature-cache entries (keys are content hashes of
-            # the prepared image).
+            # Train the model with the current image and annotations; skip normalization as it is done in the widget
+            # (as in prediction, so train and predict hash identical data and share feature-cache entries)
             _ = self.cp_model.train(image_stack_norm, annot, memory_mode=mem_mode, img_ids=img_name,
                                     in_channels=in_channels, skip_norm=True,
                                     fe_use_device=self.fe_device, clf_use_device=self.clf_device)

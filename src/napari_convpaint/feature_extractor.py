@@ -2,14 +2,7 @@ import numpy as np
 import torch
 import warnings
 from .param import Param
-from .utils import scale_img, rescale_features, reduce_to_patch_multiple, pad_to_shape, get_device_from_torch_model
-
-def _concat(arrays, axis=0):
-    """Concatenate along `axis`, staying on-device for torch tensors."""
-    if len(arrays) and isinstance(arrays[0], torch.Tensor):
-        return torch.cat(arrays, dim=axis)
-    return np.concatenate(arrays, axis=axis)
-
+from .utils import scale_img, rescale_features, reduce_to_patch_multiple, pad_to_shape, get_device_from_torch_model, concat_features
 
 class FeatureExtractor:
     def __init__(self, model_name="vgg16", model=None, **kwargs):
@@ -455,7 +448,7 @@ class FeatureExtractor:
             # Put together features for each input_channels procession (and
             # layers if applicable), staying on the extraction device for torch
             # tensors; the single host transfer happens at the very end.
-            features = _concat(features)
+            features = concat_features(features)
 
             # If use_min_features is True, shorten features
             if param.fe_use_min_features:
@@ -470,7 +463,7 @@ class FeatureExtractor:
 
         # Concatenate all scales along the first axis, then move to CPU numpy
         # in a single host transfer.
-        features_all_scales = _concat(features_all_scales)
+        features_all_scales = concat_features(features_all_scales)
         if isinstance(features_all_scales, torch.Tensor):
             features_all_scales = features_all_scales.detach().cpu().numpy()
 
