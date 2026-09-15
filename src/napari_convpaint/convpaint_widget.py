@@ -2030,57 +2030,35 @@ class ConvpaintWidget(QWidget):
         # Get normalized stack data (entire stack, and stats prepared given the radio buttons)
         image_stack_norm = self._get_data_channel_first_norm(img) # Normalize the entire stack
         
-        # Step through the stack and predict each image.
+        # Step through the stack and predict each image
         num_steps = image_stack_norm.shape[-3]
-        in_channels = self._parse_in_channels(self.input_channels)
+        for step in progress(range(num_steps)):
 
-        def _predict_and_write(step, cache_only):
-            """Predict one slice and write it to the layers. With cache_only=True,
-            only slices whose features are already cached are predicted (returns
-            False on a miss, without running the extractor). Returns True if
-            written."""
+            # Take the slice of the 3rd last dimension (since images are C, Z, H, W or Z, H, W)
             image = image_stack_norm[..., step, :, :]
-            out = self.cp_model._predict(image, add_seg=True, in_channels=in_channels,
-                                         skip_norm=True, use_dask=self.use_dask,
-                                         fe_use_device=self.fe_device, cache_only=cache_only)
-            if out is None:  # cache_only peek: this slice is not cached yet
-                return False
-            probas, seg = out
-            if self.add_probas:
-                # Creates the probabilities layer on the first actual prediction
-                # (we need the class count); with cache-first ordering this may
-                # not be step 0. A no-op once new_proba is cleared.
-                self._check_create_probas_layer(probas.shape[0])
+
+            # Predict the current step; skip normalization as it is done above
+            in_channels = self._parse_in_channels(self.input_channels)
+            # Use the backend function which returns probabilities and segmentation
+            probas, seg = self.cp_model._predict(image, add_seg=True, in_channels=in_channels, skip_norm=True,
+                                                 use_dask=self.use_dask, fe_use_device=self.fe_device)
+
+            # In the first iteration, check if we need to create a new probas layer
+            # (we need the information about the number of classes)
+            if step == 0 and self.add_probas:
+                num_classes = probas.shape[0]
+                # Check if we need to create a new probabilities layer
+                self._check_create_probas_layer(num_classes)
+                # Set the flag to False, so we don't create a new layer every time
                 self.new_proba = False
+
+            # Add the slices to the segmentation and probabilities layers
             if self.add_seg:
                 self.viewer.layers[self.seg_tag].data[step] = seg
                 self.viewer.layers[self.seg_tag].refresh()
             if self.add_probas:
                 self.viewer.layers[self.proba_prefix].data[..., step, :, :] = probas
                 self.viewer.layers[self.proba_prefix].refresh()
-            return True
-
-        fc = self.cp_model._feature_cache
-        cache_primed = fc is not None and fc.enabled and len(fc) > 0
-        done = [False] * num_steps
-        with progress(total=num_steps) as pbr:
-            pbr.set_description("Predicting")
-            if cache_primed:
-                # Cache-first ordering: serve slices already in the cache before
-                # computing the rest. A plain sequential scan over a stack larger
-                # than the cache evicts the very slices the next pass needs first
-                # (classic LRU thrash) — so cached slices would be recomputed for
-                # no benefit. Predicting cached slices first guarantees they are
-                # used before the compute pass evicts them. (Skipped when the
-                # cache is empty — nothing to serve first.)
-                for step in range(num_steps):      # phase 1: already-cached slices
-                    if _predict_and_write(step, cache_only=True):
-                        done[step] = True
-                        pbr.update(1)
-            for step in range(num_steps):          # phase 2: compute the rest
-                if not done[step]:
-                    _predict_and_write(step, cache_only=False)
-                    pbr.update(1)
 
         with warnings.catch_warnings():
             warnings.simplefilter(action="ignore", category=FutureWarning)

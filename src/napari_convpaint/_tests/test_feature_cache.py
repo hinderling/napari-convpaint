@@ -151,9 +151,6 @@ def test_cached_prediction_bit_identical_and_hits():
         seg_second = cp.segment(img)
         assert fc.stats()['hits'] > hits_before          # second pass hits
         assert np.array_equal(seg_first, seg_second)
-        # peek semantics
-        assert cp._predict(rng.rand(1, 96, 96).astype(np.float32), cache_only=True) is None
-        assert cp._predict(img, cache_only=True) is not None
         # uncached model produces the identical segmentation
         cp2 = ConvpaintModel('gaussian')
         cp2.train(img, annot)

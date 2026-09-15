@@ -960,20 +960,15 @@ class ConvpaintModel:
         h.update(str(arr.dtype).encode())
         return h.hexdigest()
 
-    def _extract_pyramid_cached(self, d, param, keep_patched, device, cache_only=False):
+    def _extract_pyramid_cached(self, d, param, patched=True, device=None):
         """Extract the feature pyramid for one image, consulting the feature
         cache. Behaviour with the cache disabled (the default) is exactly
         extract_features_pyramid; enabled, it caches/reuses the native features
-        (bit-identical output, since the pyramid split is exact).
-
-        ``cache_only=True`` is a peek: return the reconstructed features only if
-        they are already cached, else return None WITHOUT running the (expensive)
-        feature extractor. This lets a stack prediction serve already-cached
-        slices first, before a sequential scan evicts them (see the widget)."""
+        (bit-identical output, since the pyramid split is exact)."""
         cache = self._feature_cache
         fe = self.fe_model
         if cache is None or not cache.enabled or not fe.supports_feature_cache(param):
-            return None if cache_only else fe.extract_features_pyramid(d, param, patched=keep_patched, device=device)
+            return fe.extract_features_pyramid(d, param, patched=patched, device=device)
         key = (self._data_hash(d), self._fe_cache_signature(param))
         payload = cache.get(key)
         if payload is not None:
@@ -981,13 +976,11 @@ class ConvpaintModel:
             # if that is the FE's native form) — same backend as a fresh
             # extraction, so hits are as fast as (and identical to) misses.
             return fe.features_from_cacheable(payload, d.shape, param,
-                                              patched=keep_patched, device=device)
-        if cache_only:
-            return None
+                                              patched=patched, device=device)
         # Miss: one extraction pass yields both the features (reconstructed
         # from the on-device native form) and the numpy payload to store.
         features, payload = fe.cacheable_repr_and_features(d, param, device,
-                                                           patched=keep_patched)
+                                                           patched=patched)
         cache.put(key, payload)
         return features
 
@@ -996,7 +989,7 @@ class ConvpaintModel:
     def _get_features(self, data, annotations=None, restore_input_form=True,
                           memory_mode=False, img_ids=None,
                           in_channels=None, skip_norm=False, use_device=None,
-                          pca_components=0, kmeans_clusters=0, cache_only=False):
+                          pca_components=0, kmeans_clusters=0):
         """
         Returns the features of images extracted by the feature extractor model.
 
@@ -1201,14 +1194,11 @@ class ConvpaintModel:
             warn=True,
         )
         features = [self._extract_pyramid_cached(
-                d, params_for_extract, keep_patched, fe_runtime_device,
-                cache_only=cache_only)
+                d,
+                params_for_extract,
+                patched=keep_patched,
+                device=fe_runtime_device)
                     for d in data]
-
-        # cache_only peek: if any image's features are not already cached, signal
-        # a miss so the caller can defer this image to the compute pass.
-        if cache_only and any(f is None for f in features):
-            return None
 
         if pca_components:
             features = [utils.apply_pca_to_f_image(f, n_components=pca_components)
@@ -1584,7 +1574,7 @@ class ConvpaintModel:
 
         return features, annotations
 
-    def _predict(self, data, add_seg=False, in_channels=None, skip_norm=False, use_dask=False, fe_use_device=None, cache_only=False):
+    def _predict(self, data, add_seg=False, in_channels=None, skip_norm=False, use_dask=False, fe_use_device=None):
         """
         Backend method to predict images as a whole or tiling and parallelizing the prediction.
 
@@ -1617,17 +1607,10 @@ class ConvpaintModel:
 
         # Get class probabilities, using tiling if enabled
         if self._param.tile_image:
-            if cache_only:
-                # The tiled path doesn't support the peek, so it counts as a miss.
-                return None
             probas = [self._parallel_predict_image(d, return_proba=True, use_dask=use_dask, fe_use_device=fe_use_device)
                       for d in data]
         else:
-            # cache_only is a peek: only serve images whose features are already
-            # cached; None on any miss defers them to the caller's compute pass.
-            probas = self._predict_image(data, return_proba=True, fe_use_device=fe_use_device, cache_only=cache_only) # Can handle lists directly
-            if probas is None:
-                return None
+            probas = self._predict_image(data, return_proba=True, fe_use_device=fe_use_device) # Can handle lists directly
 
         # Restore input dimensionality (especially see if we want to remove z dimension)
         probas = [self._restore_dims(probas[i], input_shapes[i])
@@ -1646,7 +1629,7 @@ class ConvpaintModel:
             else:
                 return probas
 
-    def _predict_image(self, image, return_proba=True, feature_img=None, fe_use_device=None, cache_only=False):
+    def _predict_image(self, image, return_proba=True, feature_img=None, fe_use_device=None):
         """
         Backend method to predict images without tiling and parallelization.
         Returns the class probabilities and optionally the segmentation of the images.
@@ -1667,10 +1650,7 @@ class ConvpaintModel:
                                             restore_input_form=False,
                                             in_channels=None, # already extracted outside
                                             skip_norm=True, # already normalized outside
-                                            use_device=fe_use_device,
-                                            cache_only=cache_only)
-            if feature_img is None:  # cache_only peek: features not cached
-                return None
+                                            use_device=fe_use_device)
 
         num_f = feature_img[0].shape[0] if isinstance(feature_img, list) else feature_img.shape[0]
         num_f_clf = self.num_features
