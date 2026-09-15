@@ -484,13 +484,6 @@ class FeatureExtractor:
         can return False to opt out."""
         return True
 
-    def cache_spill_to_disk(self):
-        """Whether this FE's payloads may be spilled to the disk cache tier on
-        RAM eviction. FEs whose payloads are huge relative to their recompute
-        cost (e.g. CNN feature maps) should return False: they stay cacheable in
-        RAM but are dropped instead of pickled to disk."""
-        return True
-
     def cache_extra_state(self):
         """Extraction-relevant state that lives on the FE instance (rather than
         in the Param), to be mixed into the feature-cache key. Any FE whose output
@@ -503,8 +496,8 @@ class FeatureExtractor:
     @staticmethod
     def _native_to_payload(native):
         """Cast a native pyramid (whose feature arrays may be on-device torch
-        tensors) to a device-independent cache payload: CPU numpy arrays, safe
-        to hold in RAM and pickle to the disk tier. ``was_torch`` records the
+        tensors) to a device-independent cache payload: CPU numpy arrays.
+        ``was_torch`` records the
         native form, so reconstruction from the cache can lift the payload back
         to tensors and use the same rescale backend as a fresh extraction —
         cached results must be identical to fresh ones."""

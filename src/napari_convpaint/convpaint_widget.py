@@ -577,19 +577,9 @@ class ConvpaintWidget(QWidget):
             self.cache_max_ram_spinbox.setValue(self.cache_max_mb)
             self.advanced_cache_group.glayout.addWidget(self.cache_max_ram_spinbox, 2, 2, 1, 1)
 
-            # Max disk spinbox (MB) — features evicted from RAM spill here instead
-            # of being recomputed. 0 disables disk spillover.
-            self.cache_max_disk_label = QLabel('Max cache disk (MB, 0 = RAM only)')
-            self.advanced_cache_group.glayout.addWidget(self.cache_max_disk_label, 3, 0, 1, 2)
-            self.cache_max_disk_spinbox = QSpinBox()
-            self.cache_max_disk_spinbox.setRange(0, 8 * 1024 * 1024)  # 0 .. 8 TB
-            self.cache_max_disk_spinbox.setSingleStep(1024)
-            self.cache_max_disk_spinbox.setValue(self.cache_disk_max_mb)
-            self.advanced_cache_group.glayout.addWidget(self.cache_max_disk_spinbox, 3, 2, 1, 1)
-
-            # Current cache size label (RAM + disk)
+            # Current cache size label
             self.cache_size_label = QLabel('Current cache size: 0 MB')
-            self.advanced_cache_group.glayout.addWidget(self.cache_size_label, 4, 0, 1, 3)
+            self.advanced_cache_group.glayout.addWidget(self.cache_size_label, 3, 0, 1, 3)
 
         # === MULTIFILE TAB ===
 
@@ -914,25 +904,21 @@ class ConvpaintWidget(QWidget):
         attributes hold the pre-GUI defaults and simply mirror the controls
         afterwards. Pass recreate=True right after the model is (re)created;
         otherwise the existing cache is updated in place so its entries survive
-        a settings change (disabling clears it, freeing RAM+disk)."""
+        a settings change (disabling clears it, freeing RAM)."""
         model = getattr(self, "cp_model", None)
         if model is None:
             return
         if hasattr(self, "check_use_cache"):
             self.cache_enabled = self.check_use_cache.isChecked()
             self.cache_max_mb = self.cache_max_ram_spinbox.value()
-            self.cache_disk_max_mb = self.cache_max_disk_spinbox.value()
         # Use decimal MB (1e6) here to match the size shown in the label (also
         # /1e6), so the number the user types is exactly the max size displayed.
         max_bytes = int(self.cache_max_mb) * 1_000_000
-        disk_max_bytes = int(self.cache_disk_max_mb) * 1_000_000
         fc = model._feature_cache
         if fc is None or recreate:
-            model.enable_feature_cache(enabled=self.cache_enabled, max_bytes=max_bytes,
-                                       disk_max_bytes=disk_max_bytes)
+            model.enable_feature_cache(enabled=self.cache_enabled, max_bytes=max_bytes)
         else:
             fc.set_max_bytes(max_bytes)
-            fc.set_disk_max_bytes(disk_max_bytes)
             fc.set_enabled(self.cache_enabled)
         self._refresh_cache_size_label()
 
@@ -945,8 +931,7 @@ class ConvpaintWidget(QWidget):
             self.cache_size_label.setText('Current cache size: 0 MB')
             return
         s = fc.stats()  # one lock acquisition for all fields
-        text = (f'Current cache size: RAM {s["bytes"] / 1e6:.0f} MB ({s["entries"]}), '
-                f'disk {s["disk_bytes"] / 1e6:.0f} MB ({s["disk_entries"]})')
+        text = f'Current cache size: {s["bytes"] / 1e6:.0f} MB ({s["entries"]} entries)'
         if text != self.cache_size_label.text():
             self.cache_size_label.setText(text)
 
@@ -1143,10 +1128,9 @@ class ConvpaintWidget(QWidget):
                 self, 'use_dask', self.check_use_dask.isChecked()))
 
             if hasattr(self, 'check_use_cache'):
-                # All three controls apply the full settings set in one go.
+                # Both controls apply the full settings set in one go.
                 self.check_use_cache.stateChanged.connect(self._apply_feature_cache)
                 self.cache_max_ram_spinbox.valueChanged.connect(self._apply_feature_cache)
-                self.cache_max_disk_spinbox.valueChanged.connect(self._apply_feature_cache)
                 # Keep the "current cache size" label live.
                 self._cache_size_timer = QTimer(self)
                 self._cache_size_timer.setInterval(1000)
@@ -2077,8 +2061,7 @@ class ConvpaintWidget(QWidget):
             return True
 
         fc = self.cp_model._feature_cache
-        cache_primed = (fc is not None and fc.enabled
-                        and (len(fc) + fc.stats()["disk_entries"]) > 0)
+        cache_primed = fc is not None and fc.enabled and len(fc) > 0
         done = [False] * num_steps
         with progress(total=num_steps) as pbr:
             pbr.set_description("Predicting")
@@ -2437,7 +2420,6 @@ class ConvpaintWidget(QWidget):
         self.use_dask = False # Use Dask for parallel processing
         self.cache_enabled = True # Reuse extracted features when re-segmenting / re-training the same image
         self.cache_max_mb = 2048 # Max RAM (MB) the feature cache may use (moderate default)
-        self.cache_disk_max_mb = 8192 # Max disk (MB) for spilled features (0 = disk spillover off)
         self.fe_device = 'auto' # Device to use for the FE (if applicable); 'auto' will use GPU if available, otherwise CPU
         self.clf_device = 'auto' # Device to use for the classifier (if applicable); 'auto' will use GPU if available, otherwise CPU
         self.input_channels = "" # Input channels for the model (as txt, will be parsed)

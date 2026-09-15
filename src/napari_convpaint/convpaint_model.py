@@ -917,21 +917,17 @@ class ConvpaintModel:
 
 ### FEATURE CACHE (opt-in; see feature_cache.py)
 
-    def enable_feature_cache(self, enabled=True, max_bytes=None, disk_max_bytes=0):
+    def enable_feature_cache(self, enabled=True, max_bytes=None):
         """Turn on whole-image feature caching. When on, the (resolution-
         independent) native features of an extracted image are cached and reused
         the next time the *same* image is processed with the same FE settings —
         e.g. re-segmenting while refining scribbles, or the train->predict of one
         image — instead of recomputing them. Cache entries are content-addressed
         (a hash of the prepared image), so it is self-invalidating: a changed
-        image simply misses. Bounded by a RAM budget (``max_bytes``); RAM-evicted
-        entries spill to disk up to ``disk_max_bytes`` (0 = off), which lets a
-        stack too large for RAM still benefit on the next iteration (loading a
-        cached slice from disk is much faster than recomputing it). Off by
+        image simply misses. Bounded by a RAM budget (``max_bytes``). Off by
         default (opt-in)."""
         from .feature_cache import FeatureCache
-        self._feature_cache = FeatureCache(max_bytes=max_bytes, enabled=enabled,
-                                           disk_max_bytes=disk_max_bytes)
+        self._feature_cache = FeatureCache(max_bytes=max_bytes, enabled=enabled)
         return self._feature_cache
 
     def _fe_cache_signature(self, param):
@@ -992,7 +988,7 @@ class ConvpaintModel:
         # from the on-device native form) and the numpy payload to store.
         features, payload = fe.cacheable_repr_and_features(d, param, device,
                                                            patched=keep_patched)
-        cache.put(key, payload, spill_ok=fe.cache_spill_to_disk())
+        cache.put(key, payload)
         return features
 
 ### BACKEND METHOD FOR FEATURE EXTRACTION

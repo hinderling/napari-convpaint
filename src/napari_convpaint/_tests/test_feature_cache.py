@@ -116,97 +116,7 @@ def test_model_feature_cache_identical_and_reuses():
     assert m_on._feature_cache.stats()["hits"] >= 1
 
 
-def test_disk_spillover_serves_ram_evicted_entries():
-    """RAM-evicted entries spill to disk and are served from there (bit-identical)."""
-    c = FeatureCache(max_bytes=int(2.5 * 10**6), headroom_frac=0.0,
-                     disk_max_bytes=100 * 10**6)
-    a = _arr(1); b = _arr(1); d = _arr(1)
-    c.put(("a",), a); c.put(("b",), b)  # RAM full (2 entries)
-    c.put(("c",), d)  # evicts "a" from RAM -> spills to disk
-    assert len(c) == 2 and c.stats()["disk_entries"] == 1
-    got = c.get(("a",))  # RAM miss -> disk hit
-    assert got is not None and np.array_equal(got, a)  # round-trips bit-identical
-    assert c.stats()["disk_hits"] == 1
-
-
-def test_disk_lru_eviction_and_total_miss():
-    c = FeatureCache(max_bytes=int(1.5 * 10**6), headroom_frac=0.0,
-                     disk_max_bytes=int(1.5 * 10**6))  # RAM holds 1, disk holds 1
-    c.put(("a",), _arr(1)); c.put(("b",), _arr(1))  # a -> disk, b in RAM
-    c.put(("c",), _arr(1))  # b -> disk (evicts a from disk), c in RAM
-    assert c.get(("a",)) is None      # a fell off disk entirely -> recompute
-    assert c.get(("b",)) is not None  # b on disk
-    assert c.get(("c",)) is not None  # c in RAM
-
-
-def test_disk_disabled_by_default():
-    c = FeatureCache(max_bytes=int(1.5 * 10**6), headroom_frac=0.0)  # no disk
-    c.put(("a",), _arr(1)); c.put(("b",), _arr(1))  # a evicted, dropped (no disk)
-    assert c.get(("a",)) is None and c.stats()["disk_entries"] == 0
-
-
-def test_clear_removes_disk_tier_and_tempdir():
-    import os
-    c = FeatureCache(max_bytes=int(1.5 * 10**6), headroom_frac=0.0,
-                     disk_max_bytes=100 * 10**6)
-    c.put(("a",), _arr(1)); c.put(("b",), _arr(1))  # a on disk
-    disk_dir = c._disk_dir
-    assert disk_dir is not None and os.path.isdir(disk_dir)
-    c.clear()
-    assert c.stats()["disk_entries"] == 0 and c.disk_nbytes == 0
-    c.close()
-    assert not os.path.isdir(disk_dir)  # temp dir removed
-
-
-def test_disk_bytes_never_exceeds_cap():
-    """Stress: many puts must never push the disk tier over its byte cap."""
-    cap = int(3.5 * 10**6)  # ~3 entries of 1 MB
-    c = FeatureCache(max_bytes=int(1.5 * 10**6), headroom_frac=0.0, disk_max_bytes=cap)
-    for i in range(20):
-        c.put((i,), _arr(1))
-        assert c.disk_nbytes <= cap  # invariant holds after every put
-    c.close()
-
-
 # --- integration with the model-level cache protocol -----------------------
-
-def test_oversized_payload_goes_to_disk_tier():
-    from napari_convpaint.feature_cache import FeatureCache
-    c = FeatureCache(max_bytes=1024 * 1024, headroom_frac=0.0,
-                     disk_max_bytes=64 * 1024 * 1024)
-    try:
-        payload = np.zeros(2 * 1024 * 1024, dtype=np.uint8)  # 2 MB > 1 MB RAM cap
-        c.put(('big',), payload)
-        assert len(c) == 0
-        assert c.stats()['disk_entries'] == 1
-        got = c.get(('big',))
-        assert got is not None and got.nbytes == payload.nbytes
-    finally:
-        c.close()
-
-
-def test_spill_ok_false_never_touches_disk():
-    from napari_convpaint.feature_cache import FeatureCache
-    c = FeatureCache(max_bytes=1024 * 1024, headroom_frac=0.0,
-                     disk_max_bytes=64 * 1024 * 1024)
-    try:
-        c.put(('a',), np.zeros(600 * 1024, dtype=np.uint8), spill_ok=False)
-        c.put(('b',), np.zeros(600 * 1024, dtype=np.uint8))  # evicts 'a' -> dropped
-        assert c.stats()['disk_entries'] == 0
-        assert c.get(('a',)) is None
-        c.put(('huge',), np.zeros(2 * 1024 * 1024, dtype=np.uint8), spill_ok=False)
-        assert c.get(('huge',)) is None
-        assert c.stats()['disk_entries'] == 0
-    finally:
-        c.close()
-
-
-def test_hookmodel_opts_out_of_disk_spill():
-    from napari_convpaint.feature_extractor import FeatureExtractor
-    assert FeatureExtractor.cache_spill_to_disk(object()) is True
-    from napari_convpaint.feature_extractors.nnlayers import Hookmodel
-    assert Hookmodel.cache_spill_to_disk(object()) is False
-
 
 def test_cache_key_includes_fe_instance_state():
     from napari_convpaint.convpaint_model import ConvpaintModel
@@ -256,8 +166,7 @@ def test_thread_safety_under_concurrent_use():
     Correctness bar: no exceptions and consistent bookkeeping afterwards."""
     import threading
 
-    c = FeatureCache(max_bytes=int(3 * 10**6), headroom_frac=0.0,
-                     disk_max_bytes=int(5 * 10**6))
+    c = FeatureCache(max_bytes=int(3 * 10**6), headroom_frac=0.0)
     errors = []
     start = threading.Barrier(5)
 
@@ -277,7 +186,6 @@ def test_thread_safety_under_concurrent_use():
             start.wait()
             for i in range(100):
                 c.set_max_bytes(int((2 + i % 3) * 10**6))
-                c.set_disk_max_bytes(int((i % 2) * 5 * 10**6))
                 c.stats()
                 if i % 10 == 0:
                     c.clear()
@@ -294,9 +202,7 @@ def test_thread_safety_under_concurrent_use():
     assert errors == []
     # Bookkeeping must be consistent: recompute sizes from the stores.
     assert c.nbytes == sum(item[1] for item in c._store.values())
-    assert c.disk_nbytes == sum(item[1] for item in c._disk_store.values())
     assert c.nbytes <= c.stats()["max_bytes"]
-    c.close()
 
 
 def test_nn_fe_cache_hit_matches_fresh_and_uses_torch_payload():
