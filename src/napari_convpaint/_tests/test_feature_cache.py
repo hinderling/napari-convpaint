@@ -203,3 +203,30 @@ def test_numpy_fe_payload_stays_numpy_and_identical():
     assert np.array_equal(feat_miss, feat_hit)
     payload = next(iter(fc._store.values()))[0]
     assert payload['was_torch'] is False
+
+
+def test_annotation_tiles_are_not_cached():
+    """Training with tile_annotations extracts tiles cut around the scribbles; they
+    never repeat and cannot serve a prediction, so they must not enter the cache.
+    Untiled training and prediction of the same plane share one entry."""
+    import warnings as _w
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    rng = np.random.RandomState(0)
+    img = rng.rand(1, 96, 96).astype(np.float32)
+    annot = np.zeros((1, 96, 96), dtype=np.uint8)
+    annot[0, :12, :12] = 1
+    annot[0, -12:, -12:] = 2
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        cp = ConvpaintModel('gaussian')
+        cp.set_params(tile_annotations=True)
+        fc = cp.enable_feature_cache(max_bytes=64 * 1024 * 1024)
+        cp.train(img, annot)
+        assert len(fc) == 0                  # annotation tiles were not cached
+        cp.segment(img)
+        assert len(fc) == 1                  # the whole plane is
+        cp.set_params(tile_annotations=False)
+        hits_before = fc.stats()['hits']
+        cp.train(img, annot)
+        assert fc.stats()['hits'] > hits_before  # untiled training hits the plane entry
+        assert len(fc) == 1

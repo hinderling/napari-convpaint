@@ -961,14 +961,14 @@ class ConvpaintModel:
         h.update(str(arr.dtype).encode())
         return h.hexdigest()
 
-    def _extract_pyramid_cached(self, d, param, patched=True, device=None):
+    def _extract_pyramid_cached(self, d, param, patched=True, device=None, use_cache=True):
         """Extract the feature pyramid for one image, consulting the feature
         cache. Behaviour with the cache disabled (the default) is exactly
         extract_features_pyramid; enabled, it caches/reuses the native features
         (bit-identical output, since the pyramid split is exact)."""
         cache = self._feature_cache
         fe = self.fe_model
-        if cache is None or not cache.enabled or not fe.supports_feature_cache(param):
+        if not use_cache or cache is None or not cache.enabled or not fe.supports_feature_cache(param):
             return fe.extract_features_pyramid(d, param, patched=patched, device=device)
         key = (self._data_hash(d), self._fe_cache_signature(param))
         payload = cache.get(key)
@@ -1194,11 +1194,15 @@ class ConvpaintModel:
             supported_devices=self.fe_model.supported_devices(),
             warn=True,
         )
+        # Annotation tiles are cut around the (new) annotations, so they never repeat and
+        # cannot serve a prediction -> do not cache them (only whole planes / prediction tiles)
+        use_cache = not (use_annots and params_for_extract.tile_annotations)
         features = [self._extract_pyramid_cached(
                 d,
                 params_for_extract,
                 patched=keep_patched,
-                device=fe_runtime_device)
+                device=fe_runtime_device,
+                use_cache=use_cache)
                     for d in data]
 
         if pca_components:
