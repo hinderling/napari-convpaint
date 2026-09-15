@@ -935,6 +935,14 @@ class ConvpaintWidget(QWidget):
         if text != self.cache_size_label.text():
             self.cache_size_label.setText(text)
 
+    def _warn_cache_ram(self):
+        """Warn if the feature cache limit exceeds half of the currently available RAM."""
+        import psutil
+        available_mb = psutil.virtual_memory().available / 1e6
+        if self.cache_max_ram_spinbox.value() > available_mb / 2:
+            show_info(f'The feature cache limit ({self.cache_max_ram_spinbox.value()} MB) exceeds half of the '
+                      f'currently available RAM ({available_mb:.0f} MB).')
+
     def _late_init(self):
         """Populate UI widgets with defaults from ConvpaintModel, set up connections, and reset model.
         This is called after the GUI is shown to ensure that all components are properly initialized."""
@@ -1131,6 +1139,7 @@ class ConvpaintWidget(QWidget):
                 # Both controls apply the full settings set in one go.
                 self.check_use_cache.stateChanged.connect(self._apply_feature_cache)
                 self.cache_max_ram_spinbox.valueChanged.connect(self._apply_feature_cache)
+                self.cache_max_ram_spinbox.editingFinished.connect(self._warn_cache_ram)
                 # Keep the "current cache size" label live.
                 self._cache_size_timer = QTimer(self)
                 self._cache_size_timer.setInterval(1000)

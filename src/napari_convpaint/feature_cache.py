@@ -9,12 +9,10 @@ by each FE (e.g. DINO patch tokens — tiny and lossless to upsample), keyed by
 eviction and, crucially, a memory budget so caching a 100-slice stack or a
 300-frame movie can never grow unbounded and crash the kernel.
 
-Triage principle (never OOM): before storing an entry, its size is checked
-against a live budget = `min(configured cap, available_RAM − headroom)`. If it
+Before storing an entry, its size is checked against the configured cap. If it
 does not fit, the least-recently-used entries are evicted; if it still does not
-fit (a single payload larger than the budget), it is simply not cached and the
-caller recomputes. The cache never exceeds the budget, so it degrades to
-recomputation rather than pushing the system into swap.
+fit (a single payload larger than the cap), it is simply not cached and the
+caller recomputes.
 
 FE-specific behaviour lives in the FeatureExtractor (see the
 `cacheable_repr_and_features` / `features_from_cacheable` /
@@ -27,18 +25,9 @@ import functools
 import threading
 from collections import OrderedDict
 
-try:
-    import psutil
-    _HAVE_PSUTIL = True
-except Exception:  # pragma: no cover - psutil is optional
-    _HAVE_PSUTIL = False
 
-
-# Fallback absolute cap when available-RAM cannot be queried (no psutil).
-_DEFAULT_MAX_BYTES = 2 * 1024 ** 3  # 2 GiB
-# Keep at least this fraction of currently-available RAM free (never consume it
-# all with cache), as a safety headroom against OOM.
-_DEFAULT_HEADROOM_FRAC = 0.25
+# Default cap (same as the widget default of 2048 MB).
+_DEFAULT_MAX_BYTES = 2048 * 10**6  # 2 GB
 
 
 def _payload_nbytes(payload) -> int:
@@ -77,52 +66,26 @@ class FeatureCache:
     Parameters
     ----------
     max_bytes : int or None
-        Hard cap on the cache's own size. None → an automatic cap derived from
-        system RAM (a quarter of total, or `_DEFAULT_MAX_BYTES` without psutil).
-    headroom_frac : float
-        Fraction of *currently available* RAM to always keep free. The live
-        budget is `available_RAM * (1 - headroom_frac)`; entries are never added
-        (and are evicted) to respect it, so the cache cannot trigger OOM.
+        Hard cap on the cache's size. None → `_DEFAULT_MAX_BYTES` (2 GB).
     enabled : bool
         Master switch; when False, get() always misses and put() is a no-op.
     """
 
-    def __init__(self, max_bytes: int | None = None,
-                 headroom_frac: float = _DEFAULT_HEADROOM_FRAC,
-                 enabled: bool = True):
+    def __init__(self, max_bytes: int | None = None, enabled: bool = True):
         self._lock = threading.RLock()
         self._store: "OrderedDict[tuple, tuple]" = OrderedDict()  # key -> (payload, nbytes)
         self._total_bytes = 0
-        self._headroom_frac = float(headroom_frac)
         self.enabled = bool(enabled)
         if max_bytes is None:
-            if _HAVE_PSUTIL:
-                max_bytes = int(psutil.virtual_memory().total * 0.25)
-            else:
-                max_bytes = _DEFAULT_MAX_BYTES
+            max_bytes = _DEFAULT_MAX_BYTES
         self._max_bytes = int(max_bytes)
         self.hits = 0
         self.misses = 0
     # -- budget helpers ----------------------------------------------------
 
-    def _available_bytes(self) -> int:
-        if _HAVE_PSUTIL:
-            return int(psutil.virtual_memory().available)
-        # No psutil: rely solely on the configured cap (assume plenty free).
-        return self._max_bytes
-
-    def _fits(self, nbytes: int, available: int | None = None) -> bool:
-        """Whether adding `nbytes` keeps the cache under its cap AND leaves the
-        configured headroom of currently-available RAM free. Pass `available`
-        to reuse one RAM snapshot across repeated checks (e.g. put's eviction
-        loop) instead of re-querying psutil per call."""
-        if self._total_bytes + nbytes > self._max_bytes:
-            return False
-        if available is None:
-            available = self._available_bytes()
-        # available RAM already accounts for the cache's current allocation, so
-        # only the *new* bytes reduce it further.
-        return available - nbytes >= self._headroom_frac * available
+    def _fits(self, nbytes: int) -> bool:
+        """Whether adding `nbytes` keeps the cache under its cap."""
+        return self._total_bytes + nbytes <= self._max_bytes
 
     # -- public API --------------------------------------------------------
 
@@ -153,15 +116,9 @@ class FeatureCache:
         # A single payload larger than the whole cap can never be held.
         if nbytes > self._max_bytes:
             return
-        # Evict least-recently-used until the new entry fits. One RAM snapshot
-        # serves the whole loop: eviction only increases availability, so the
-        # snapshot errs conservative.
-        available = self._available_bytes()
-        while self._store and not self._fits(nbytes, available):
+        # Evict least-recently-used until the new entry fits.
+        while self._store and not self._fits(nbytes):
             self._evict_one()
-        if not self._fits(nbytes, available):
-            # The live headroom refuses it even with the cache empty.
-            return
         # The key is absent at this point (popped above if present), so
         # assignment appends at the MRU end.
         self._store[key] = (payload, nbytes)

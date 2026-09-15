@@ -11,7 +11,7 @@ def _arr(mb):
 
 
 def test_hit_and_miss():
-    c = FeatureCache(max_bytes=100 * 10**6, headroom_frac=0.0)
+    c = FeatureCache(max_bytes=100 * 10**6)
     assert c.get(("img", 0, "sig")) is None
     payload = _arr(1)
     c.put(("img", 0, "sig"), payload)
@@ -23,7 +23,7 @@ def test_hit_and_miss():
 
 def test_lru_eviction_by_cap():
     # Cap ~2.5 MB; each entry ~1 MB -> at most 2 fit, oldest evicted.
-    c = FeatureCache(max_bytes=int(2.5 * 10**6), headroom_frac=0.0)
+    c = FeatureCache(max_bytes=int(2.5 * 10**6))
     c.put(("a",), _arr(1))
     c.put(("b",), _arr(1))
     assert len(c) == 2
@@ -35,7 +35,7 @@ def test_lru_eviction_by_cap():
 
 
 def test_lru_touch_on_get_protects_entry():
-    c = FeatureCache(max_bytes=int(2.5 * 10**6), headroom_frac=0.0)
+    c = FeatureCache(max_bytes=int(2.5 * 10**6))
     c.put(("a",), _arr(1))
     c.put(("b",), _arr(1))
     assert c.get(("a",)) is not None  # touch "a" -> now "b" is LRU
@@ -45,14 +45,14 @@ def test_lru_touch_on_get_protects_entry():
 
 
 def test_single_oversize_payload_is_not_cached():
-    c = FeatureCache(max_bytes=1 * 10**6, headroom_frac=0.0)
+    c = FeatureCache(max_bytes=1 * 10**6)
     c.put(("big",), _arr(5))  # 5 MB into a 1 MB cap -> skipped, not cached
     assert len(c) == 0
     assert c.get(("big",)) is None
 
 
 def test_overwrite_updates_size():
-    c = FeatureCache(max_bytes=100 * 10**6, headroom_frac=0.0)
+    c = FeatureCache(max_bytes=100 * 10**6)
     c.put(("k",), _arr(1))
     b0 = c.nbytes
     c.put(("k",), _arr(3))  # replace with a bigger payload
@@ -61,7 +61,7 @@ def test_overwrite_updates_size():
 
 
 def test_clear():
-    c = FeatureCache(max_bytes=100 * 10**6, headroom_frac=0.0)
+    c = FeatureCache(max_bytes=100 * 10**6)
     c.put(("a",), _arr(1))
     c.put(("b",), _arr(1))
     c.clear()
@@ -70,14 +70,14 @@ def test_clear():
 
 
 def test_disabled_cache_is_noop():
-    c = FeatureCache(max_bytes=100 * 10**6, headroom_frac=0.0, enabled=False)
+    c = FeatureCache(max_bytes=100 * 10**6, enabled=False)
     c.put(("a",), _arr(1))
     assert c.get(("a",)) is None
     assert len(c) == 0
 
 
 def test_list_payload_size_accounted():
-    c = FeatureCache(max_bytes=int(2.5 * 10**6), headroom_frac=0.0)
+    c = FeatureCache(max_bytes=int(2.5 * 10**6))
     c.put(("a",), [_arr(1), _arr(1)])  # ~2 MB as a list of arrays
     assert len(c) == 1
     c.put(("b",), _arr(1))  # pushes over 2.5 MB -> evicts "a"
@@ -163,7 +163,7 @@ def test_thread_safety_under_concurrent_use():
     Correctness bar: no exceptions and consistent bookkeeping afterwards."""
     import threading
 
-    c = FeatureCache(max_bytes=int(3 * 10**6), headroom_frac=0.0)
+    c = FeatureCache(max_bytes=int(3 * 10**6))
     errors = []
     start = threading.Barrier(5)
 
