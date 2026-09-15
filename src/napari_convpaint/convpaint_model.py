@@ -619,6 +619,8 @@ class ConvpaintModel:
                 name=fe_name,
                 layers=fe_layers
             )
+            if self._feature_cache is not None:
+                self._feature_cache.clear() # Cached features belong to the old FE
         
         # Set the parameters
         self._param.set(fe_name=fe_name, fe_layers=fe_layers)
@@ -931,24 +933,17 @@ class ConvpaintModel:
         self._feature_cache = FeatureCache(max_bytes=max_bytes, enabled=enabled)
         return self._feature_cache
 
-    def _fe_cache_signature(self, param):
-        """The FE-relevant part of the cache key: parameters whose change
-        invalidates extracted features (reusing the model's own train-reset set),
-        plus image_downsample and the FE's patch size."""
+    def _fe_cache_signature(self):
+        """The FE-relevant part of the cache key: the parameters whose change
+        invalidates extracted features (the model's own train-reset set), taken
+        from the user's params (before FE enforcement, which e.g. moves the
+        JAFAR scalings out of the Param)."""
         def _hashable(v):
-            # fe_scalings / fe_layers are lists (and FE extra state may nest
-            # lists in tuples) -> make them hashable for the key.
+            # fe_scalings / fe_layers are lists -> make them hashable for the key.
             if isinstance(v, (list, tuple)):
                 return tuple(_hashable(x) for x in v)
             return v
-        keys = self._params_to_reset_training
-        sig = tuple((k, _hashable(getattr(param, k, None))) for k in keys)
-        return sig + (("image_downsample", getattr(param, "image_downsample", 1)),
-                      ("patch_size", self.fe_model.get_patch_size()),
-                      # FE instance state outside the Param (e.g. jafar_scalings,
-                      # gaussian sigma) — without it, changing that state would
-                      # serve stale cached features.
-                      ("fe_extra", _hashable(self.fe_model.cache_extra_state())))
+        return tuple((k, _hashable(getattr(self._param, k, None))) for k in self._params_to_reset_training)
 
     @staticmethod
     def _data_hash(d):
@@ -970,7 +965,7 @@ class ConvpaintModel:
         fe = self.fe_model
         if not use_cache or cache is None or not cache.enabled or not fe.supports_feature_cache(param):
             return fe.extract_features_pyramid(d, param, patched=patched, device=device)
-        key = (self._data_hash(d), self._fe_cache_signature(param))
+        key = (self._data_hash(d), self._fe_cache_signature())
         payload = cache.get(key)
         if payload is not None:
             # Hit: reconstruct on `device` (the payload is lifted back to torch

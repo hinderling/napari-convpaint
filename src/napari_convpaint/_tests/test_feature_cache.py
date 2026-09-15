@@ -118,19 +118,14 @@ def test_model_feature_cache_identical_and_reuses():
 
 # --- integration with the model-level cache protocol -----------------------
 
-def test_cache_key_includes_fe_instance_state():
+def test_cache_key_follows_user_params():
+    """The key is built from the user's params (not the FE-enforced ones), so a
+    change of e.g. fe_scalings changes the key even for FEs that enforce their own."""
     from napari_convpaint.convpaint_model import ConvpaintModel
     cp = ConvpaintModel('gaussian')
-    sig_before = cp._fe_cache_signature(cp._param)
-    cp.fe_model.sigma = cp.fe_model.sigma + 1
-    assert cp._fe_cache_signature(cp._param) != sig_before
-    # generic hook: any change in reported extra state must change the key
-    orig = cp.fe_model.cache_extra_state
-    cp.fe_model.cache_extra_state = lambda: ('jafar_scalings', (1, 8))
-    try:
-        assert cp._fe_cache_signature(cp._param) != sig_before
-    finally:
-        cp.fe_model.cache_extra_state = orig
+    sig_before = cp._fe_cache_signature()
+    cp.set_params(fe_scalings=[1, 2])
+    assert cp._fe_cache_signature() != sig_before
 
 
 def test_cached_prediction_bit_identical_and_hits():

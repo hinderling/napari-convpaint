@@ -484,15 +484,6 @@ class FeatureExtractor:
         can return False to opt out."""
         return True
 
-    def cache_extra_state(self):
-        """Extraction-relevant state that lives on the FE instance (rather than
-        in the Param), to be mixed into the feature-cache key. Any FE whose output
-        depends on constructor/instance state (e.g. sigmas, scalings moved out of
-        the Param by `get_enforced_params`) must return it here, or stale cached
-        features will be served after that state changes. Return value must be
-        hashable (or None)."""
-        return None
-
     @staticmethod
     def _native_to_payload(native):
         """Cast a native pyramid (whose feature arrays may be on-device torch
