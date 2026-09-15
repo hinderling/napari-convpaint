@@ -930,7 +930,7 @@ class ConvpaintWidget(QWidget):
         if fc is None:
             self.cache_size_label.setText('Current cache size: 0 MB')
             return
-        s = fc.stats()  # one lock acquisition for all fields
+        s = fc.stats()
         text = f'Current cache size: {s["bytes"] / 1e6:.0f} MB ({s["entries"]} entries)'
         if text != self.cache_size_label.text():
             self.cache_size_label.setText(text)

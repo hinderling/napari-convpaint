@@ -21,8 +21,6 @@ payload.
 """
 from __future__ import annotations
 
-import functools
-import threading
 from collections import OrderedDict
 
 
@@ -45,23 +43,8 @@ def _payload_nbytes(payload) -> int:
     return 0
 
 
-def _locked(method):
-    """Run `method` under the cache's re-entrant lock. The cache is shared
-    across threads (e.g. the napari GUI thread changing limits or clearing
-    while a worker thread is inside get/put), so every public entry point must
-    hold the lock; private helpers are only called from within one."""
-    @functools.wraps(method)
-    def wrapper(self, *args, **kwargs):
-        with self._lock:
-            return method(self, *args, **kwargs)
-    return wrapper
-
-
 class FeatureCache:
     """LRU feature cache bounded by a memory budget.
-
-    Thread-safe: all public methods take a re-entrant lock, so a worker thread
-    can extract/cache while the GUI thread clears the cache or changes limits.
 
     Parameters
     ----------
@@ -72,7 +55,6 @@ class FeatureCache:
     """
 
     def __init__(self, max_bytes: int | None = None, enabled: bool = True):
-        self._lock = threading.RLock()
         self._store: "OrderedDict[tuple, tuple]" = OrderedDict()  # key -> (payload, nbytes)
         self._total_bytes = 0
         self.enabled = bool(enabled)
@@ -89,7 +71,6 @@ class FeatureCache:
 
     # -- public API --------------------------------------------------------
 
-    @_locked
     def get(self, key):
         """Return the cached payload for `key`, or None."""
         if not self.enabled:
@@ -102,7 +83,6 @@ class FeatureCache:
         self.misses += 1
         return None
 
-    @_locked
     def put(self, key, payload, nbytes: int | None = None):
         """Store `payload` under `key` if it fits the budget; else evict LRU and
         retry. A payload that can never fit is not cached (the caller recomputes)."""
@@ -130,21 +110,18 @@ class FeatureCache:
 
     # -- invalidation / limits --------------------------------------------
 
-    @_locked
     def clear(self):
         """Drop all entries. Entries are content-addressed and never go stale;
         clearing only frees memory."""
         self._store.clear()
         self._total_bytes = 0
 
-    @_locked
     def set_max_bytes(self, max_bytes: int):
         """Change the cap in place, evicting LRU entries if over."""
         self._max_bytes = int(max_bytes)
         while self._store and self._total_bytes > self._max_bytes:
             self._evict_one()
 
-    @_locked
     def set_enabled(self, enabled: bool):
         """Enable/disable in place; disabling clears the cache to free space."""
         self.enabled = bool(enabled)
@@ -155,11 +132,9 @@ class FeatureCache:
     def nbytes(self) -> int:
         return self._total_bytes
 
-    @_locked
     def __len__(self):
         return len(self._store)
 
-    @_locked
     def stats(self) -> dict:
         return {
             "entries": len(self._store),

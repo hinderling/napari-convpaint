@@ -157,51 +157,6 @@ def test_cached_prediction_bit_identical_and_hits():
         assert np.array_equal(seg_second, cp2.segment(img))
 
 
-def test_thread_safety_under_concurrent_use():
-    """Hammer the cache from worker threads while the "GUI" thread clears it and
-    changes limits (exactly what the napari widget does during a threaded op).
-    Correctness bar: no exceptions and consistent bookkeeping afterwards."""
-    import threading
-
-    c = FeatureCache(max_bytes=int(3 * 10**6))
-    errors = []
-    start = threading.Barrier(5)
-
-    def worker(tid):
-        try:
-            start.wait()
-            for i in range(200):
-                key = ("img", tid, i % 7)
-                if c.get(key) is None:
-                    c.put(key, _arr(0.1))
-                len(c), c.stats()
-        except Exception as e:  # pragma: no cover - only on regression
-            errors.append(e)
-
-    def gui():
-        try:
-            start.wait()
-            for i in range(100):
-                c.set_max_bytes(int((2 + i % 3) * 10**6))
-                c.stats()
-                if i % 10 == 0:
-                    c.clear()
-        except Exception as e:  # pragma: no cover - only on regression
-            errors.append(e)
-
-    threads = [threading.Thread(target=worker, args=(t,)) for t in range(4)]
-    threads.append(threading.Thread(target=gui))
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
-    assert errors == []
-    # Bookkeeping must be consistent: recompute sizes from the stores.
-    assert c.nbytes == sum(item[1] for item in c._store.values())
-    assert c.nbytes <= c.stats()["max_bytes"]
-
-
 def test_nn_fe_cache_hit_matches_fresh_and_uses_torch_payload():
     """NN FEs keep their native features on-device (torch); the cache payload
     is cast to numpy for storage but remembers it was torch, so hits are
