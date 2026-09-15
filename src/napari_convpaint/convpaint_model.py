@@ -915,7 +915,7 @@ class ConvpaintModel:
 
         return features
 
-### FEATURE CACHE (opt-in; see feature_cache.py)
+### FEATURE CACHE (off unless enable_feature_cache() is called; the widget enables it by default; see feature_cache.py)
 
     def enable_feature_cache(self, enabled=True, max_bytes=None):
         """Turn on whole-image feature caching. When on, the (resolution-
@@ -924,8 +924,9 @@ class ConvpaintModel:
         e.g. re-segmenting while refining scribbles, or the train->predict of one
         image — instead of recomputing them. Cache entries are content-addressed
         (a hash of the prepared image), so it is self-invalidating: a changed
-        image simply misses. Bounded by a RAM budget (``max_bytes``). Off by
-        default (opt-in)."""
+        image simply misses. Bounded by a RAM budget (``max_bytes``, default 2 GB).
+        Off by default in the API (call this method to enable it); the widget
+        enables it by default."""
         from .feature_cache import FeatureCache
         self._feature_cache = FeatureCache(max_bytes=max_bytes, enabled=enabled)
         return self._feature_cache

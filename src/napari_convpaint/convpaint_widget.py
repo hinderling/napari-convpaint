@@ -2405,8 +2405,8 @@ class ConvpaintWidget(QWidget):
         self.features_prefix = 'features' # Prefix for the feature image layer name
         self.cont_training = "Image" # Update features for subsequent training ("Image" or "Off" or "Global")
         self.use_dask = False # Use Dask for parallel processing
-        self.cache_enabled = True # Reuse extracted features when re-segmenting / re-training the same image
-        self.cache_max_mb = 2048 # Max RAM (MB) the feature cache may use (moderate default)
+        self.cache_enabled = True # Feature cache on by default: reuse extracted features when re-segmenting / re-training the same image
+        self.cache_max_mb = 2048 # Max RAM (MB) the feature cache may use (2 GB default)
         self.fe_device = 'auto' # Device to use for the FE (if applicable); 'auto' will use GPU if available, otherwise CPU
         self.clf_device = 'auto' # Device to use for the classifier (if applicable); 'auto' will use GPU if available, otherwise CPU
         self.input_channels = "" # Input channels for the model (as txt, will be parsed)
