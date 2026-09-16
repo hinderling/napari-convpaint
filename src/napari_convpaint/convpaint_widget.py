@@ -2,7 +2,7 @@ from qtpy.QtWidgets import (QWidget, QPushButton,QVBoxLayout,
                             QLabel, QComboBox,QFileDialog, QListWidget,
                             QCheckBox, QAbstractItemView, QGridLayout, QSpinBox, QButtonGroup,
                             QRadioButton,QDoubleSpinBox, QTableWidget, QTableWidgetItem, QHeaderView,
-                            QMessageBox)
+                            QMessageBox, QSizePolicy)
 from qtpy import QtWidgets, QtGui
 from qtpy.QtCore import Qt, QTimer, QUrl
 from magicgui.widgets import create_widget
@@ -21,6 +21,31 @@ from collections import defaultdict
 # import torch
 # from .utils import normalize_image, compute_image_stats, normalize_image_percentile, normalize_image_imagenet, get_fe_device
 # from .convpaint_model import ConvpaintModel
+
+
+class PathLabel(QLabel):
+    """Label showing a path, elided in the middle when too long (full path as tooltip and in text())."""
+
+    def __init__(self, path=''):
+        super().__init__()
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred) # Takes the available width, never forces it
+        self.setText(path)
+
+    def setText(self, path):
+        self._path = path
+        self.setToolTip(path)
+        self._elide()
+
+    def text(self):
+        return getattr(self, '_path', '')
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._elide()
+
+    def _elide(self):
+        super().setText(self.fontMetrics().elidedText(self.text(), Qt.ElideMiddle, self.width()))
+
 
 class ConvpaintWidget(QWidget):
     """
@@ -614,8 +639,7 @@ class ConvpaintWidget(QWidget):
             self.check_use_store = QCheckBox('Store features on disk')
             self.check_use_store.setChecked(self.store_enabled)
             self.advanced_cache_group.glayout.addWidget(self.check_use_store, 5, 0, 1, 3)
-            self.store_folder_label = QtWidgets.QLineEdit(self.store_folder) # Read-only line (a path cannot word-wrap)
-            self.store_folder_label.setReadOnly(True)
+            self.store_folder_label = PathLabel(self.store_folder)
             self.advanced_cache_group.glayout.addWidget(self.store_folder_label, 6, 0, 1, 2)
             self.btn_store_folder = QPushButton('Choose folder')
             self.advanced_cache_group.glayout.addWidget(self.btn_store_folder, 6, 2, 1, 1)
@@ -650,13 +674,12 @@ class ConvpaintWidget(QWidget):
 
             # --- Files group: folder selector + file list
             lbl_folder = QLabel('Folder:')
-            self.multifile_path_edit = QtWidgets.QLineEdit()
-            # Make path read-only; folder is selected via the button only
-            self.multifile_path_edit.setReadOnly(True)
+            self.multifile_path_edit = PathLabel('') # Folder is selected via the button only
             self.multifile_select_btn = QPushButton('Open image folder')
             self.multifile_files_group.glayout.addWidget(lbl_folder, 0, 0, 1, 1)
             self.multifile_files_group.glayout.addWidget(self.multifile_path_edit, 0, 1, 1, 1)
             self.multifile_files_group.glayout.addWidget(self.multifile_select_btn, 0, 2, 1, 1)
+            self.multifile_files_group.glayout.setColumnStretch(1, 1) # The path takes the spare width
 
             self.multifile_list = QTableWidget()
             self.multifile_list.setColumnCount(3)
