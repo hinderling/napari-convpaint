@@ -913,11 +913,12 @@ class ConvpaintWidget(QWidget):
         # /1e6), so the number the user types is exactly the max size displayed.
         max_bytes = int(self.cache_max_mb) * 1_000_000
         fc = self.cp_model._feature_cache
-        if fc is None or recreate:
-            self.cp_model.enable_feature_cache(enabled=self.cache_enabled, max_bytes=max_bytes)
+        if not self.cache_enabled:
+            self.cp_model.disable_feature_cache()
+        elif fc is None or recreate:
+            self.cp_model.enable_feature_cache(max_bytes=max_bytes)
         else:
             fc.set_max_bytes(max_bytes)
-            fc.set_enabled(self.cache_enabled)
         self._refresh_cache_size_label()
 
     def _refresh_cache_size_label(self):

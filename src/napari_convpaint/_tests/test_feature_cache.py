@@ -100,7 +100,7 @@ def test_model_feature_cache_identical_and_reuses():
         m = ConvpaintModel(fe_name="gaussian_features")
         m.set_params(channel_mode="single")
         if enable:
-            m.enable_feature_cache(True)
+            m.enable_feature_cache()
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             m.train(img, annot)

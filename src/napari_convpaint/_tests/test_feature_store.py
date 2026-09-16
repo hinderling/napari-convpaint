@@ -78,3 +78,70 @@ def test_store_refuses_foreign_folder(tmp_path):
         FeatureStore(tmp_path)
     # An empty folder is fine
     FeatureStore(tmp_path / "empty")
+
+
+# --- integration with the model --------------------------------------------
+
+def _stack_and_annot():
+    rng = np.random.RandomState(0)
+    stack = rng.rand(3, 64, 64).astype(np.float32)   # [Z, H, W], single channel
+    annot = np.zeros((3, 64, 64), dtype=np.uint8)
+    annot[1, :10, :10] = 1
+    annot[1, -10:, -10:] = 2
+    return stack, annot
+
+
+def test_model_store_serves_across_instances(tmp_path):
+    """Features extracted with the store on are reused by another model instance with the
+    same folder (no cache), bit-identical; annotation tiles are never stored."""
+    import warnings as _w
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    stack, annot = _stack_and_annot()
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        cp_off = ConvpaintModel('gaussian')
+        cp_off.set_params(tile_annotations=False, normalize=1)
+        cp_off.train(stack, annot)
+        seg_off = cp_off.segment(stack)
+
+        cp1 = ConvpaintModel('gaussian')
+        cp1.set_params(tile_annotations=True, normalize=1)
+        store = cp1.enable_feature_store(tmp_path / "store")
+        cp1.train(stack, annot)                        # annotation tiles -> nothing stored
+        assert len(store) == 0
+        cp1.set_params(tile_annotations=False)
+        cp1.train(stack, annot)                        # the annotated plane is stored
+        assert len(store) == 1
+        seg1 = cp1.segment(stack)                      # 1 plane reused, 2 stored
+        assert len(store) == 3 and store.stats()['hits'] == 1
+
+        cp2 = ConvpaintModel('gaussian')               # a new model (e.g. a new session)
+        cp2.set_params(tile_annotations=False, normalize=1)
+        store2 = cp2.enable_feature_store(tmp_path / "store")
+        cp2.train(stack, annot)
+        seg2 = cp2.segment(stack)
+        assert store2.stats()['hits'] == 4 and store2.stats()['misses'] == 0
+        cp2.disable_feature_store()
+        assert cp2._feature_store is None and len(store2) == 3   # files are kept
+    assert np.array_equal(seg1, seg_off) and np.array_equal(seg2, seg_off)
+
+
+def test_model_cache_and_store_together(tmp_path):
+    """With both enabled, the cache is consulted first and misses are kept in both."""
+    import warnings as _w
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    stack, _ = _stack_and_annot()
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        cp = ConvpaintModel('gaussian')
+        cp.set_params(normalize=1)
+        fc = cp.enable_feature_cache()
+        store = cp.enable_feature_store(tmp_path / "store")
+        f1 = cp.get_feature_image(stack)
+        assert len(fc) == 3 and len(store) == 3
+        f2 = cp.get_feature_image(stack)
+        assert fc.stats()['hits'] == 3 and store.stats()['hits'] == 0
+        cp.disable_feature_cache()
+        f3 = cp.get_feature_image(stack)
+        assert store.stats()['hits'] == 3
+    assert np.array_equal(f1, f2) and np.array_equal(f1, f3)

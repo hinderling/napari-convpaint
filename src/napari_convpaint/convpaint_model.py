@@ -111,6 +111,7 @@ class ConvpaintModel:
         self._fe_locked_device = None
         self._clf_locked_device = None
         self._feature_cache = None  # created by enable_feature_cache
+        self._feature_store = None  # created by enable_feature_store
         self._params_to_reset_training = ['channel_mode',
                                           'normalize',
                                         #   'image_downsample',
@@ -917,21 +918,39 @@ class ConvpaintModel:
 
         return features
     
-### FEATURE REUSE: CACHE (RAM; off unless enable_feature_cache() is called, the widget enables it by default; see feature_cache.py)
+### FEATURE REUSE: CACHE (RAM) AND STORE (DISK)
+# Both are off unless enabled (the widget enables the cache by default); see feature_cache.py and feature_store.py
 
-    def enable_feature_cache(self, enabled=True, max_bytes=None):
-        """Turn on whole-image feature caching. When on, the (resolution-
-        independent) native features of an extracted image are cached and reused
-        the next time the *same* image is processed with the same FE settings —
-        e.g. re-segmenting while refining scribbles, or the train->predict of one
-        image — instead of recomputing them. Cache entries are content-addressed
-        (a hash of the prepared image), so it is self-invalidating: a changed
-        image simply misses. Bounded by a RAM budget (``max_bytes``, default 2 GB).
-        Off by default in the API (call this method to enable it); the widget
-        enables it by default."""
+    def enable_feature_cache(self, max_bytes=None):
+        """Turn on feature caching (in RAM). When on, the native (pre-rescale) features
+        of an extracted plane are cached and reused the next time the *same* plane is
+        processed with the same FE settings — e.g. re-segmenting while refining
+        scribbles, or the train->predict of one image — instead of recomputing them.
+        Entries are content-addressed (a hash of the prepared plane), so the cache is
+        self-invalidating: a changed image simply misses. Bounded by a RAM budget
+        (``max_bytes``, default 2 GB; least recently used entries are dropped).
+        Off by default in the API; the widget enables it by default."""
         from .feature_cache import FeatureCache
-        self._feature_cache = FeatureCache(max_bytes=max_bytes, enabled=enabled)
+        self._feature_cache = FeatureCache(max_bytes=max_bytes)
         return self._feature_cache
+
+    def disable_feature_cache(self):
+        """Turn off feature caching and free the cached features."""
+        self._feature_cache = None
+
+    def enable_feature_store(self, folder):
+        """Turn on the feature store: the native features of every extracted plane are
+        kept as files in ``folder`` (no eviction, also across sessions) and reused like
+        cached ones — e.g. extract the features of a stack or movie once (see
+        store_features), then train and predict from them. Same keys as the cache.
+        The folder must be empty, not yet existing, or a feature store."""
+        from .feature_store import FeatureStore
+        self._feature_store = FeatureStore(folder)
+        return self._feature_store
+
+    def disable_feature_store(self):
+        """Turn off the feature store (the stored files are kept; see FeatureStore.clear)."""
+        self._feature_store = None
 
     def _fe_signature(self):
         """The FE-relevant part of the cache/store key: the parameters whose change
@@ -957,21 +976,27 @@ class ConvpaintModel:
         return h.hexdigest()
 
     def _reuse_enabled(self):
-        """Whether extracted features are reused (cache enabled)."""
-        return self._feature_cache is not None and self._feature_cache.enabled
+        """Whether extracted features are reused (cache or store enabled)."""
+        return self._feature_cache is not None or self._feature_store is not None
 
     def _reuse_payload(self, key):
-        """Get the payload of a plane from the cache, or None."""
-        return self._feature_cache.get(key)
+        """Get the payload of a plane from the cache or the store, or None."""
+        payload = self._feature_cache.get(key) if self._feature_cache is not None else None
+        if payload is None and self._feature_store is not None:
+            payload = self._feature_store.get(key)
+        return payload
 
     def _keep_payload(self, key, payload):
-        """Keep the payload of a plane in the cache."""
-        self._feature_cache.put(key, payload)
+        """Keep the payload of a plane in the cache and/or the store."""
+        if self._feature_cache is not None:
+            self._feature_cache.put(key, payload)
+        if self._feature_store is not None:
+            self._feature_store.put(key, payload)
 
     def _extract_or_reuse_pyramid(self, d, param, patched=True, device=None, skip_cache=False):
         """Extract the feature pyramid for one prepared image [C, Z, H, W], reusing the
-        native features of planes that are already in the feature cache. Without the
-        cache (the default) this is exactly extract_features_pyramid; with it, the
+        native features of planes that are already in the feature cache or store. Without
+        them (the default) this is exactly extract_features_pyramid; with them, the
         output is bit-identical (the pyramid split is exact). Planes are the unit of
         reuse, so stacks, single planes and (flattened) training planes share entries
         (except for FEs with 3D context, whose features are reused per stack as given)."""
