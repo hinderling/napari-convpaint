@@ -210,3 +210,33 @@ def test_widget_store_controls(make_napari_viewer, tmp_path, monkeypatch):
     w.check_use_store.setChecked(False)
     assert w.cp_model._feature_store is None and not w.btn_store_delete.isEnabled()
     assert (tmp_path / 'store' / 'convpaint_feature_store.json').is_file()
+
+
+def test_widget_store_features_of_stack(make_napari_viewer, tmp_path):
+    """The 'Store features' action stores every plane of the selected stack; a following
+    stack prediction only reuses."""
+    from napari_convpaint.convpaint_widget import ConvpaintWidget
+    from napari_convpaint.testing_data import generate_synthetic_square, generate_synthetic_circle_annotation
+    viewer = make_napari_viewer()
+    w = ConvpaintWidget(viewer)
+    w.ensure_init()
+    w.store_folder = str(tmp_path / 'store')
+    w.check_use_store.setChecked(True)
+    fs = w.cp_model._feature_store
+
+    im, _ = generate_synthetic_square(im_dims=(252, 252), square_dims=(70, 70))
+    stack = np.stack([im, im[::-1], im[:, ::-1]])           # 3 different planes [Z, H, W, 3] (RGB)
+    viewer.add_image(stack, rgb=True)
+    w._on_select_layer()                                    # (the changed-signal handler is QTimer-delayed)
+    assert w.cp_model.get_param('channel_mode') == 'rgb'
+    w._on_store_features()
+    assert len(fs) == 3 and fs.stats()['misses'] == 3
+
+    im_annot = generate_synthetic_circle_annotation(im_dims=(252, 252), circle1_xy=(125, 70), circle2_xy=(125, 125))
+    w._on_add_annot_layer()
+    viewer.layers['annotations'].data[0] = im_annot
+    w.check_tile_annotations.setChecked(False)
+    w._on_train()
+    assert len(fs) == 3 and fs.stats()['misses'] == 3, fs.stats()   # training reused the stored plane
+    w._on_predict_all()
+    assert len(fs) == 3 and fs.stats()['misses'] == 3, fs.stats()   # nothing extracted anymore

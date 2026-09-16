@@ -593,6 +593,9 @@ class ConvpaintWidget(QWidget):
             self.btn_store_delete = QPushButton('Delete stored features')
             self.btn_store_delete.setEnabled(self.store_enabled)
             self.advanced_cache_group.glayout.addWidget(self.btn_store_delete, 6, 2, 1, 1)
+            self.btn_store_features = QPushButton('Store features of this image/stack')
+            self.btn_store_features.setEnabled(self.store_enabled)
+            self.advanced_cache_group.glayout.addWidget(self.btn_store_features, 7, 0, 1, 3)
 
         # === MULTIFILE TAB ===
 
@@ -822,6 +825,8 @@ class ConvpaintWidget(QWidget):
                 w.setToolTip('Folder of the feature store (must be empty, not yet existing, or a feature store).')
             self.store_size_label.setToolTip('Number of stored images/planes and their size on disk.')
             self.btn_store_delete.setToolTip('Delete all stored features in the folder (the store stays active).')
+            self.btn_store_features.setToolTip('Extract the features of the selected image (all planes of a stack) into the feature store now,\n' +
+                                               'so that training and prediction can reuse them later.')
 
         if 'Multifile' in self.tab_names:
             self.multifile_select_btn.setToolTip('Select the folder containing the images to segment.\n' +
@@ -888,7 +893,8 @@ class ConvpaintWidget(QWidget):
                       self.text_input_channels, self.btn_switch_axes, self.check_add_seg, self.check_add_probas, self.btn_add_features, self.btn_add_features_stack,
                       self.pca_label, self.text_features_pca, self.kmeans_label, self.text_features_kmeans,
                       self.check_use_cache, self.cache_max_ram_label, self.cache_max_ram_spinbox, self.cache_size_label,
-                      self.check_use_store, self.store_folder_label, self.btn_store_folder, self.store_size_label, self.btn_store_delete]:
+                      self.check_use_store, self.store_folder_label, self.btn_store_folder, self.store_size_label, self.btn_store_delete,
+                      self.btn_store_features]:
                 w.setToolTip('')
 
         if 'Multifile' in self.tab_names:
@@ -982,6 +988,7 @@ class ConvpaintWidget(QWidget):
                 self.check_use_store.blockSignals(False)
                 self.store_enabled = False
         self.btn_store_delete.setEnabled(self.cp_model._feature_store is not None)
+        self.btn_store_features.setEnabled(self.cp_model._feature_store is not None)
         self._refresh_reuse_labels()
 
     def _on_choose_store_folder(self):
@@ -1003,6 +1010,45 @@ class ConvpaintWidget(QWidget):
         if answer == QMessageBox.Yes:
             fs.clear()
             self._refresh_reuse_labels()
+
+    def _on_store_features(self):
+        """Extract the features of the selected image (plane by plane for stacks) into the
+        feature store, so that training and prediction can reuse them."""
+        if self.cp_model._feature_store is None:
+            warnings.warn('No feature store enabled. Features not stored.')
+            return
+        img = self._get_selected_img(check=True)
+        data_dims = self._get_data_dims(img.data, img.ndim) if img is not None else None
+        if data_dims not in self.supported_data_dims:
+            warnings.warn(f'Non-supported image dimensions {data_dims}. Features not stored.')
+            return
+
+        with warnings.catch_warnings():
+            warnings.simplefilter(action="ignore", category=FutureWarning)
+            self.viewer.window._status_bar._toggle_activity_dock(True)
+
+        # Get normalized data (entire stack, and stats prepared given the radio buttons)
+        image_stack_norm = self._get_data_channel_first_norm(img) # Normalize the entire stack
+        in_channels = self._parse_in_channels(self.input_channels)
+        if data_dims in ['2D', '2D_RGB', '3D_multi']: # Single image
+            self.cp_model.store_features(image_stack_norm, in_channels=in_channels, skip_norm=True,
+                                         fe_use_device=self.fe_device)
+        else: # Stack: step through the planes (as prediction does); skip norm as it is done above
+            num_steps = image_stack_norm.shape[-3]
+            for step in progress(range(num_steps)):
+                image = image_stack_norm[..., step, :, :]
+                self.cp_model.store_features(image, in_channels=in_channels, skip_norm=True,
+                                             fe_use_device=self.fe_device)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter(action="ignore", category=FutureWarning)
+            self.viewer.window._status_bar._toggle_activity_dock(False)
+        self._refresh_reuse_labels()
+        # Point out the one setting that decides whether training profits from the store as well
+        if (self.cp_model.get_param('tile_annotations') and not self.auto_seg
+                and not self.cp_model.get_param('tile_image')):
+            show_info("All planes of this image are stored. Training reuses them too, once 'Tile annotations for training' "
+                      "is off (annotation tiles are not stored); with 'Auto segment' on, this happens automatically.")
 
     def _warn_cache_ram(self):
         """Warn if the feature cache limit exceeds half of the currently available RAM."""
@@ -1215,6 +1261,7 @@ class ConvpaintWidget(QWidget):
             self.check_use_store.stateChanged.connect(self._apply_feature_store)
             self.btn_store_folder.clicked.connect(self._on_choose_store_folder)
             self.btn_store_delete.clicked.connect(self._on_delete_stored_features)
+            self.btn_store_features.clicked.connect(self._on_store_features)
 
             self.text_input_channels.textChanged.connect(lambda: setattr(
                 self, 'input_channels', self.text_input_channels.text()))
