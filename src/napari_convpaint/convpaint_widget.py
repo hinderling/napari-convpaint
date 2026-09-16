@@ -2,7 +2,7 @@ from qtpy.QtWidgets import (QWidget, QPushButton,QVBoxLayout,
                             QLabel, QComboBox,QFileDialog, QListWidget,
                             QCheckBox, QAbstractItemView, QGridLayout, QSpinBox, QButtonGroup,
                             QRadioButton,QDoubleSpinBox, QTableWidget, QTableWidgetItem, QHeaderView,
-                            QMessageBox)
+                            QMessageBox, QSizePolicy)
 from qtpy import QtWidgets, QtGui
 from qtpy.QtCore import Qt, QTimer, QUrl
 from magicgui.widgets import create_widget
@@ -407,7 +407,7 @@ class ConvpaintWidget(QWidget):
             self.advanced_input_group = VHGroup('Input', orientation='G')
             self.advanced_output_group = VHGroup('Output', orientation='G')
             self.advanced_unsupervised_group = VHGroup('Unsupervised extraction (without annotations)', orientation='G')
-            self.advanced_cache_group = VHGroup('Feature caching', orientation='G')
+            self.advanced_cache_group = VHGroup('Feature reuse (cache and store)', orientation='G')
 
             # Add groups to the tab
             self.tabs.add_named_tab('Advanced', self.advanced_note_group.gbox)
@@ -557,6 +557,7 @@ class ConvpaintWidget(QWidget):
                 "cached slices are dropped first.")
             cache_note.setStyleSheet(style_for_infos)
             cache_note.setWordWrap(True)
+            cache_note.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed) # Word-wrapped labels must not absorb vertical resizing
             self.advanced_cache_group.glayout.addWidget(cache_note, 0, 0, 1, 3)
 
             # Enable/disable checkbox
@@ -576,6 +577,22 @@ class ConvpaintWidget(QWidget):
             # Current cache size label
             self.cache_size_label = QLabel('Current cache size: 0 MB')
             self.advanced_cache_group.glayout.addWidget(self.cache_size_label, 3, 0, 1, 3)
+
+            # Feature store: enable checkbox, folder (with button to choose), size label, delete button
+            self.check_use_store = QCheckBox('Store features on disk')
+            self.check_use_store.setChecked(self.store_enabled)
+            self.advanced_cache_group.glayout.addWidget(self.check_use_store, 4, 0, 1, 3)
+            self.store_folder_label = QLabel(self.store_folder)
+            self.store_folder_label.setWordWrap(True)
+            self.store_folder_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+            self.advanced_cache_group.glayout.addWidget(self.store_folder_label, 5, 0, 1, 2)
+            self.btn_store_folder = QPushButton('Choose folder')
+            self.advanced_cache_group.glayout.addWidget(self.btn_store_folder, 5, 2, 1, 1)
+            self.store_size_label = QLabel('Stored features: (store off)')
+            self.advanced_cache_group.glayout.addWidget(self.store_size_label, 6, 0, 1, 2)
+            self.btn_store_delete = QPushButton('Delete stored features')
+            self.btn_store_delete.setEnabled(self.store_enabled)
+            self.advanced_cache_group.glayout.addWidget(self.btn_store_delete, 6, 2, 1, 1)
 
         # === MULTIFILE TAB ===
 
@@ -798,6 +815,13 @@ class ConvpaintWidget(QWidget):
             for w in [self.cache_max_ram_label, self.cache_max_ram_spinbox]:
                 w.setToolTip('Maximum memory (RAM) the feature cache may use.\nWhen full, the least recently used features are dropped.')
             self.cache_size_label.setToolTip('Memory currently used by the feature cache (and number of cached images/planes).')
+            self.check_use_store.setToolTip('Keep the extracted features of all processed images/planes (incl. Multifile batches) in the folder below (also across sessions),\n' +
+                                            'so that stacks and movies only need to be extracted once (e.g. for re-predicting after re-training).\n' +
+                                            'Nothing is dropped automatically; use "Delete stored features" to free the disk space.')
+            for w in [self.store_folder_label, self.btn_store_folder]:
+                w.setToolTip('Folder of the feature store (must be empty, not yet existing, or a feature store).')
+            self.store_size_label.setToolTip('Number of stored images/planes and their size on disk.')
+            self.btn_store_delete.setToolTip('Delete all stored features in the folder (the store stays active).')
 
         if 'Multifile' in self.tab_names:
             self.multifile_select_btn.setToolTip('Select the folder containing the images to segment.\n' +
@@ -863,7 +887,8 @@ class ConvpaintWidget(QWidget):
                       self.btn_class_distribution_trained, self.btn_reset_training, self.check_use_dask, self.channels_label,
                       self.text_input_channels, self.btn_switch_axes, self.check_add_seg, self.check_add_probas, self.btn_add_features, self.btn_add_features_stack,
                       self.pca_label, self.text_features_pca, self.kmeans_label, self.text_features_kmeans,
-                      self.check_use_cache, self.cache_max_ram_label, self.cache_max_ram_spinbox, self.cache_size_label]:
+                      self.check_use_cache, self.cache_max_ram_label, self.cache_max_ram_spinbox, self.cache_size_label,
+                      self.check_use_store, self.store_folder_label, self.btn_store_folder, self.store_size_label, self.btn_store_delete]:
                 w.setToolTip('')
 
         if 'Multifile' in self.tab_names:
@@ -922,16 +947,62 @@ class ConvpaintWidget(QWidget):
             self.cp_model.enable_feature_cache(max_bytes=max_bytes)
         else:
             fc.set_max_bytes(max_bytes)
-        self._refresh_cache_size_label()
+        self._refresh_reuse_labels()
 
-    def _refresh_cache_size_label(self):
-        """Show the current size of the feature cache (called after ops that change it)."""
+    def _refresh_reuse_labels(self):
+        """Show the current sizes of the feature cache and store (called after ops that change them)."""
         fc = self.cp_model._feature_cache
         if fc is None:
             self.cache_size_label.setText('Current cache size: 0 MB')
+        else:
+            s = fc.stats()
+            self.cache_size_label.setText(f'Current cache size: {s["bytes"] / 1e6:.0f} MB ({s["entries"]} entries)')
+        self.store_folder_label.setText(self.store_folder)
+        fs = self.cp_model._feature_store
+        if fs is None:
+            self.store_size_label.setText('Stored features: (store off)')
+        else:
+            s = fs.stats()
+            self.store_size_label.setText(f'Stored features: {s["entries"]} planes, {s["bytes"] / 1e6:.0f} MB')
+
+    def _apply_feature_store(self, *args, recreate=False):
+        """Apply the feature store settings from the GUI controls to the active model
+        (see _apply_feature_cache). The store is on when the checkbox is checked, using the
+        chosen folder; unchecking only disconnects it (the stored files are kept)."""
+        self.store_enabled = self.check_use_store.isChecked()
+        if not self.store_enabled:
+            self.cp_model.disable_feature_store()
+        elif self.cp_model._feature_store is None or recreate:
+            try:
+                self.cp_model.enable_feature_store(self.store_folder)
+            except ValueError as e: # Folder not usable (e.g. not empty and not a feature store)
+                warnings.warn(str(e))
+                self.check_use_store.blockSignals(True)
+                self.check_use_store.setChecked(False)
+                self.check_use_store.blockSignals(False)
+                self.store_enabled = False
+        self.btn_store_delete.setEnabled(self.cp_model._feature_store is not None)
+        self._refresh_reuse_labels()
+
+    def _on_choose_store_folder(self):
+        """Let the user choose the folder of the feature store."""
+        folder = QFileDialog.getExistingDirectory(self, 'Choose a folder for the feature store', self.store_folder)
+        if folder:
+            self.store_folder = folder
+            self._apply_feature_store(recreate=True)
+
+    def _on_delete_stored_features(self):
+        """Delete all entries of the feature store (after confirmation); the store stays active."""
+        fs = self.cp_model._feature_store
+        if fs is None:
             return
-        s = fc.stats()
-        self.cache_size_label.setText(f'Current cache size: {s["bytes"] / 1e6:.0f} MB ({s["entries"]} entries)')
+        answer = QMessageBox.question(self, 'Delete stored features',
+                                      f'Delete all stored features in\n{fs.folder} ?\n\n' +
+                                      'The store stays active and the folder is kept.',
+                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer == QMessageBox.Yes:
+            fs.clear()
+            self._refresh_reuse_labels()
 
     def _warn_cache_ram(self):
         """Warn if the feature cache limit exceeds half of the currently available RAM."""
@@ -952,6 +1023,7 @@ class ConvpaintWidget(QWidget):
         import psutil
         self.cache_max_ram_spinbox.setValue(min(self.cache_max_mb, int(psutil.virtual_memory().available / 4e6)))
         self._apply_feature_cache(recreate=True)
+        self._apply_feature_store(recreate=True)
         # Get default parameters to set in widget
         self.default_cp_param = self._cpm_class.get_default_params()
         # Use variables of main model as temp variables for the Models tab, as it is the one model used at that time
@@ -1140,6 +1212,9 @@ class ConvpaintWidget(QWidget):
             self.check_use_cache.stateChanged.connect(self._apply_feature_cache)
             self.cache_max_ram_spinbox.valueChanged.connect(self._apply_feature_cache)
             self.cache_max_ram_spinbox.editingFinished.connect(self._warn_cache_ram)
+            self.check_use_store.stateChanged.connect(self._apply_feature_store)
+            self.btn_store_folder.clicked.connect(self._on_choose_store_folder)
+            self.btn_store_delete.clicked.connect(self._on_delete_stored_features)
 
             self.text_input_channels.textChanged.connect(lambda: setattr(
                 self, 'input_channels', self.text_input_channels.text()))
@@ -1868,7 +1943,7 @@ class ConvpaintWidget(QWidget):
         self.trained = True
         self._reset_predict_buttons()
         self._set_model_description()
-        self._refresh_cache_size_label()
+        self._refresh_reuse_labels()
 
         # Automatically segment the image if the option is activated
         if self.auto_seg:
@@ -1944,7 +2019,7 @@ class ConvpaintWidget(QWidget):
             # Case `data_dims is None` and other invalid cases are already caught above, so we don't need an else statement here
             self.viewer.layers[self.proba_prefix].refresh()
 
-        self._refresh_cache_size_label()
+        self._refresh_reuse_labels()
 
     def _on_get_feature_image(self, event=None):
         """Get the feature image for the currently viewed frame based
@@ -1994,7 +2069,7 @@ class ConvpaintWidget(QWidget):
             self.viewer.layers[self.features_prefix].data[..., step, :, :] = feature_image
         # Case `data_dims is None` and other invalid cases are already caught above, so we don't need an else statement here
         self.viewer.layers[self.features_prefix].refresh()
-        self._refresh_cache_size_label()
+        self._refresh_reuse_labels()
 
     def _on_predict_all(self):
         """Predict the segmentation of all frames based 
@@ -2057,7 +2132,7 @@ class ConvpaintWidget(QWidget):
         with warnings.catch_warnings():
             warnings.simplefilter(action="ignore", category=FutureWarning)
             self.viewer.window._status_bar._toggle_activity_dock(False)
-        self._refresh_cache_size_label()
+        self._refresh_reuse_labels()
 
     def _on_get_feature_image_all(self):
         """Get the feature image for all frames based
@@ -2131,7 +2206,7 @@ class ConvpaintWidget(QWidget):
             with warnings.catch_warnings():
                 warnings.simplefilter(action="ignore", category=FutureWarning)
                 self.viewer.window._status_bar._toggle_activity_dock(False)
-        self._refresh_cache_size_label()
+        self._refresh_reuse_labels()
 
 
     # Load/Save
@@ -2219,6 +2294,7 @@ class ConvpaintWidget(QWidget):
         # Load the model (Note: done after updating GUI, since GUI updates might reset clf or change model)
         self.cp_model = new_model
         self._apply_feature_cache(recreate=True)
+        self._apply_feature_store(recreate=True)
         self.cp_model._param = new_param
         temp_fe_model = self._cpm_class.create_fe(new_param.fe_name)
         self.temp_fe_description = temp_fe_model.get_description()
@@ -2395,6 +2471,9 @@ class ConvpaintWidget(QWidget):
         self.cache_enabled = True # Feature cache on by default: reuse extracted features when re-segmenting / re-training the same image
         self.cache_max_mb = 2048 # Max RAM (MB) the feature cache may use (2 GB default, clamped at startup to a quarter of the available RAM)
         self.untile_info_shown = False # Whether the user was informed that auto-segment with caching skips annotation tiles
+        self.store_enabled = False # Feature store off by default (on = keep the features of all processed planes on disk)
+        import appdirs
+        self.store_folder = str(Path(appdirs.user_cache_dir('convpaint')) / 'feature_store') # Default folder of the feature store
         self.fe_device = 'auto' # Device to use for the FE (if applicable); 'auto' will use GPU if available, otherwise CPU
         self.clf_device = 'auto' # Device to use for the classifier (if applicable); 'auto' will use GPU if available, otherwise CPU
         self.input_channels = "" # Input channels for the model (as txt, will be parsed)
@@ -2589,6 +2668,7 @@ class ConvpaintWidget(QWidget):
         # Create a new model with the new FE
         self.cp_model = self._cpm_class(param=new_param)
         self._apply_feature_cache(recreate=True)
+        self._apply_feature_store(recreate=True)
         self._reset_device_options()
         self._reset_clf() # Call to take all actions needed after resetting the clf
         # Reset the features for continuous training

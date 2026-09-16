@@ -57,9 +57,11 @@ class FeatureStore:
     def _entry_dir(self, key):
         return os.path.join(self.folder, self._entry_name(key))
 
-    def _entry_dirs(self):
-        return [os.path.join(self.folder, n) for n in os.listdir(self.folder)
-                if os.path.isdir(os.path.join(self.folder, n))]
+    def _entry_dirs(self, include_tmp=False):
+        """Folders of the entries (sub-folders with a meta file; optionally also leftover .tmp folders)."""
+        dirs = [os.path.join(self.folder, n) for n in os.listdir(self.folder)]
+        return [d for d in dirs if os.path.isfile(os.path.join(d, _META))
+                or (include_tmp and d.endswith('.tmp') and os.path.isdir(d))]
 
     # -- public API ---------------------------------------------------------
 
@@ -110,12 +112,12 @@ class FeatureStore:
         os.rename(tmp_dir, entry_dir)
 
     def clear(self):
-        """Delete all entries (keeps the folder and its marker)."""
-        for d in self._entry_dirs():
+        """Delete all entries (keeps the folder, its marker and anything that is not an entry)."""
+        for d in self._entry_dirs(include_tmp=True):
             shutil.rmtree(d, ignore_errors=True)
 
     def __len__(self):
-        return sum(os.path.isfile(os.path.join(d, _META)) for d in self._entry_dirs())
+        return len(self._entry_dirs())
 
     @property
     def nbytes(self):

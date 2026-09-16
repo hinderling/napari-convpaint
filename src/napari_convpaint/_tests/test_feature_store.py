@@ -172,3 +172,41 @@ def test_store_features_prepares_a_stack(tmp_path):
         seg = cp.segment(stack)
         assert store.stats()['misses'] == 3            # no extraction anymore
     assert np.array_equal(seg, seg_off)
+
+
+# --- widget ------------------------------------------------------------------
+
+def test_widget_store_controls(make_napari_viewer, tmp_path, monkeypatch):
+    """Checkbox connects/disconnects the store on the model; train+predict fill it;
+    delete (confirmed) empties it but keeps it active; unchecking keeps the files."""
+    from qtpy.QtWidgets import QMessageBox
+    from napari_convpaint.convpaint_widget import ConvpaintWidget
+    from napari_convpaint.testing_data import generate_synthetic_square, generate_synthetic_circle_annotation
+    viewer = make_napari_viewer()
+    w = ConvpaintWidget(viewer)
+    w.ensure_init()
+    assert w.cp_model._feature_store is None and not w.check_use_store.isChecked()
+    assert w.store_folder.endswith('feature_store')            # default folder in the user cache dir
+
+    w.store_folder = str(tmp_path / 'store')
+    w.check_use_store.setChecked(True)
+    fs = w.cp_model._feature_store
+    assert fs is not None and fs.folder == w.store_folder and w.btn_store_delete.isEnabled()
+
+    im, _ = generate_synthetic_square(im_dims=(252, 252), square_dims=(70, 70))
+    im_annot = generate_synthetic_circle_annotation(im_dims=(252, 252), circle1_xy=(125, 70), circle2_xy=(125, 125))
+    viewer.add_image(im)
+    w._on_add_annot_layer()
+    viewer.layers['annotations'].data[...] = im_annot
+    w.cp_model.set_params(channel_mode='rgb')
+    w._on_train()
+    w._on_predict()
+    assert len(fs) >= 1 and 'Stored features: 1 planes' in w.store_size_label.text()
+
+    monkeypatch.setattr(QMessageBox, 'question', lambda *a, **k: QMessageBox.Yes)
+    w._on_delete_stored_features()
+    assert len(fs) == 0 and w.cp_model._feature_store is fs   # emptied, still active
+
+    w.check_use_store.setChecked(False)
+    assert w.cp_model._feature_store is None and not w.btn_store_delete.isEnabled()
+    assert (tmp_path / 'store' / 'convpaint_feature_store.json').is_file()
