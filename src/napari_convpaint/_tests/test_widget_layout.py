@@ -10,12 +10,16 @@ def test_widget_opens_on_home_tab_and_tabs_scroll(make_napari_viewer, qtbot):
         widget.ensure_init()
     widget.show()
     qtbot.waitExposed(widget)
-    # A fresh widget must open on the first (Home) tab — the scroll-wrap
-    # remove/insert dance moves the current index around during construction.
+    # A fresh widget opens on the first (Home) tab
     assert widget.tabs.currentIndex() == 0
-    # Every tab is wrapped in a scroll area so content can't be cut off.
+    # Every tab is wrapped in a scroll area (napari-guitils TabSet, scrollable=True), so that
+    # content can't be cut off; tabs.widget(i) unwraps it to the page
+    from qtpy.QtWidgets import QTabWidget
     for i in range(widget.tabs.count()):
-        assert isinstance(widget.tabs.widget(i), QScrollArea), widget.tabs.tab_names[i]
+        assert isinstance(QTabWidget.widget(widget.tabs, i), QScrollArea), widget.tabs.tab_names[i]
+        assert widget.tabs.widget(i).layout() is not None
+    # The widget has a width floor, so the dock does not open too narrow
+    assert widget.minimumWidth() >= 300
 
 
 def test_output_layers_do_not_steal_selection(make_napari_viewer):

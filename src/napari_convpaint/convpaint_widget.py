@@ -74,7 +74,7 @@ class ConvpaintWidget(QWidget):
         self.tab_names += ['Advanced']
         self.tab_names += ['Multifile']
         tab_layouts = [None if name not in ['Models', 'Multifile'] else QGridLayout() for name in self.tab_names]
-        self.tabs = TabSet(self.tab_names, tab_layouts=tab_layouts) # [None, None, QGridLayout()])
+        self.tabs = TabSet(self.tab_names, tab_layouts=tab_layouts, scrollable=True) # Scrollable, so that nothing is cut off on small screens
         # Left-aligned tabs; scroll buttons let the bar collapse gracefully
         # when the dock is narrow.
         tab_bar = self.tabs.tabBar()
@@ -606,9 +606,8 @@ class ConvpaintWidget(QWidget):
             self.check_use_store = QCheckBox('Store features on disk')
             self.check_use_store.setChecked(self.store_enabled)
             self.advanced_cache_group.glayout.addWidget(self.check_use_store, 4, 0, 1, 3)
-            self.store_folder_label = QLabel(self.store_folder)
-            self.store_folder_label.setWordWrap(True)
-            self.store_folder_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+            self.store_folder_label = QtWidgets.QLineEdit(self.store_folder) # Read-only line (a path cannot word-wrap)
+            self.store_folder_label.setReadOnly(True)
             self.advanced_cache_group.glayout.addWidget(self.store_folder_label, 5, 0, 1, 2)
             self.btn_store_folder = QPushButton('Choose folder')
             self.advanced_cache_group.glayout.addWidget(self.btn_store_folder, 5, 2, 1, 1)
@@ -761,14 +760,11 @@ class ConvpaintWidget(QWidget):
             self.classes_layout.setVerticalSpacing(4)
             self.classes_layout.setHorizontalSpacing(4)
 
-        # === Make all tabs scrollable ===
-        # All tab content is added by now — wrap every tab in a scroll area so
-        # nothing can be cut off on small screens.
-        for tab_name in self.tab_names:
-            self._make_tab_scrollable(tab_name)
-        # The remove/insert dance above moves the current-tab index around;
-        # make sure a fresh widget always opens on the first (Home) tab.
-        self.tabs.setCurrentIndex(0)
+        # === Width floor ===
+        # The scroll areas do not impose a minimum width, so set one from the widest tab's content
+        # (otherwise the dock may open too narrow); the tabs scroll vertically only
+        widest = max(self.tabs.widget(i).minimumSizeHint().width() for i in range(self.tabs.count()))
+        self.setMinimumWidth(widest + 2 * 6 + 20) # + outer margins + scrollbar
 
         # === Show tooltips by default ===
 
@@ -1006,28 +1002,6 @@ class ConvpaintWidget(QWidget):
         if not hasattr(self, "_cpm_class"):
             from .convpaint_model import ConvpaintModel
             self._cpm_class = ConvpaintModel
-
-    def _make_tab_scrollable(self, tab_name):
-        """Wrap a tab's content in a scroll area so it cannot be cut off on
-        small screens. Must be called AFTER everything has been added to the
-        tab (add_named_tab resolves the tab's widget by index, which becomes
-        the scroll area after wrapping)."""
-        idx = self.tabs.tab_names.index(tab_name)
-        content = self.tabs.widget(idx)
-        # Detach the page BEFORE handing it to the scroll area: setWidget()
-        # reparents it, which would already remove it from the tab widget and
-        # shift the indices under removeTab().
-        self.tabs.removeTab(idx)
-        scroll = QtWidgets.QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
-        # No width floor: the dock may be made thinner than any tab's content
-        # (the widest tab must not dictate the plugin's minimum width). A tab
-        # whose content doesn't fit gets a horizontal scrollbar on demand
-        # instead of clipping.
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll.setWidget(content)
-        self.tabs.insertTab(idx, scroll, tab_name)
 
     def _apply_feature_cache(self, *args, recreate=False):
         """Apply the caching settings from the GUI controls to the active model
