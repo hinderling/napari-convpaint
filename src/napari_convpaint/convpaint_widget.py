@@ -2,7 +2,7 @@ from qtpy.QtWidgets import (QWidget, QPushButton,QVBoxLayout,
                             QLabel, QComboBox,QFileDialog, QListWidget,
                             QCheckBox, QAbstractItemView, QGridLayout, QSpinBox, QButtonGroup,
                             QRadioButton,QDoubleSpinBox, QTableWidget, QTableWidgetItem, QHeaderView,
-                            QMessageBox, QSizePolicy)
+                            QMessageBox)
 from qtpy import QtWidgets, QtGui
 from qtpy.QtCore import Qt, QTimer, QUrl
 from magicgui.widgets import create_widget
@@ -422,10 +422,12 @@ class ConvpaintWidget(QWidget):
             # Create the class names
             self._create_default_class_names()
 
-            # Add the widget to the tab
+            # Add the widget to the tab, in a group box like the other tabs
             self.classes_layout.setColumnStretch(1, 1)
             self.classes_layout.setColumnStretch(5, 1)
-            self.tabs.add_named_tab('Classes', self.classes_widget)
+            self.classes_group = VHGroup('Classes', orientation='G')
+            self.classes_group.glayout.addWidget(self.classes_widget, 0, 0, 1, 1)
+            self.tabs.add_named_tab('Classes', self.classes_group.gbox)
 
         # === ADVANCED TAB ===
 
@@ -476,7 +478,7 @@ class ConvpaintWidget(QWidget):
             self.advanced_labels_group.glayout.addWidget(self.check_keep_layers, 1, 1, 1, 1)
 
             # Checkbox for auto-selecting annotations layers
-            self.check_auto_select_annot = QCheckBox('Auto-select annot. layer')
+            self.check_auto_select_annot = QCheckBox('Auto select annot. layer')
             self.check_auto_select_annot.setChecked(self.auto_select_annot)
             self.advanced_labels_group.glayout.addWidget(self.check_auto_select_annot, 2, 0, 1, 2)
 
@@ -585,7 +587,6 @@ class ConvpaintWidget(QWidget):
                 "cached slices are dropped first.")
             cache_note.setStyleSheet(style_for_infos)
             cache_note.setWordWrap(True)
-            cache_note.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed) # Word-wrapped labels must not absorb vertical resizing
             self.advanced_cache_group.glayout.addWidget(cache_note, 0, 0, 1, 3)
 
             # Enable/disable checkbox
@@ -749,12 +750,6 @@ class ConvpaintWidget(QWidget):
         if hasattr(self, 'classes_layout'):
             self.classes_layout.setVerticalSpacing(4)
             self.classes_layout.setHorizontalSpacing(4)
-
-        # === Width floor ===
-        # The scroll areas do not impose a minimum width, so set one from the widest tab's content
-        # (otherwise the dock may open too narrow); the tabs scroll vertically only
-        widest = max(self.tabs.widget(i).minimumSizeHint().width() for i in range(self.tabs.count()))
-        self.setMinimumWidth(widest + 2 * 6 + 20) # + outer margins + scrollbar
 
         # === Show tooltips by default ===
 
@@ -971,6 +966,7 @@ class ConvpaintWidget(QWidget):
     def showEvent(self, event):
         """Override the showEvent to populate the model defaults and set up connections AFTER the GUI is shown."""
         super().showEvent(event)
+        QTimer.singleShot(0, self._set_width_floor) # (Every time shown: the sizes are only final once styled)
 
         # Run only once
         if hasattr(self, "_post_init_done") and self._post_init_done:
@@ -980,6 +976,18 @@ class ConvpaintWidget(QWidget):
 
         # Defer slightly to let Qt finish rendering
         QTimer.singleShot(0, self._late_init)
+
+    def _set_width_floor(self):
+        """Set the minimum width of the widget from the widest tab's content (the scroll areas do not impose
+        one, and the dock could open or be resized too narrow). Called once shown, when napari's styling is
+        applied and the sizes are final; the tabs scroll vertically only."""
+        from qtpy.QtWidgets import QTabWidget
+        scroll_area = QTabWidget.widget(self.tabs, self.tabs.currentIndex())
+        scrollbar = scroll_area.verticalScrollBar()
+        # Everything around a tab's viewport (margins, frames, the vertical scrollbar), measured
+        chrome = self.width() - scroll_area.viewport().width() + (0 if scrollbar.isVisible() else scrollbar.sizeHint().width())
+        widest = max(self.tabs.widget(i).minimumSizeHint().width() for i in range(self.tabs.count()))
+        self.setMinimumWidth(widest + chrome)
 
     def ensure_init(self):
         """Run deferred model initialization synchronously if it hasn't run yet.

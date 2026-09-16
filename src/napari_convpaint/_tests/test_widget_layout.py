@@ -18,8 +18,13 @@ def test_widget_opens_on_home_tab_and_tabs_scroll(make_napari_viewer, qtbot):
     for i in range(widget.tabs.count()):
         assert isinstance(QTabWidget.widget(widget.tabs, i), QScrollArea), widget.tabs.tab_names[i]
         assert widget.tabs.widget(i).layout() is not None
-    # The widget has a width floor, so the dock does not open too narrow
-    assert widget.minimumWidth() >= 300
+    # The widget has a width floor (set once shown), so the dock does not open too narrow and no
+    # tab's content is wider than the scroll area's viewport
+    qtbot.waitUntil(lambda: widget.minimumWidth() >= 300)
+    from qtpy.QtWidgets import QTabWidget
+    for i in range(widget.tabs.count()):
+        page_min = widget.tabs.widget(i).minimumSizeHint().width()
+        assert widget.minimumWidth() >= page_min + QTabWidget.widget(widget.tabs, i).verticalScrollBar().sizeHint().width()
 
 
 def test_output_layers_do_not_steal_selection(make_napari_viewer):
