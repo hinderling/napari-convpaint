@@ -917,7 +917,7 @@ class ConvpaintModel:
 
         return features
     
-### FEATURE CACHE (off unless enable_feature_cache() is called; the widget enables it by default; see feature_cache.py)
+### FEATURE REUSE: CACHE (RAM; off unless enable_feature_cache() is called, the widget enables it by default; see feature_cache.py)
 
     def enable_feature_cache(self, enabled=True, max_bytes=None):
         """Turn on whole-image feature caching. When on, the (resolution-
@@ -933,8 +933,8 @@ class ConvpaintModel:
         self._feature_cache = FeatureCache(max_bytes=max_bytes, enabled=enabled)
         return self._feature_cache
 
-    def _fe_cache_signature(self):
-        """The FE-relevant part of the cache key: the parameters whose change
+    def _fe_signature(self):
+        """The FE-relevant part of the cache/store key: the parameters whose change
         invalidates extracted features (the model's own train-reset set), taken
         from the user's params (before FE enforcement, which e.g. moves the
         JAFAR scalings out of the Param)."""
@@ -946,9 +946,9 @@ class ConvpaintModel:
         return tuple((k, _hashable(getattr(self._param, k, None))) for k in self._params_to_reset_training)
 
     @staticmethod
-    def _data_hash(d):
-        """Content hash of a prepared image tile, so train/predict of the same
-        pixels share a cache entry without threading an id through the pipeline."""
+    def _data_signature(d):
+        """Content hash of a prepared plane (or tile), so train/predict of the same
+        pixels share a cache/store entry without threading an id through the pipeline."""
         import hashlib
         arr = np.ascontiguousarray(d)
         h = hashlib.blake2b(arr.view(np.uint8), digest_size=16)
@@ -956,29 +956,49 @@ class ConvpaintModel:
         h.update(str(arr.dtype).encode())
         return h.hexdigest()
 
-    def _extract_pyramid_cached(self, d, param, patched=True, device=None, skip_cache=False):
-        """Extract the feature pyramid for one image, consulting the feature
-        cache. Behaviour with the cache disabled (the default) is exactly
-        extract_features_pyramid; enabled, it caches/reuses the native features
-        (bit-identical output, since the pyramid split is exact)."""
-        cache = self._feature_cache
+    def _reuse_enabled(self):
+        """Whether extracted features are reused (cache enabled)."""
+        return self._feature_cache is not None and self._feature_cache.enabled
+
+    def _reuse_payload(self, key):
+        """Get the payload of a plane from the cache, or None."""
+        return self._feature_cache.get(key)
+
+    def _keep_payload(self, key, payload):
+        """Keep the payload of a plane in the cache."""
+        self._feature_cache.put(key, payload)
+
+    def _extract_or_reuse_pyramid(self, d, param, patched=True, device=None, skip_cache=False):
+        """Extract the feature pyramid for one prepared image [C, Z, H, W], reusing the
+        native features of planes that are already in the feature cache. Without the
+        cache (the default) this is exactly extract_features_pyramid; with it, the
+        output is bit-identical (the pyramid split is exact). Planes are the unit of
+        reuse, so stacks, single planes and (flattened) training planes share entries."""
         fe = self.fe_model
-        if skip_cache or cache is None or not cache.enabled or not fe.supports_feature_cache(param):
+        if skip_cache or not self._reuse_enabled() or not fe.supports_feature_cache(param):
             return fe.extract_features_pyramid(d, param, patched=patched, device=device)
-        key = (self._data_hash(d), self._fe_cache_signature())
-        payload = cache.get(key)
-        if payload is not None:
-            # Hit: reconstruct on `device` (the payload is lifted back to torch
-            # if that is the FE's native form) — same backend as a fresh
-            # extraction, so hits are as fast as (and identical to) misses.
-            return fe.features_from_cacheable(payload, d.shape, param,
-                                              patched=patched, device=device)
-        # Miss: one extraction pass yields both the features (reconstructed
-        # from the on-device native form) and the numpy payload to store.
-        features, payload = fe.cacheable_repr_and_features(d, param, device,
-                                                           patched=patched)
-        cache.put(key, payload)
-        return features
+        fe_sig = self._fe_signature()
+        keys = [(self._data_signature(d[:, z:z+1]), fe_sig) for z in range(d.shape[1])]
+        payloads = [self._reuse_payload(key) for key in keys]
+        missing = [z for z, payload in enumerate(payloads) if payload is None]
+        if not missing:
+            # All planes reused: reconstruct on `device` (the payload is lifted back to torch if that
+            # is the FE's native form), i.e. with the same backend as a fresh extraction
+            payload = payloads[0] if len(payloads) == 1 else fe.join_payload_planes(payloads)
+            return fe.features_from_cacheable(payload, d.shape, param, patched=patched, device=device)
+        if len(missing) == len(keys) == 1:
+            # Single plane, not reusable: one extraction pass yields both the features
+            # (reconstructed from the on-device native form) and the payload to keep
+            features, payload = fe.cacheable_repr_and_features(d, param, device, patched=patched)
+            self._keep_payload(keys[0], payload)
+            return features
+        # Stack with missing planes: extract those in one (batched) pass, keep them plane by plane,
+        # and reconstruct the whole stack from the per-plane payloads
+        _, payload = fe.cacheable_repr_and_features(d[:, missing], param, device, patched=patched, features=False)
+        for z, plane_payload in zip(missing, fe.split_payload_planes(payload)):
+            payloads[z] = plane_payload
+            self._keep_payload(keys[z], plane_payload)
+        return fe.features_from_cacheable(fe.join_payload_planes(payloads), d.shape, param, patched=patched, device=device)
 
 ### BACKEND METHOD FOR FEATURE EXTRACTION
 
@@ -1192,7 +1212,7 @@ class ConvpaintModel:
         # Annotation tiles are cut around the (new) annotations, so they never repeat and
         # cannot serve a prediction -> do not cache them (only whole planes / prediction tiles)
         skip_cache = use_annots and params_for_extract.tile_annotations
-        features = [self._extract_pyramid_cached(
+        features = [self._extract_or_reuse_pyramid(
                 d,
                 params_for_extract,
                 patched=keep_patched,

@@ -123,9 +123,9 @@ def test_cache_key_follows_user_params():
     change of e.g. fe_scalings changes the key even for FEs that enforce their own."""
     from napari_convpaint.convpaint_model import ConvpaintModel
     cp = ConvpaintModel('gaussian')
-    sig_before = cp._fe_cache_signature()
+    sig_before = cp._fe_signature()
     cp.set_params(fe_scalings=[1, 2])
-    assert cp._fe_cache_signature() != sig_before
+    assert cp._fe_signature() != sig_before
 
 
 def test_cached_prediction_bit_identical_and_hits():
@@ -225,3 +225,36 @@ def test_annotation_tiles_are_not_cached():
         cp.train(img, annot)
         assert fc.stats()['hits'] > hits_before  # untiled training hits the plane entry
         assert len(fc) == 1
+
+
+def test_planes_are_the_unit_of_reuse():
+    """A stack, its single planes and (flattened) training planes share per-plane entries,
+    and results are bit-identical with and without the cache."""
+    import warnings as _w
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    rng = np.random.RandomState(0)
+    stack = rng.rand(3, 64, 64).astype(np.float32)   # [Z, H, W], single channel
+    annot = np.zeros((3, 64, 64), dtype=np.uint8)
+    annot[1, :10, :10] = 1
+    annot[1, -10:, -10:] = 2
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        # (no normalization, so that a plane is prepared identically alone and within its stack)
+        cp_off = ConvpaintModel('gaussian')
+        cp_off.set_params(tile_annotations=False, normalize=1)
+        cp_off.train(stack, annot)
+        seg_off = cp_off.segment(stack)
+
+        cp = ConvpaintModel('gaussian')
+        cp.set_params(tile_annotations=False, normalize=1)
+        fc = cp.enable_feature_cache(max_bytes=64 * 1024 * 1024)
+        cp.train(stack, annot)                         # extracts (and keeps) the annotated plane only
+        assert len(fc) == 1
+        seg1 = cp.segment(stack)                       # 1 plane reused, 2 extracted and kept
+        assert len(fc) == 3 and fc.stats()['hits'] == 1
+        seg2 = cp.segment(stack)                       # all planes reused
+        assert fc.stats()['hits'] == 4
+        seg_plane = cp.segment(stack[2])               # a single plane of the stack is reused too
+        assert fc.stats()['hits'] == 5 and len(fc) == 3
+    assert np.array_equal(seg1, seg_off) and np.array_equal(seg2, seg_off)
+    assert np.array_equal(seg_plane, seg_off[2])

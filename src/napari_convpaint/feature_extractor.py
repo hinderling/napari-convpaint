@@ -478,14 +478,41 @@ class FeatureExtractor:
                   for features, pre_shape, red_shape in native]
         return {"scales": scales, "was_torch": was_torch}
 
-    def cacheable_repr_and_features(self, data, param, device=torch.device("cpu"), patched=True):
+    def cacheable_repr_and_features(self, data, param, device=torch.device("cpu"), patched=True, features=True):
         """Compute the features AND the cache payload in one extraction pass (the cache's miss path).
         Extension point for FEs with a custom payload (override together with features_from_cacheable).
-        The reconstruction runs from the on-device native form; only the stored payload is cast to CPU numpy."""
+        The reconstruction runs from the on-device native form; only the stored payload is cast to CPU numpy.
+        With features=False, only the payload is computed (features are returned as None)."""
         native = self._pyramid_native(data, param, device)
         payload = self._native_to_payload(native)
-        features = self._pyramid_reconstruct(native, data.shape, param, patched)
+        features = self._pyramid_reconstruct(native, data.shape, param, patched) if features else None
         return features, payload
+
+    @staticmethod
+    def split_payload_planes(payload):
+        """Split the cache payload of a stack into one payload per plane (along Z)."""
+        num_planes = payload["scales"][0][0][0].shape[1]
+        planes = []
+        for z in range(num_planes):
+            scales = [([np.ascontiguousarray(a[:, z:z+1]) for a in arrays],
+                       (pre_shape[0], 1) + tuple(pre_shape[2:]),
+                       (reduced_shape[0], 1) + tuple(reduced_shape[2:]))
+                      for arrays, pre_shape, reduced_shape in payload["scales"]]
+            planes.append({"scales": scales, "was_torch": payload["was_torch"]})
+        return planes
+
+    @staticmethod
+    def join_payload_planes(payloads):
+        """Join per-plane payloads (see split_payload_planes) into the payload of the stack."""
+        num_planes = len(payloads)
+        scales = []
+        for i, (arrays, pre_shape, reduced_shape) in enumerate(payloads[0]["scales"]):
+            joined = [np.concatenate([p["scales"][i][0][j] for p in payloads], axis=1)
+                      for j in range(len(arrays))]
+            scales.append((joined,
+                           (pre_shape[0], num_planes) + tuple(pre_shape[2:]),
+                           (reduced_shape[0], num_planes) + tuple(reduced_shape[2:])))
+        return {"scales": scales, "was_torch": payloads[0]["was_torch"]}
 
     def features_from_cacheable(self, payload, data_shape, param, patched=True, device=None):
         """Reconstruct the features from a cached payload (the cache's hit path).
