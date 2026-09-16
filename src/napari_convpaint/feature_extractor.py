@@ -28,6 +28,7 @@ class FeatureExtractor:
         self.has_global_context = False # Whether the FE contains operators that inject global (whole-input) context into per-pixel features 
         # e.g. AdaptiveAvgPool2d inside SE blocks (EfficientNet), attention across all patches (ViT-like), etc
         # For such FEs, tile_annotations / tile_image cannot match whole-image features at any finite padding
+        self.has_3d_context = False # Whether the features of a plane depend on neighbouring planes (true 3D FE); such features are reused per stack, not per plane
         self.tile_block_size = None # If not None, this block size is used for tiling the image at segmentation
         self.num_input_channels = [1]
         self.features_per_layer = None # Set by Hookmodel; if None, fe_use_min_features warns and uses all features
@@ -216,6 +217,14 @@ class FeatureExtractor:
         the entire input. Default False.
         """
         return self.has_global_context
+
+    def get_has_3d_context(self):
+        """
+        True if the features of a plane depend on neighbouring planes (a true 3D FE,
+        e.g. 3x3x3 kernels). Features of such FEs are reused (cache/store) per stack
+        as passed in, never per plane. Default False.
+        """
+        return self.has_3d_context
 
     def get_num_input_channels(self):
         """

@@ -973,12 +973,17 @@ class ConvpaintModel:
         native features of planes that are already in the feature cache. Without the
         cache (the default) this is exactly extract_features_pyramid; with it, the
         output is bit-identical (the pyramid split is exact). Planes are the unit of
-        reuse, so stacks, single planes and (flattened) training planes share entries."""
+        reuse, so stacks, single planes and (flattened) training planes share entries
+        (except for FEs with 3D context, whose features are reused per stack as given)."""
         fe = self.fe_model
         if skip_cache or not self._reuse_enabled() or not fe.supports_feature_cache(param):
             return fe.extract_features_pyramid(d, param, patched=patched, device=device)
         fe_sig = self._fe_signature()
-        keys = [(self._data_signature(d[:, z:z+1]), fe_sig) for z in range(d.shape[1])]
+        if fe.get_has_3d_context():
+            planes = [d] # Planes are not independent -> the whole stack is the unit of reuse
+        else:
+            planes = [d[:, z:z+1] for z in range(d.shape[1])]
+        keys = [(self._data_signature(plane), fe_sig) for plane in planes]
         payloads = [self._reuse_payload(key) for key in keys]
         missing = [z for z, payload in enumerate(payloads) if payload is None]
         if not missing:
@@ -987,8 +992,8 @@ class ConvpaintModel:
             payload = payloads[0] if len(payloads) == 1 else fe.join_payload_planes(payloads)
             return fe.features_from_cacheable(payload, d.shape, param, patched=patched, device=device)
         if len(missing) == len(keys) == 1:
-            # Single plane, not reusable: one extraction pass yields both the features
-            # (reconstructed from the on-device native form) and the payload to keep
+            # Single unit (plane, or stack of a 3D FE), not reusable: one extraction pass yields
+            # both the features (reconstructed from the on-device native form) and the payload to keep
             features, payload = fe.cacheable_repr_and_features(d, param, device, patched=patched)
             self._keep_payload(keys[0], payload)
             return features

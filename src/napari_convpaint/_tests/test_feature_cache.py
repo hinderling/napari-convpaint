@@ -258,3 +258,24 @@ def test_planes_are_the_unit_of_reuse():
         assert fc.stats()['hits'] == 5 and len(fc) == 3
     assert np.array_equal(seg1, seg_off) and np.array_equal(seg2, seg_off)
     assert np.array_equal(seg_plane, seg_off[2])
+
+
+def test_3d_context_fe_is_reused_per_stack():
+    """For an FE with 3D context, the whole stack (as passed) is the unit of reuse."""
+    import warnings as _w
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    rng = np.random.RandomState(0)
+    stack = rng.rand(3, 64, 64).astype(np.float32)
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        cp = ConvpaintModel('gaussian')
+        cp.set_params(normalize=1)
+        cp.fe_model.has_3d_context = True
+        fc = cp.enable_feature_cache(max_bytes=64 * 1024 * 1024)
+        f1 = cp.get_feature_image(stack)
+        assert len(fc) == 1                            # one entry for the stack, not three
+        f2 = cp.get_feature_image(stack)
+        assert fc.stats()['hits'] == 1
+        cp.get_feature_image(stack[1])                 # a single plane is another unit
+        assert fc.stats()['hits'] == 1 and len(fc) == 2
+    assert np.array_equal(f1, f2)
