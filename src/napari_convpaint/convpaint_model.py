@@ -952,6 +952,44 @@ class ConvpaintModel:
         """Turn off the feature store (the stored files are kept; see FeatureStore.clear)."""
         self._feature_store = None
 
+    def store_features(self, image, in_channels=None, skip_norm=False, fe_use_device=None):
+        """
+        Extracts the features of an image (stack) plane by plane and keeps them in the feature
+        store (and in the cache, if enabled), without training or predicting: prepare a stack or
+        movie once (e.g. before annotating), so that train and predict reuse the features afterwards.
+        Requires the feature store to be enabled (see enable_feature_store).
+
+        The image is prepared exactly as for prediction (same handling of in_channels and skip_norm),
+        so the stored planes match later predictions of the same image (except with tile_image,
+        where prediction extracts tiles instead of whole planes).
+
+        Parameters
+        ----------
+        image : np.ndarray or list[np.ndarray]
+            Image (stack) to store the features of, or list of images
+        in_channels : list[int], optional
+            List of channels to use
+        skip_norm : bool, optional
+            Whether to skip normalization of the image (e.g. if already normalized)
+        fe_use_device : str, optional
+            Device policy for feature extractor ("auto", "gpu", "cpu")
+        """
+        if self._feature_store is None:
+            raise ValueError('No feature store enabled (see enable_feature_store).')
+        # Prepare the data as in _predict (dimensions, channels, normalization of the whole image)
+        data, _ = self._prep_dims(image)
+        if in_channels is not None:
+            self._check_in_channels(data, in_channels)
+            data = [d[in_channels] for d in data]
+        if not skip_norm:
+            data = [self._norm_single_image(d) for d in data]
+        # Extract plane by plane (bounded memory); FEs with 3D context need the whole stack
+        for d in data:
+            units = [d] if self.fe_model.get_has_3d_context() else [d[:, z:z+1] for z in range(d.shape[1])]
+            for unit in units:
+                self._get_features(unit, restore_input_form=False, in_channels=None, skip_norm=True,
+                                   use_device=fe_use_device)
+
     def _fe_signature(self):
         """The FE-relevant part of the cache/store key: the parameters whose change
         invalidates extracted features (the model's own train-reset set), taken

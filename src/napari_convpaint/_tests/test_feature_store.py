@@ -145,3 +145,30 @@ def test_model_cache_and_store_together(tmp_path):
         f3 = cp.get_feature_image(stack)
         assert store.stats()['hits'] == 3
     assert np.array_equal(f1, f2) and np.array_equal(f1, f3)
+
+
+def test_store_features_prepares_a_stack(tmp_path):
+    """store_features fills the store plane by plane; train and predict then only reuse."""
+    import warnings as _w
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    stack, annot = _stack_and_annot()
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        cp_off = ConvpaintModel('gaussian')
+        cp_off.set_params(tile_annotations=False)
+        cp_off.train(stack, annot)
+        seg_off = cp_off.segment(stack)
+
+        cp = ConvpaintModel('gaussian')
+        cp.set_params(tile_annotations=False)          # default normalization (over the stack)
+        store = cp.enable_feature_store(tmp_path / "store")
+        with pytest.raises(ValueError):
+            ConvpaintModel('gaussian').store_features(stack)   # no store enabled
+        cp.store_features(stack)
+        assert len(store) == 3 and store.stats()['misses'] == 3
+        cp.store_features(stack)                       # already stored -> nothing new
+        assert len(store) == 3 and store.stats()['hits'] == 3
+        cp.train(stack, annot)
+        seg = cp.segment(stack)
+        assert store.stats()['misses'] == 3            # no extraction anymore
+    assert np.array_equal(seg, seg_off)
