@@ -1462,23 +1462,17 @@ class ConvpaintWidget(QWidget):
         # Re-add the buttons below the class names
         self._place_class_buttons(len(self.class_names))
 
+    def _theme_colors(self):
+        """Colors of the active napari theme (hex), for stylesheets that must follow dark/light switches."""
+        from napari.utils.theme import get_theme
+        theme = get_theme(self.viewer.theme)
+        return {name: getattr(theme, name).as_hex() for name in ('background', 'foreground', 'current', 'text')}
+
     def _style_tabs(self, event=None):
-        """(Re-)apply the tab-bar style with the active theme's colors as SOLID
-        fills — napari's own tab rule paints a vertical gradient, which clashes
-        with the joined segmented-control look. Connected to viewer.events.theme
-        so dark <-> light switches restyle."""
-        def _hex(color):
-            as_hex = getattr(color, 'as_hex', None)
-            return as_hex() if callable(as_hex) else str(color)
-        try:
-            from napari.utils.theme import get_theme
-            theme = get_theme(self.viewer.theme)
-            if isinstance(theme, dict):
-                fg, cur = _hex(theme['foreground']), _hex(theme['current'])
-            else:
-                fg, cur = _hex(theme.foreground), _hex(theme.current)
-        except Exception:
-            fg, cur = '#414851', '#0f6285'  # napari dark
+        """(Re-)apply the tab-bar style with the active theme's colors as solid fills (napari's own
+        tab rule paints a gradient, which clashes with the joined look). Connected to viewer.events.theme."""
+        colors = self._theme_colors()
+        fg, cur = colors['foreground'], colors['current']
         self.tabs.setStyleSheet(
             "QTabWidget::pane { border: 0; margin: 0; padding: 0; } "
             "QTabWidget::tab-bar { alignment: left; } "
@@ -1494,23 +1488,10 @@ class ConvpaintWidget(QWidget):
             "QTabBar::tab:only-one { border-radius: 4px; }")
 
     def _style_multifile_list(self, event=None):
-        """(Re-)apply the active napari theme's colors to the multifile list.
-        Palette roles can't be used: napari themes via stylesheet only, so the
-        Qt palette keeps the platform's light look (a Win95-style bevel).
-        Connected to viewer.events.theme so dark <-> light switches restyle."""
-        def _hex(color):
-            as_hex = getattr(color, 'as_hex', None)
-            return as_hex() if callable(as_hex) else str(color)
-        try:
-            from napari.utils.theme import get_theme
-            theme = get_theme(self.viewer.theme)
-            if isinstance(theme, dict):
-                bg, fg, txt = (_hex(theme['background']), _hex(theme['foreground']),
-                               _hex(theme['text']))
-            else:
-                bg, fg, txt = _hex(theme.background), _hex(theme.foreground), _hex(theme.text)
-        except Exception:
-            bg, fg, txt = '#262930', '#414851', '#f0f1f2'  # napari dark
+        """(Re-)apply the active napari theme's colors to the multifile list (flat header and frame;
+        the Qt palette cannot be used, since napari themes via stylesheet only). Connected to viewer.events.theme."""
+        colors = self._theme_colors()
+        bg, fg, txt = colors['background'], colors['foreground'], colors['text']
         self.multifile_list.setStyleSheet(
             f"QHeaderView::section {{ background-color: {fg}; color: {txt};"
             f" border: none; border-right: 1px solid {bg}; padding: 3px 6px; }}"
