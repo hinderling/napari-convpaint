@@ -440,7 +440,7 @@ class ConvpaintWidget(QWidget):
             self.advanced_unsupervised_group = VHGroup('Unsupervised extraction (without annotations)', orientation='G')
             self.advanced_cache_group = VHGroup('Feature reuse (cache and store)', orientation='G')
 
-            # Add groups to the tab (the 'Performance' group is added below)
+            # Add groups to the tab
             self.tabs.add_named_tab('Advanced', self.advanced_note_group.gbox)
             self.tabs.add_named_tab('Advanced', self.advanced_labels_group.gbox)
             self.tabs.add_named_tab('Advanced', self.advanced_training_group.gbox)
