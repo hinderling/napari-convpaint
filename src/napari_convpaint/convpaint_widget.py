@@ -716,7 +716,9 @@ class ConvpaintWidget(QWidget):
         self.segment_btn.setToolTip('Segment 2D image or current slice/frame of 3D image/movie.')
         self.segment_all_btn.setToolTip('Segment all slices/frames of 3D image/movie.')
         self.check_tile_annotations.setToolTip('Crop around annotated regions to speed up training.\n' +
-                                               'Disable for models that extract long range features (e.g. DINO).')
+                                               'Disable for models that extract long range features (e.g. DINO).\n' +
+                                               'Skipped when training with auto-segment and feature caching on\n' +
+                                               '(the whole plane is extracted, since the prediction needs it anyway).')
         self.check_tile_image.setToolTip('Tile image to reduce memory usage.\n' +
                                          'Use with care when using models that extract long range features (e.g. DINO).')
         # Do not toggle device dropdown, as we want to show tooltips dynamically and permanently
@@ -791,7 +793,8 @@ class ConvpaintWidget(QWidget):
             for w in [self.kmeans_label, self.text_features_kmeans]:
                 w.setToolTip('Number of Kmeans clusters to use for the features image.\nSet to 0 to disable Kmeans.')
             self.check_use_cache.setToolTip('Keep the extracted features of recently processed images in memory,\n' +
-                                            'so that re-training or re-segmenting the same image does not extract them again.')
+                                            'so that re-training or re-segmenting the same image does not extract them again.\n' +
+                                            'Features of annotation tiles (see "Tile annotations") are not kept, since predictions cannot reuse them.')
             for w in [self.cache_max_ram_label, self.cache_max_ram_spinbox]:
                 w.setToolTip('Maximum memory (RAM) the feature cache may use.\nWhen full, the least recently used features are dropped.')
             self.cache_size_label.setToolTip('Memory currently used by the feature cache (and number of cached images/planes).')
@@ -1834,14 +1837,17 @@ class ConvpaintWidget(QWidget):
             pbr.set_description(f"Training")
             img_name = self._get_selected_img().name
             in_channels = self._parse_in_channels(self.input_channels)
-            # With auto-segment and the feature cache on, train on the whole plane(s) instead of annotation
-            # tiles (unless the image is tiled for prediction): the prediction needs the whole plane anyway,
-            # so one extraction serves both (annotation tiles are never cached)
-            fc = self.cp_model._feature_cache
-            untile = (self.auto_seg and fc is not None and fc.enabled
+            # With auto-segment and feature reuse (cache/store) on, train on the whole plane(s) instead of
+            # annotation tiles (unless the image is tiled for prediction): the prediction needs the whole
+            # plane anyway, so one extraction serves both (annotation tiles are never cached/stored)
+            untile = (self.auto_seg and self.cp_model._reuse_enabled()
                       and self.cp_model.get_param('tile_annotations') and not self.cp_model.get_param('tile_image'))
             if untile:
                 self.cp_model.set_param('tile_annotations', False, ignore_warnings=True)
+                if not self.untile_info_shown: # Inform once per session
+                    show_info('Auto-segment with feature caching: training extracts the whole plane (no annotation tiles), '
+                              'so that the prediction can reuse the features.')
+                    self.untile_info_shown = True
             # Train the model with the current image and annotations; skip normalization as it is done in the widget
             # (as in prediction, so train and predict hash identical data and share feature-cache entries)
             try:
@@ -2388,6 +2394,7 @@ class ConvpaintWidget(QWidget):
         self.use_dask = False # Use Dask for parallel processing
         self.cache_enabled = True # Feature cache on by default: reuse extracted features when re-segmenting / re-training the same image
         self.cache_max_mb = 2048 # Max RAM (MB) the feature cache may use (2 GB default, clamped at startup to a quarter of the available RAM)
+        self.untile_info_shown = False # Whether the user was informed that auto-segment with caching skips annotation tiles
         self.fe_device = 'auto' # Device to use for the FE (if applicable); 'auto' will use GPU if available, otherwise CPU
         self.clf_device = 'auto' # Device to use for the classifier (if applicable); 'auto' will use GPU if available, otherwise CPU
         self.input_channels = "" # Input channels for the model (as txt, will be parsed)
