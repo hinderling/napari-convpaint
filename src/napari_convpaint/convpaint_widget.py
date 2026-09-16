@@ -607,23 +607,26 @@ class ConvpaintWidget(QWidget):
             self.cache_size_label = QLabel('Current cache size: 0 MB')
             self.advanced_cache_group.glayout.addWidget(self.cache_size_label, 3, 0, 1, 3)
 
+            # --- dashed divider between the cache and the store parts ---
+            self.advanced_cache_group.glayout.addWidget(self._dashed_divider(), 4, 0, 1, 3)
+
             # Feature store: enable checkbox, folder (with button to choose), size label, delete button
             self.check_use_store = QCheckBox('Store features on disk')
             self.check_use_store.setChecked(self.store_enabled)
-            self.advanced_cache_group.glayout.addWidget(self.check_use_store, 4, 0, 1, 3)
+            self.advanced_cache_group.glayout.addWidget(self.check_use_store, 5, 0, 1, 3)
             self.store_folder_label = QtWidgets.QLineEdit(self.store_folder) # Read-only line (a path cannot word-wrap)
             self.store_folder_label.setReadOnly(True)
-            self.advanced_cache_group.glayout.addWidget(self.store_folder_label, 5, 0, 1, 2)
+            self.advanced_cache_group.glayout.addWidget(self.store_folder_label, 6, 0, 1, 2)
             self.btn_store_folder = QPushButton('Choose folder')
-            self.advanced_cache_group.glayout.addWidget(self.btn_store_folder, 5, 2, 1, 1)
+            self.advanced_cache_group.glayout.addWidget(self.btn_store_folder, 6, 2, 1, 1)
             self.store_size_label = QLabel('Stored features: (store off)')
-            self.advanced_cache_group.glayout.addWidget(self.store_size_label, 6, 0, 1, 2)
+            self.advanced_cache_group.glayout.addWidget(self.store_size_label, 7, 0, 1, 2)
             self.btn_store_delete = QPushButton('Delete stored features')
             self.btn_store_delete.setEnabled(self.store_enabled)
-            self.advanced_cache_group.glayout.addWidget(self.btn_store_delete, 6, 2, 1, 1)
+            self.advanced_cache_group.glayout.addWidget(self.btn_store_delete, 7, 2, 1, 1)
             self.btn_store_features = QPushButton('Store features of this image/stack')
             self.btn_store_features.setEnabled(self.store_enabled)
-            self.advanced_cache_group.glayout.addWidget(self.btn_store_features, 7, 0, 1, 3)
+            self.advanced_cache_group.glayout.addWidget(self.btn_store_features, 8, 0, 1, 3)
 
         # === MULTIFILE TAB ===
 
