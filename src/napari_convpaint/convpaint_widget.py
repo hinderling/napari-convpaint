@@ -262,7 +262,11 @@ class ConvpaintWidget(QWidget):
         # "Tile image" checkbox
         self.check_tile_image = QCheckBox('Tile image for segmentation')
         self.check_tile_image.setChecked(False)
-        self.acceleration_group.glayout.addWidget(self.check_tile_image, 1,0,1,2)
+        self.acceleration_group.glayout.addWidget(self.check_tile_image, 1,0,1,1)
+        # "Use Dask" checkbox (applies to the tiled segmentation only, hence next to it)
+        self.check_use_dask = QCheckBox('Use Dask')
+        self.check_use_dask.setChecked(self.use_dask)
+        self.acceleration_group.glayout.addWidget(self.check_use_dask, 1,1,1,1)
         # Use Device/GPU dropdown
         self.device_options_default = ['auto', 'gpu', 'cpu']
         self.device_options_gpu_only_clf = ['auto', 'gpu (only classifier)', 'cpu']
@@ -620,20 +624,6 @@ class ConvpaintWidget(QWidget):
             self.btn_store_features.setEnabled(self.store_enabled)
             self.advanced_cache_group.glayout.addWidget(self.btn_store_features, 7, 0, 1, 3)
 
-            # --- dashed divider between the caching and Dask parts ---
-            self.advanced_cache_group.glayout.addWidget(self._dashed_divider(), 8, 0, 1, 3)
-
-            # Dask option (applies to tiled segmentation)
-            dask_note = QLabel(
-                "Distribute the tiles of a tiled segmentation to parallel Dask "
-                "workers (only applies when 'Tile for segmentation' is enabled).")
-            dask_note.setStyleSheet(style_for_infos)
-            dask_note.setWordWrap(True)
-            self.advanced_cache_group.glayout.addWidget(dask_note, 9, 0, 1, 3)
-            self.check_use_dask = QCheckBox('Use Dask')
-            self.check_use_dask.setChecked(self.use_dask)
-            self.advanced_cache_group.glayout.addWidget(self.check_use_dask, 10, 0, 1, 3)
-
         # === MULTIFILE TAB ===
 
         if 'Multifile' in self.tab_names:
@@ -810,6 +800,8 @@ class ConvpaintWidget(QWidget):
                                                '(the whole plane is extracted, since the prediction needs it anyway).')
         self.check_tile_image.setToolTip('Tile image to reduce memory usage.\n' +
                                          'Use with care when using models that extract long range features (e.g. DINO).')
+        self.check_use_dask.setToolTip('Distribute the tiles of a tiled segmentation to parallel Dask workers\n' +
+                                       '(only applies with "Tile image for segmentation").')
         # Do not toggle device dropdown, as we want to show tooltips dynamically and permanently
         # for w in [self.device_label, self.device_dropdown]:
         #     w.setToolTip('Select device policy for feature extraction and classifier.')
@@ -868,7 +860,6 @@ class ConvpaintWidget(QWidget):
             # self.check_cont_training.setToolTip('Save and use combined features in memory for training')
             self.btn_class_distribution_trained.setToolTip('Show a diagram of the class distribution in the data saved in the model for training.')
             self.btn_reset_training.setToolTip('Clear training history and restart training counter.')
-            self.check_use_dask.setToolTip('Use Dask when using the option "Tile for segmentation".')
             for w in [self.channels_label, self.text_input_channels]:
                 w.setToolTip('Comma-separated list of channels to use for training and segmentation.\n' +
                              'Leave empty to use all channels.')
@@ -930,7 +921,7 @@ class ConvpaintWidget(QWidget):
                   self.add_layers_btn, self.radio_single_channel, self.radio_multi_channel, self.radio_rgb,
                   self.radio_no_normalize, self.radio_normalize_over_stack, self.radio_normalize_by_image,
                   self.train_classifier_btn, self.check_auto_seg, self.segment_btn, self.segment_all_btn,
-                  self.check_tile_annotations, self.check_tile_image, self.device_label, #self.device_dropdown,
+                  self.check_tile_annotations, self.check_tile_image, self.check_use_dask, self.device_label, #self.device_dropdown,
                   self.downsample_label, self.spin_downsample, self.smoothen_label, self.spin_smoothen]:
             w.setToolTip('')
 
@@ -958,7 +949,7 @@ class ConvpaintWidget(QWidget):
                       self.check_keep_layers, self.btn_add_all_annot_layers,
                       self.check_auto_select_annot, # 	self.text_annot_prefix,
                       self.btn_train_on_selected, self.radio_img_training, self.radio_global_training, self.radio_single_training, # self.check_cont_training,
-                      self.btn_class_distribution_trained, self.btn_reset_training, self.check_use_dask, self.channels_label,
+                      self.btn_class_distribution_trained, self.btn_reset_training, self.channels_label,
                       self.text_input_channels, self.btn_switch_axes, self.check_add_seg, self.check_add_probas, self.btn_add_features, self.btn_add_features_stack,
                       self.pca_label, self.text_features_pca, self.kmeans_label, self.text_features_kmeans,
                       self.check_use_cache, self.cache_max_ram_label, self.cache_max_ram_spinbox, self.cache_size_label,
@@ -1249,6 +1240,8 @@ class ConvpaintWidget(QWidget):
             self.cp_model.set_param('tile_annotations', self.check_tile_annotations.isChecked(), ignore_warnings=True))
         self.check_tile_image.stateChanged.connect(lambda:
             self.cp_model.set_param('tile_image', self.check_tile_image.isChecked(), ignore_warnings=True))
+        self.check_use_dask.stateChanged.connect(lambda: setattr(
+            self, 'use_dask', self.check_use_dask.isChecked()))
 
         # === MODELS TAB ===
 
@@ -1319,9 +1312,6 @@ class ConvpaintWidget(QWidget):
             #     self, 'cont_training', self.check_cont_training.isChecked()))
             self.btn_class_distribution_trained.clicked.connect(lambda: self._on_show_class_distribution(trained_data=True))
             self.btn_reset_training.clicked.connect(self._reset_train_features)
-
-            self.check_use_dask.stateChanged.connect(lambda: setattr(
-                self, 'use_dask', self.check_use_dask.isChecked()))
 
             # Both cache controls apply the full settings set in one go.
             self.check_use_cache.stateChanged.connect(self._apply_feature_cache)
