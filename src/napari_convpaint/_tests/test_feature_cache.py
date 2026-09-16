@@ -11,7 +11,7 @@ def _arr(mb):
 
 
 def test_hit_and_miss():
-    c = FeatureCache(max_bytes=100 * 10**6, headroom_frac=0.0)
+    c = FeatureCache(max_bytes=100 * 10**6)
     assert c.get(("img", 0, "sig")) is None
     payload = _arr(1)
     c.put(("img", 0, "sig"), payload)
@@ -23,7 +23,7 @@ def test_hit_and_miss():
 
 def test_lru_eviction_by_cap():
     # Cap ~2.5 MB; each entry ~1 MB -> at most 2 fit, oldest evicted.
-    c = FeatureCache(max_bytes=int(2.5 * 10**6), headroom_frac=0.0)
+    c = FeatureCache(max_bytes=int(2.5 * 10**6))
     c.put(("a",), _arr(1))
     c.put(("b",), _arr(1))
     assert len(c) == 2
@@ -35,7 +35,7 @@ def test_lru_eviction_by_cap():
 
 
 def test_lru_touch_on_get_protects_entry():
-    c = FeatureCache(max_bytes=int(2.5 * 10**6), headroom_frac=0.0)
+    c = FeatureCache(max_bytes=int(2.5 * 10**6))
     c.put(("a",), _arr(1))
     c.put(("b",), _arr(1))
     assert c.get(("a",)) is not None  # touch "a" -> now "b" is LRU
@@ -45,14 +45,14 @@ def test_lru_touch_on_get_protects_entry():
 
 
 def test_single_oversize_payload_is_not_cached():
-    c = FeatureCache(max_bytes=1 * 10**6, headroom_frac=0.0)
+    c = FeatureCache(max_bytes=1 * 10**6)
     c.put(("big",), _arr(5))  # 5 MB into a 1 MB cap -> skipped, not cached
     assert len(c) == 0
     assert c.get(("big",)) is None
 
 
 def test_overwrite_updates_size():
-    c = FeatureCache(max_bytes=100 * 10**6, headroom_frac=0.0)
+    c = FeatureCache(max_bytes=100 * 10**6)
     c.put(("k",), _arr(1))
     b0 = c.nbytes
     c.put(("k",), _arr(3))  # replace with a bigger payload
@@ -61,7 +61,7 @@ def test_overwrite_updates_size():
 
 
 def test_clear():
-    c = FeatureCache(max_bytes=100 * 10**6, headroom_frac=0.0)
+    c = FeatureCache(max_bytes=100 * 10**6)
     c.put(("a",), _arr(1))
     c.put(("b",), _arr(1))
     c.clear()
@@ -70,14 +70,14 @@ def test_clear():
 
 
 def test_disabled_cache_is_noop():
-    c = FeatureCache(max_bytes=100 * 10**6, headroom_frac=0.0, enabled=False)
+    c = FeatureCache(max_bytes=100 * 10**6, enabled=False)
     c.put(("a",), _arr(1))
     assert c.get(("a",)) is None
     assert len(c) == 0
 
 
 def test_list_payload_size_accounted():
-    c = FeatureCache(max_bytes=int(2.5 * 10**6), headroom_frac=0.0)
+    c = FeatureCache(max_bytes=int(2.5 * 10**6))
     c.put(("a",), [_arr(1), _arr(1)])  # ~2 MB as a list of arrays
     assert len(c) == 1
     c.put(("b",), _arr(1))  # pushes over 2.5 MB -> evicts "a"
@@ -100,7 +100,7 @@ def test_model_feature_cache_identical_and_reuses():
         m = ConvpaintModel(fe_name="gaussian_features")
         m.set_params(channel_mode="single")
         if enable:
-            m.enable_feature_cache(True)
+            m.enable_feature_cache()
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             m.train(img, annot)
@@ -116,111 +116,16 @@ def test_model_feature_cache_identical_and_reuses():
     assert m_on._feature_cache.stats()["hits"] >= 1
 
 
-def test_disk_spillover_serves_ram_evicted_entries():
-    """RAM-evicted entries spill to disk and are served from there (bit-identical)."""
-    c = FeatureCache(max_bytes=int(2.5 * 10**6), headroom_frac=0.0,
-                     disk_max_bytes=100 * 10**6)
-    a = _arr(1); b = _arr(1); d = _arr(1)
-    c.put(("a",), a); c.put(("b",), b)  # RAM full (2 entries)
-    c.put(("c",), d)  # evicts "a" from RAM -> spills to disk
-    assert len(c) == 2 and c.stats()["disk_entries"] == 1
-    got = c.get(("a",))  # RAM miss -> disk hit
-    assert got is not None and np.array_equal(got, a)  # round-trips bit-identical
-    assert c.stats()["disk_hits"] == 1
-
-
-def test_disk_lru_eviction_and_total_miss():
-    c = FeatureCache(max_bytes=int(1.5 * 10**6), headroom_frac=0.0,
-                     disk_max_bytes=int(1.5 * 10**6))  # RAM holds 1, disk holds 1
-    c.put(("a",), _arr(1)); c.put(("b",), _arr(1))  # a -> disk, b in RAM
-    c.put(("c",), _arr(1))  # b -> disk (evicts a from disk), c in RAM
-    assert c.get(("a",)) is None      # a fell off disk entirely -> recompute
-    assert c.get(("b",)) is not None  # b on disk
-    assert c.get(("c",)) is not None  # c in RAM
-
-
-def test_disk_disabled_by_default():
-    c = FeatureCache(max_bytes=int(1.5 * 10**6), headroom_frac=0.0)  # no disk
-    c.put(("a",), _arr(1)); c.put(("b",), _arr(1))  # a evicted, dropped (no disk)
-    assert c.get(("a",)) is None and c.stats()["disk_entries"] == 0
-
-
-def test_clear_removes_disk_tier_and_tempdir():
-    import os
-    c = FeatureCache(max_bytes=int(1.5 * 10**6), headroom_frac=0.0,
-                     disk_max_bytes=100 * 10**6)
-    c.put(("a",), _arr(1)); c.put(("b",), _arr(1))  # a on disk
-    disk_dir = c._disk_dir
-    assert disk_dir is not None and os.path.isdir(disk_dir)
-    c.clear()
-    assert c.stats()["disk_entries"] == 0 and c.disk_nbytes == 0
-    c.close()
-    assert not os.path.isdir(disk_dir)  # temp dir removed
-
-
-def test_disk_bytes_never_exceeds_cap():
-    """Stress: many puts must never push the disk tier over its byte cap."""
-    cap = int(3.5 * 10**6)  # ~3 entries of 1 MB
-    c = FeatureCache(max_bytes=int(1.5 * 10**6), headroom_frac=0.0, disk_max_bytes=cap)
-    for i in range(20):
-        c.put((i,), _arr(1))
-        assert c.disk_nbytes <= cap  # invariant holds after every put
-    c.close()
-
-
 # --- integration with the model-level cache protocol -----------------------
 
-def test_oversized_payload_goes_to_disk_tier():
-    from napari_convpaint.feature_cache import FeatureCache
-    c = FeatureCache(max_bytes=1024 * 1024, headroom_frac=0.0,
-                     disk_max_bytes=64 * 1024 * 1024)
-    try:
-        payload = np.zeros(2 * 1024 * 1024, dtype=np.uint8)  # 2 MB > 1 MB RAM cap
-        c.put(('big',), payload)
-        assert len(c) == 0
-        assert c.stats()['disk_entries'] == 1
-        got = c.get(('big',))
-        assert got is not None and got.nbytes == payload.nbytes
-    finally:
-        c.close()
-
-
-def test_spill_ok_false_never_touches_disk():
-    from napari_convpaint.feature_cache import FeatureCache
-    c = FeatureCache(max_bytes=1024 * 1024, headroom_frac=0.0,
-                     disk_max_bytes=64 * 1024 * 1024)
-    try:
-        c.put(('a',), np.zeros(600 * 1024, dtype=np.uint8), spill_ok=False)
-        c.put(('b',), np.zeros(600 * 1024, dtype=np.uint8))  # evicts 'a' -> dropped
-        assert c.stats()['disk_entries'] == 0
-        assert c.get(('a',)) is None
-        c.put(('huge',), np.zeros(2 * 1024 * 1024, dtype=np.uint8), spill_ok=False)
-        assert c.get(('huge',)) is None
-        assert c.stats()['disk_entries'] == 0
-    finally:
-        c.close()
-
-
-def test_hookmodel_opts_out_of_disk_spill():
-    from napari_convpaint.feature_extractor import FeatureExtractor
-    assert FeatureExtractor.cache_spill_to_disk(object()) is True
-    from napari_convpaint.feature_extractors.nnlayers import Hookmodel
-    assert Hookmodel.cache_spill_to_disk(object()) is False
-
-
-def test_cache_key_includes_fe_instance_state():
+def test_cache_key_follows_user_params():
+    """The key is built from the user's params (not the FE-enforced ones), so a
+    change of e.g. fe_scalings changes the key even for FEs that enforce their own."""
     from napari_convpaint.convpaint_model import ConvpaintModel
     cp = ConvpaintModel('gaussian')
-    sig_before = cp._fe_cache_signature(cp._param)
-    cp.fe_model.sigma = cp.fe_model.sigma + 1
-    assert cp._fe_cache_signature(cp._param) != sig_before
-    # generic hook: any change in reported extra state must change the key
-    orig = cp.fe_model.cache_extra_state
-    cp.fe_model.cache_extra_state = lambda: ('jafar_scalings', (1, 8))
-    try:
-        assert cp._fe_cache_signature(cp._param) != sig_before
-    finally:
-        cp.fe_model.cache_extra_state = orig
+    sig_before = cp._fe_signature()
+    cp.set_params(fe_scalings=[1, 2])
+    assert cp._fe_signature() != sig_before
 
 
 def test_cached_prediction_bit_identical_and_hits():
@@ -241,62 +146,10 @@ def test_cached_prediction_bit_identical_and_hits():
         seg_second = cp.segment(img)
         assert fc.stats()['hits'] > hits_before          # second pass hits
         assert np.array_equal(seg_first, seg_second)
-        # peek semantics
-        assert cp._predict(rng.rand(1, 96, 96).astype(np.float32), cache_only=True) is None
-        assert cp._predict(img, cache_only=True) is not None
         # uncached model produces the identical segmentation
         cp2 = ConvpaintModel('gaussian')
         cp2.train(img, annot)
         assert np.array_equal(seg_second, cp2.segment(img))
-
-
-def test_thread_safety_under_concurrent_use():
-    """Hammer the cache from worker threads while the "GUI" thread clears it and
-    changes limits (exactly what the napari widget does during a threaded op).
-    Correctness bar: no exceptions and consistent bookkeeping afterwards."""
-    import threading
-
-    c = FeatureCache(max_bytes=int(3 * 10**6), headroom_frac=0.0,
-                     disk_max_bytes=int(5 * 10**6))
-    errors = []
-    start = threading.Barrier(5)
-
-    def worker(tid):
-        try:
-            start.wait()
-            for i in range(200):
-                key = ("img", tid, i % 7)
-                if c.get(key) is None:
-                    c.put(key, _arr(0.1))
-                len(c), c.stats()
-        except Exception as e:  # pragma: no cover - only on regression
-            errors.append(e)
-
-    def gui():
-        try:
-            start.wait()
-            for i in range(100):
-                c.set_max_bytes(int((2 + i % 3) * 10**6))
-                c.set_disk_max_bytes(int((i % 2) * 5 * 10**6))
-                c.stats()
-                if i % 10 == 0:
-                    c.clear()
-        except Exception as e:  # pragma: no cover - only on regression
-            errors.append(e)
-
-    threads = [threading.Thread(target=worker, args=(t,)) for t in range(4)]
-    threads.append(threading.Thread(target=gui))
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
-    assert errors == []
-    # Bookkeeping must be consistent: recompute sizes from the stores.
-    assert c.nbytes == sum(item[1] for item in c._store.values())
-    assert c.disk_nbytes == sum(item[1] for item in c._disk_store.values())
-    assert c.nbytes <= c.stats()["max_bytes"]
-    c.close()
 
 
 def test_nn_fe_cache_hit_matches_fresh_and_uses_torch_payload():
@@ -345,3 +198,84 @@ def test_numpy_fe_payload_stays_numpy_and_identical():
     assert np.array_equal(feat_miss, feat_hit)
     payload = next(iter(fc._store.values()))[0]
     assert payload['was_torch'] is False
+
+
+def test_annotation_tiles_are_not_cached():
+    """Training with tile_annotations extracts tiles cut around the scribbles; they
+    never repeat and cannot serve a prediction, so they must not enter the cache.
+    Untiled training and prediction of the same plane share one entry."""
+    import warnings as _w
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    rng = np.random.RandomState(0)
+    img = rng.rand(1, 96, 96).astype(np.float32)
+    annot = np.zeros((1, 96, 96), dtype=np.uint8)
+    annot[0, :12, :12] = 1
+    annot[0, -12:, -12:] = 2
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        cp = ConvpaintModel('gaussian')
+        cp.set_params(tile_annotations=True)
+        fc = cp.enable_feature_cache(max_bytes=64 * 1024 * 1024)
+        cp.train(img, annot)
+        assert len(fc) == 0                  # annotation tiles were not cached
+        cp.segment(img)
+        assert len(fc) == 1                  # the whole plane is
+        cp.set_params(tile_annotations=False)
+        hits_before = fc.stats()['hits']
+        cp.train(img, annot)
+        assert fc.stats()['hits'] > hits_before  # untiled training hits the plane entry
+        assert len(fc) == 1
+
+
+def test_planes_are_the_unit_of_reuse():
+    """A stack, its single planes and (flattened) training planes share per-plane entries,
+    and results are bit-identical with and without the cache."""
+    import warnings as _w
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    rng = np.random.RandomState(0)
+    stack = rng.rand(3, 64, 64).astype(np.float32)   # [Z, H, W], single channel
+    annot = np.zeros((3, 64, 64), dtype=np.uint8)
+    annot[1, :10, :10] = 1
+    annot[1, -10:, -10:] = 2
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        # (no normalization, so that a plane is prepared identically alone and within its stack)
+        cp_off = ConvpaintModel('gaussian')
+        cp_off.set_params(tile_annotations=False, normalize=1)
+        cp_off.train(stack, annot)
+        seg_off = cp_off.segment(stack)
+
+        cp = ConvpaintModel('gaussian')
+        cp.set_params(tile_annotations=False, normalize=1)
+        fc = cp.enable_feature_cache(max_bytes=64 * 1024 * 1024)
+        cp.train(stack, annot)                         # extracts (and keeps) the annotated plane only
+        assert len(fc) == 1
+        seg1 = cp.segment(stack)                       # 1 plane reused, 2 extracted and kept
+        assert len(fc) == 3 and fc.stats()['hits'] == 1
+        seg2 = cp.segment(stack)                       # all planes reused
+        assert fc.stats()['hits'] == 4
+        seg_plane = cp.segment(stack[2])               # a single plane of the stack is reused too
+        assert fc.stats()['hits'] == 5 and len(fc) == 3
+    assert np.array_equal(seg1, seg_off) and np.array_equal(seg2, seg_off)
+    assert np.array_equal(seg_plane, seg_off[2])
+
+
+def test_3d_context_fe_is_reused_per_stack():
+    """For an FE with 3D context, the whole stack (as passed) is the unit of reuse."""
+    import warnings as _w
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    rng = np.random.RandomState(0)
+    stack = rng.rand(3, 64, 64).astype(np.float32)
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        cp = ConvpaintModel('gaussian')
+        cp.set_params(normalize=1)
+        cp.fe_model.has_3d_context = True
+        fc = cp.enable_feature_cache(max_bytes=64 * 1024 * 1024)
+        f1 = cp.get_feature_image(stack)
+        assert len(fc) == 1                            # one entry for the stack, not three
+        f2 = cp.get_feature_image(stack)
+        assert fc.stats()['hits'] == 1
+        cp.get_feature_image(stack[1])                 # a single plane is another unit
+        assert fc.stats()['hits'] == 1 and len(fc) == 2
+    assert np.array_equal(f1, f2)

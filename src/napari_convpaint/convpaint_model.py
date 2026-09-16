@@ -111,6 +111,7 @@ class ConvpaintModel:
         self._fe_locked_device = None
         self._clf_locked_device = None
         self._feature_cache = None  # created by enable_feature_cache
+        self._feature_store = None  # created by enable_feature_store
         self._params_to_reset_training = ['channel_mode',
                                           'normalize',
                                         #   'image_downsample',
@@ -619,6 +620,8 @@ class ConvpaintModel:
                 name=fe_name,
                 layers=fe_layers
             )
+            if self._feature_cache is not None:
+                self._feature_cache.clear() # Cached features belong to the old FE
         
         # Set the parameters
         self._param.set(fe_name=fe_name, fe_layers=fe_layers)
@@ -914,49 +917,96 @@ class ConvpaintModel:
             )
 
         return features
+    
+### FEATURE REUSE: CACHE (RAM) AND STORE (DISK)
+# Both are off unless enabled (the widget enables the cache by default); see feature_cache.py and feature_store.py
 
-### FEATURE CACHE (opt-in; see feature_cache.py)
-
-    def enable_feature_cache(self, enabled=True, max_bytes=None, disk_max_bytes=0):
-        """Turn on whole-image feature caching. When on, the (resolution-
-        independent) native features of an extracted image are cached and reused
-        the next time the *same* image is processed with the same FE settings —
-        e.g. re-segmenting while refining scribbles, or the train->predict of one
-        image — instead of recomputing them. Cache entries are content-addressed
-        (a hash of the prepared image), so it is self-invalidating: a changed
-        image simply misses. Bounded by a RAM budget (``max_bytes``); RAM-evicted
-        entries spill to disk up to ``disk_max_bytes`` (0 = off), which lets a
-        stack too large for RAM still benefit on the next iteration (loading a
-        cached slice from disk is much faster than recomputing it). Off by
-        default (opt-in)."""
+    def enable_feature_cache(self, max_bytes=None):
+        """Turn on feature caching (in RAM). When on, the native (pre-rescale) features
+        of an extracted plane are cached and reused the next time the *same* plane is
+        processed with the same FE settings — e.g. re-segmenting while refining
+        scribbles, or the train->predict of one image — instead of recomputing them.
+        Entries are content-addressed (a hash of the prepared plane), so the cache is
+        self-invalidating: a changed image simply misses. Bounded by a RAM budget
+        (``max_bytes``, default 2 GB; least recently used entries are dropped).
+        Off by default in the API; the widget enables it by default."""
         from .feature_cache import FeatureCache
-        self._feature_cache = FeatureCache(max_bytes=max_bytes, enabled=enabled,
-                                           disk_max_bytes=disk_max_bytes)
+        self._feature_cache = FeatureCache(max_bytes=max_bytes)
         return self._feature_cache
 
-    def _fe_cache_signature(self, param):
-        """The FE-relevant part of the cache key: parameters whose change
-        invalidates extracted features (reusing the model's own train-reset set),
-        plus image_downsample and the FE's patch size."""
+    def disable_feature_cache(self):
+        """Turn off feature caching and free the cached features."""
+        self._feature_cache = None
+
+    def enable_feature_store(self, folder, max_bytes=None):
+        """Turn on the feature store: the native features of every extracted plane are
+        kept as files in ``folder`` (no eviction, also across sessions) and reused like
+        cached ones — e.g. extract the features of a stack or movie once (see
+        store_features), then train and predict from them. Same keys as the cache.
+        The folder must be empty, not yet existing, or a feature store. ``max_bytes``
+        optionally caps the size of the store (default: no cap, only a disk headroom)."""
+        from .feature_store import FeatureStore
+        self._feature_store = FeatureStore(folder, max_bytes=max_bytes)
+        return self._feature_store
+
+    def disable_feature_store(self):
+        """Turn off the feature store (the stored files are kept; see FeatureStore.clear)."""
+        self._feature_store = None
+
+    def store_features(self, image, in_channels=None, skip_norm=False, fe_use_device=None):
+        """
+        Extracts the features of an image (stack) plane by plane and keeps them in the feature
+        store (and in the cache, if enabled), without training or predicting: prepare a stack or
+        movie once (e.g. before annotating), so that train and predict reuse the features afterwards.
+        Requires the feature store to be enabled (see enable_feature_store).
+
+        The image is prepared exactly as for prediction (same handling of in_channels and skip_norm),
+        so the stored planes match later predictions of the same image (except with tile_image,
+        where prediction extracts tiles instead of whole planes).
+
+        Parameters
+        ----------
+        image : np.ndarray or list[np.ndarray]
+            Image (stack) to store the features of, or list of images
+        in_channels : list[int], optional
+            List of channels to use
+        skip_norm : bool, optional
+            Whether to skip normalization of the image (e.g. if already normalized)
+        fe_use_device : str, optional
+            Device policy for feature extractor ("auto", "gpu", "cpu")
+        """
+        if self._feature_store is None:
+            raise ValueError('No feature store enabled (see enable_feature_store).')
+        # Prepare the data as in _predict (dimensions, channels, normalization of the whole image)
+        data, _ = self._prep_dims(image)
+        if in_channels is not None:
+            self._check_in_channels(data, in_channels)
+            data = [d[in_channels] for d in data]
+        if not skip_norm:
+            data = [self._norm_single_image(d) for d in data]
+        # Extract plane by plane (bounded memory); FEs with 3D context need the whole stack
+        for d in data:
+            units = [d] if self.fe_model.get_has_3d_context() else [d[:, z:z+1] for z in range(d.shape[1])]
+            for unit in units:
+                self._get_features(unit, restore_input_form=False, in_channels=None, skip_norm=True,
+                                   use_device=fe_use_device)
+
+    def _fe_signature(self):
+        """The FE-relevant part of the cache/store key: the parameters whose change
+        invalidates extracted features (the model's own train-reset set), taken
+        from the user's params (before FE enforcement, which e.g. moves the
+        JAFAR scalings out of the Param)."""
         def _hashable(v):
-            # fe_scalings / fe_layers are lists (and FE extra state may nest
-            # lists in tuples) -> make them hashable for the key.
+            # fe_scalings / fe_layers are lists -> make them hashable for the key.
             if isinstance(v, (list, tuple)):
                 return tuple(_hashable(x) for x in v)
             return v
-        keys = self._params_to_reset_training
-        sig = tuple((k, _hashable(getattr(param, k, None))) for k in keys)
-        return sig + (("image_downsample", getattr(param, "image_downsample", 1)),
-                      ("patch_size", self.fe_model.get_patch_size()),
-                      # FE instance state outside the Param (e.g. jafar_scalings,
-                      # gaussian sigma) — without it, changing that state would
-                      # serve stale cached features.
-                      ("fe_extra", _hashable(self.fe_model.cache_extra_state())))
+        return tuple((k, _hashable(getattr(self._param, k, None))) for k in self._params_to_reset_training)
 
     @staticmethod
-    def _data_hash(d):
-        """Content hash of a prepared image tile, so train/predict of the same
-        pixels share a cache entry without threading an id through the pipeline."""
+    def _data_signature(d):
+        """Content hash of a prepared plane (or tile), so train/predict of the same
+        pixels share a cache/store entry without threading an id through the pipeline."""
         import hashlib
         arr = np.ascontiguousarray(d)
         h = hashlib.blake2b(arr.view(np.uint8), digest_size=16)
@@ -964,43 +1014,74 @@ class ConvpaintModel:
         h.update(str(arr.dtype).encode())
         return h.hexdigest()
 
-    def _extract_pyramid_cached(self, d, param, keep_patched, device, cache_only=False):
-        """Extract the feature pyramid for one image, consulting the feature
-        cache. Behaviour with the cache disabled (the default) is exactly
-        extract_features_pyramid; enabled, it caches/reuses the native features
-        (bit-identical output, since the pyramid split is exact).
+    def _reuse_enabled(self):
+        """Whether extracted features are reused (cache or store enabled)."""
+        return self._feature_cache is not None or self._feature_store is not None
 
-        ``cache_only=True`` is a peek: return the reconstructed features only if
-        they are already cached, else return None WITHOUT running the (expensive)
-        feature extractor. This lets a stack prediction serve already-cached
-        slices first, before a sequential scan evicts them (see the widget)."""
-        cache = self._feature_cache
+    def _reuse_payload(self, key):
+        """Get the payload of a plane from the cache or the store, or None.
+        A store hit is also put into the cache (as a copy in RAM, not the memory-mapped files),
+        so that repeated use of the same plane does not read from disk every time."""
+        payload = self._feature_cache.get(key) if self._feature_cache is not None else None
+        if payload is None and self._feature_store is not None:
+            payload = self._feature_store.get(key)
+            if payload is not None and self._feature_cache is not None:
+                in_ram = {"scales": [([np.array(a) for a in arrays], pre_shape, reduced_shape)
+                                     for arrays, pre_shape, reduced_shape in payload["scales"]],
+                          "was_torch": payload["was_torch"]}
+                self._feature_cache.put(key, in_ram)
+        return payload
+
+    def _keep_payload(self, key, payload):
+        """Keep the payload of a plane in the cache and/or the store."""
+        if self._feature_cache is not None:
+            self._feature_cache.put(key, payload)
+        if self._feature_store is not None:
+            self._feature_store.put(key, payload)
+
+    def _extract_or_reuse_pyramid(self, d, param, patched=True, device=None, skip_cache=False):
+        """Extract the feature pyramid for one prepared image [C, Z, H, W], reusing the
+        native features of planes that are already in the feature cache or store. Without
+        them (the default) this is exactly extract_features_pyramid; with them, the
+        output is bit-identical (the pyramid split is exact). Planes are the unit of
+        reuse, so stacks, single planes and (flattened) training planes share entries
+        (except for FEs with 3D context, whose features are reused per stack as given)."""
         fe = self.fe_model
-        if cache is None or not cache.enabled or not fe.supports_feature_cache(param):
-            return None if cache_only else fe.extract_features_pyramid(d, param, patched=keep_patched, device=device)
-        key = (self._data_hash(d), self._fe_cache_signature(param))
-        payload = cache.get(key)
-        if payload is not None:
-            # Hit: reconstruct on `device` (the payload is lifted back to torch
-            # if that is the FE's native form) — same backend as a fresh
-            # extraction, so hits are as fast as (and identical to) misses.
-            return fe.features_from_cacheable(payload, d.shape, param,
-                                              patched=keep_patched, device=device)
-        if cache_only:
-            return None
-        # Miss: one extraction pass yields both the features (reconstructed
-        # from the on-device native form) and the numpy payload to store.
-        features, payload = fe.cacheable_repr_and_features(d, param, device,
-                                                           patched=keep_patched)
-        cache.put(key, payload, spill_ok=fe.cache_spill_to_disk())
-        return features
+        if skip_cache or not self._reuse_enabled() or not fe.supports_feature_cache(param):
+            return fe.extract_features_pyramid(d, param, patched=patched, device=device)
+        fe_sig = self._fe_signature()
+        if fe.get_has_3d_context():
+            planes = [d] # Planes are not independent -> the whole stack is the unit of reuse
+        else:
+            planes = [d[:, z:z+1] for z in range(d.shape[1])]
+        keys = [(self._data_signature(plane), fe_sig) for plane in planes]
+        payloads = [self._reuse_payload(key) for key in keys]
+        missing = [z for z, payload in enumerate(payloads) if payload is None]
+        if not missing:
+            # All planes reused: reconstruct on `device` (the payload is lifted back to torch if that
+            # is the FE's native form), i.e. with the same backend as a fresh extraction
+            payload = payloads[0] if len(payloads) == 1 else fe.join_payload_planes(payloads)
+            return fe.features_from_cacheable(payload, d.shape, param, patched=patched, device=device)
+        if len(missing) == len(keys) == 1:
+            # Single unit (plane, or stack of a 3D FE), not reusable: one extraction pass yields
+            # both the features (reconstructed from the on-device native form) and the payload to keep
+            features, payload = fe.cacheable_repr_and_features(d, param, device, patched=patched)
+            self._keep_payload(keys[0], payload)
+            return features
+        # Stack with missing planes: extract those in one (batched) pass, keep them plane by plane,
+        # and reconstruct the whole stack from the per-plane payloads
+        _, payload = fe.cacheable_repr_and_features(d[:, missing], param, device, patched=patched, features=False)
+        for z, plane_payload in zip(missing, fe.split_payload_planes(payload)):
+            payloads[z] = plane_payload
+            self._keep_payload(keys[z], plane_payload)
+        return fe.features_from_cacheable(fe.join_payload_planes(payloads), d.shape, param, patched=patched, device=device)
 
 ### BACKEND METHOD FOR FEATURE EXTRACTION
 
     def _get_features(self, data, annotations=None, restore_input_form=True,
                           memory_mode=False, img_ids=None,
                           in_channels=None, skip_norm=False, use_device=None,
-                          pca_components=0, kmeans_clusters=0, cache_only=False):
+                          pca_components=0, kmeans_clusters=0):
         """
         Returns the features of images extracted by the feature extractor model.
 
@@ -1204,16 +1285,17 @@ class ConvpaintModel:
             supported_devices=self.fe_model.supported_devices(),
             warn=True,
         )
-        features = [self._extract_pyramid_cached(
-                d, params_for_extract, keep_patched, fe_runtime_device,
-                cache_only=cache_only)
+        # Annotation tiles are cut around the (new) annotations, so they never repeat and
+        # cannot serve a prediction -> do not cache them (only whole planes / prediction tiles)
+        skip_cache = use_annots and params_for_extract.tile_annotations
+        features = [self._extract_or_reuse_pyramid(
+                d,
+                params_for_extract,
+                patched=keep_patched,
+                device=fe_runtime_device,
+                skip_cache=skip_cache)
                     for d in data]
-
-        # cache_only peek: if any image's features are not already cached, signal
-        # a miss so the caller can defer this image to the compute pass.
-        if cache_only and any(f is None for f in features):
-            return None
-
+        
         if pca_components:
             features = [utils.apply_pca_to_f_image(f, n_components=pca_components)
                         for f in features]
@@ -1588,7 +1670,7 @@ class ConvpaintModel:
 
         return features, annotations
 
-    def _predict(self, data, add_seg=False, in_channels=None, skip_norm=False, use_dask=False, fe_use_device=None, cache_only=False):
+    def _predict(self, data, add_seg=False, in_channels=None, skip_norm=False, use_dask=False, fe_use_device=None):
         """
         Backend method to predict images as a whole or tiling and parallelizing the prediction.
 
@@ -1621,17 +1703,10 @@ class ConvpaintModel:
 
         # Get class probabilities, using tiling if enabled
         if self._param.tile_image:
-            if cache_only:
-                # The tiled path doesn't support the peek, so it counts as a miss.
-                return None
             probas = [self._parallel_predict_image(d, return_proba=True, use_dask=use_dask, fe_use_device=fe_use_device)
                       for d in data]
         else:
-            # cache_only is a peek: only serve images whose features are already
-            # cached; None on any miss defers them to the caller's compute pass.
-            probas = self._predict_image(data, return_proba=True, fe_use_device=fe_use_device, cache_only=cache_only) # Can handle lists directly
-            if probas is None:
-                return None
+            probas = self._predict_image(data, return_proba=True, fe_use_device=fe_use_device) # Can handle lists directly
 
         # Restore input dimensionality (especially see if we want to remove z dimension)
         probas = [self._restore_dims(probas[i], input_shapes[i])
@@ -1650,7 +1725,7 @@ class ConvpaintModel:
             else:
                 return probas
 
-    def _predict_image(self, image, return_proba=True, feature_img=None, fe_use_device=None, cache_only=False):
+    def _predict_image(self, image, return_proba=True, feature_img=None, fe_use_device=None):
         """
         Backend method to predict images without tiling and parallelization.
         Returns the class probabilities and optionally the segmentation of the images.
@@ -1671,10 +1746,7 @@ class ConvpaintModel:
                                             restore_input_form=False,
                                             in_channels=None, # already extracted outside
                                             skip_norm=True, # already normalized outside
-                                            use_device=fe_use_device,
-                                            cache_only=cache_only)
-            if feature_img is None:  # cache_only peek: features not cached
-                return None
+                                            use_device=fe_use_device)
 
         num_f = feature_img[0].shape[0] if isinstance(feature_img, list) else feature_img.shape[0]
         num_f_clf = self.num_features
