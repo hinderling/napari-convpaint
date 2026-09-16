@@ -938,14 +938,15 @@ class ConvpaintModel:
         """Turn off feature caching and free the cached features."""
         self._feature_cache = None
 
-    def enable_feature_store(self, folder):
+    def enable_feature_store(self, folder, max_bytes=None):
         """Turn on the feature store: the native features of every extracted plane are
         kept as files in ``folder`` (no eviction, also across sessions) and reused like
         cached ones — e.g. extract the features of a stack or movie once (see
         store_features), then train and predict from them. Same keys as the cache.
-        The folder must be empty, not yet existing, or a feature store."""
+        The folder must be empty, not yet existing, or a feature store. ``max_bytes``
+        optionally caps the size of the store (default: no cap, only a disk headroom)."""
         from .feature_store import FeatureStore
-        self._feature_store = FeatureStore(folder)
+        self._feature_store = FeatureStore(folder, max_bytes=max_bytes)
         return self._feature_store
 
     def disable_feature_store(self):

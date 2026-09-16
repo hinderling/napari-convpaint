@@ -72,6 +72,25 @@ def test_store_clear_and_reopen(tmp_path):
     assert len(store) == 0 and os.path.isfile(folder / _MARKER)
 
 
+def test_store_size_cap(tmp_path):
+    rng = np.random.default_rng(3)
+    p1 = _payload(rng)
+    one = sum(a.nbytes for arrays, _, _ in p1["scales"] for a in arrays)
+    store = FeatureStore(tmp_path / "store", max_bytes=int(2.5 * one))
+    store.put(("a", ("s",)), p1)
+    store.put(("b", ("s",)), _payload(rng))
+    assert len(store) == 2 and store.nbytes >= 2 * one
+    with pytest.warns(UserWarning, match="size cap"):
+        store.put(("c", ("s",)), _payload(rng))       # would exceed the cap -> not stored
+    assert len(store) == 2 and ("c", ("s",)) not in store
+    store.clear()
+    assert store.nbytes == 0
+    store.put(("c", ("s",)), _payload(rng))           # room again after clearing
+    assert len(store) == 1
+    # A reopened store knows its size
+    assert FeatureStore(tmp_path / "store").nbytes == store.nbytes
+
+
 def test_store_refuses_foreign_folder(tmp_path):
     (tmp_path / "somefile.txt").write_text("not a store")
     with pytest.raises(ValueError):

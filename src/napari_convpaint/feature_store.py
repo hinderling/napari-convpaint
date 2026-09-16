@@ -29,10 +29,14 @@ class FeatureStore:
     folder : str or Path
         Folder to store the features in. Created if it does not exist; an existing
         folder must be empty or a feature store (marked by a marker file).
+    max_bytes : int, optional
+        Size cap of the store; once reached, nothing more is stored (with a warning).
+        None (default) = no cap (the disk headroom still applies).
     """
 
-    def __init__(self, folder):
+    def __init__(self, folder, max_bytes=None):
         self.folder = str(folder)
+        self.max_bytes = max_bytes
         os.makedirs(self.folder, exist_ok=True)
         marker = os.path.join(self.folder, _MARKER)
         if not os.path.isfile(marker):
@@ -44,6 +48,8 @@ class FeatureStore:
         self.hits = 0
         self.misses = 0
         self._warned_full = False
+        self._nbytes = sum(os.path.getsize(os.path.join(d, n)) # Size on disk, kept up to date by put/clear
+                           for d in self._entry_dirs() for n in os.listdir(d))
 
     # -- keys ---------------------------------------------------------------
 
@@ -90,6 +96,11 @@ class FeatureStore:
         if key in self:
             return
         nbytes = sum(a.nbytes for arrays, _, _ in payload["scales"] for a in arrays)
+        if self.max_bytes is not None and self._nbytes + nbytes > self.max_bytes:
+            if not self._warned_full:
+                warnings.warn(f"Feature store '{self.folder}': size cap ({self.max_bytes / 1e9:.1f} GB) reached, features are not stored anymore.")
+                self._warned_full = True
+            return
         if shutil.disk_usage(self.folder).free - nbytes < _DISK_HEADROOM_BYTES:
             if not self._warned_full:
                 warnings.warn(f"Feature store '{self.folder}': disk (almost) full, features are not stored anymore.")
@@ -110,11 +121,14 @@ class FeatureStore:
         with open(os.path.join(tmp_dir, _META), 'w') as f:
             json.dump(meta, f)
         os.rename(tmp_dir, entry_dir)
+        self._nbytes += sum(os.path.getsize(os.path.join(entry_dir, n)) for n in os.listdir(entry_dir))
 
     def clear(self):
         """Delete all entries (keeps the folder, its marker and anything that is not an entry)."""
         for d in self._entry_dirs(include_tmp=True):
             shutil.rmtree(d, ignore_errors=True)
+        self._nbytes = 0
+        self._warned_full = False
 
     def __len__(self):
         return len(self._entry_dirs())
@@ -122,8 +136,7 @@ class FeatureStore:
     @property
     def nbytes(self):
         """Total size of the stored features on disk."""
-        return sum(os.path.getsize(os.path.join(d, n))
-                   for d in self._entry_dirs() for n in os.listdir(d))
+        return self._nbytes
 
     def stats(self):
         return {
