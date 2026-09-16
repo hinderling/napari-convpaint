@@ -429,7 +429,7 @@ class ConvpaintWidget(QWidget):
             # Create group boxes
             self.advanced_note_group = VHGroup('Important note', orientation='G')
             self.advanced_labels_group = VHGroup('Layers handling && Appearance', orientation='G')
-            self.advanced_training_group = VHGroup('Training', orientation='G')
+            self.advanced_training_group = VHGroup('Training && Prediction', orientation='G')
             # self.advanced_multifile_group = VHGroup('Multifile Training', orientation='G')
             self.advanced_input_group = VHGroup('Input', orientation='G')
             self.advanced_output_group = VHGroup('Output', orientation='G')
@@ -527,6 +527,12 @@ class ConvpaintWidget(QWidget):
             self.btn_reset_training = QPushButton('Reset continuous training')
             self.advanced_training_group.glayout.addWidget(self.btn_reset_training, 5, 0, 1, 4)
 
+            # Prediction part of the group: the one option that is not on the Home tab
+            self.advanced_training_group.glayout.addWidget(self._dashed_divider(), 6, 0, 1, 4)
+            self.check_use_dask = QCheckBox('Put image tiles on Dask workers')
+            self.check_use_dask.setChecked(self.use_dask)
+            self.advanced_training_group.glayout.addWidget(self.check_use_dask, 7, 0, 1, 4)
+
             # Input channels option
             self.text_input_channels = QtWidgets.QLineEdit()
             self.text_input_channels.setStyleSheet("font-size: 12px;")
@@ -619,20 +625,6 @@ class ConvpaintWidget(QWidget):
             self.btn_store_features = QPushButton('Store features of this image/stack')
             self.btn_store_features.setEnabled(self.store_enabled)
             self.advanced_cache_group.glayout.addWidget(self.btn_store_features, 7, 0, 1, 3)
-
-            # --- dashed divider between the caching and Dask parts ---
-            self.advanced_cache_group.glayout.addWidget(self._dashed_divider(), 8, 0, 1, 3)
-
-            # Dask option (applies to tiled segmentation)
-            dask_note = QLabel(
-                "Distribute the tiles of a tiled segmentation to parallel Dask "
-                "workers (only applies when 'Tile for segmentation' is enabled).")
-            dask_note.setStyleSheet(style_for_infos)
-            dask_note.setWordWrap(True)
-            self.advanced_cache_group.glayout.addWidget(dask_note, 9, 0, 1, 3)
-            self.check_use_dask = QCheckBox('Use Dask')
-            self.check_use_dask.setChecked(self.use_dask)
-            self.advanced_cache_group.glayout.addWidget(self.check_use_dask, 10, 0, 1, 3)
 
         # === MULTIFILE TAB ===
 
@@ -865,10 +857,11 @@ class ConvpaintWidget(QWidget):
             self.radio_img_training.setToolTip('Keep features in memory, updating them only for new annotations in each training, as long as the image is not changed.')
             self.radio_global_training.setToolTip('Keep features in memory, updating them only for new annotations in each training, until reset manually.')
             self.radio_single_training.setToolTip('Extract all features freshly for each training.')
+            self.check_use_dask.setToolTip('Distribute the tiles of a tiled segmentation to parallel Dask workers\n' +
+                                           '(only applies with "Tile image for segmentation").')
             # self.check_cont_training.setToolTip('Save and use combined features in memory for training')
             self.btn_class_distribution_trained.setToolTip('Show a diagram of the class distribution in the data saved in the model for training.')
             self.btn_reset_training.setToolTip('Clear training history and restart training counter.')
-            self.check_use_dask.setToolTip('Use Dask when using the option "Tile for segmentation".')
             for w in [self.channels_label, self.text_input_channels]:
                 w.setToolTip('Comma-separated list of channels to use for training and segmentation.\n' +
                              'Leave empty to use all channels.')
@@ -1304,6 +1297,8 @@ class ConvpaintWidget(QWidget):
                 self, 'auto_add_layers', self.check_auto_add_layers.isChecked()))
             self.check_keep_layers.stateChanged.connect(lambda: setattr(
                 self, 'keep_layers', self.check_keep_layers.isChecked()))
+            self.check_use_dask.stateChanged.connect(lambda: setattr(
+                self, 'use_dask', self.check_use_dask.isChecked()))
             self.btn_add_all_annot_layers.clicked.connect(self._on_add_all_annot_layers)
             self.check_auto_select_annot.stateChanged.connect(lambda: setattr(
                 self, 'auto_select_annot', self.check_auto_select_annot.isChecked()))
@@ -1319,9 +1314,6 @@ class ConvpaintWidget(QWidget):
             #     self, 'cont_training', self.check_cont_training.isChecked()))
             self.btn_class_distribution_trained.clicked.connect(lambda: self._on_show_class_distribution(trained_data=True))
             self.btn_reset_training.clicked.connect(self._reset_train_features)
-
-            self.check_use_dask.stateChanged.connect(lambda: setattr(
-                self, 'use_dask', self.check_use_dask.isChecked()))
 
             # Both cache controls apply the full settings set in one go.
             self.check_use_cache.stateChanged.connect(self._apply_feature_cache)
