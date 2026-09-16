@@ -1019,10 +1019,17 @@ class ConvpaintModel:
         return self._feature_cache is not None or self._feature_store is not None
 
     def _reuse_payload(self, key):
-        """Get the payload of a plane from the cache or the store, or None."""
+        """Get the payload of a plane from the cache or the store, or None.
+        A store hit is also put into the cache (as a copy in RAM, not the memory-mapped files),
+        so that repeated use of the same plane does not read from disk every time."""
         payload = self._feature_cache.get(key) if self._feature_cache is not None else None
         if payload is None and self._feature_store is not None:
             payload = self._feature_store.get(key)
+            if payload is not None and self._feature_cache is not None:
+                in_ram = {"scales": [([np.array(a) for a in arrays], pre_shape, reduced_shape)
+                                     for arrays, pre_shape, reduced_shape in payload["scales"]],
+                          "was_torch": payload["was_torch"]}
+                self._feature_cache.put(key, in_ram)
         return payload
 
     def _keep_payload(self, key, payload):

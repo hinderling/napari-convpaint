@@ -163,7 +163,15 @@ def test_model_cache_and_store_together(tmp_path):
         cp.disable_feature_cache()
         f3 = cp.get_feature_image(stack)
         assert store.stats()['hits'] == 3
+        # Store hits are promoted into the cache (as RAM copies): the cache answers from then on
+        fc2 = cp.enable_feature_cache()
+        f4 = cp.get_feature_image(stack)               # from the store, promoted
+        assert store.stats()['hits'] == 6 and len(fc2) == 3
+        f5 = cp.get_feature_image(stack)               # from the cache
+        assert store.stats()['hits'] == 6 and fc2.stats()['hits'] == 3
+        assert all(not isinstance(a, np.memmap) for arrays, _, _ in next(iter(fc2._store.values()))[0]["scales"] for a in arrays)
     assert np.array_equal(f1, f2) and np.array_equal(f1, f3)
+    assert np.array_equal(f1, f4) and np.array_equal(f1, f5)
 
 
 def test_store_features_prepares_a_stack(tmp_path):
