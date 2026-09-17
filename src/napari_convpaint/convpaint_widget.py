@@ -610,9 +610,11 @@ class ConvpaintWidget(QWidget):
             self.cache_max_ram_spinbox.setValue(self.cache_max_mb)
             self.advanced_cache_group.glayout.addWidget(self.cache_max_ram_spinbox, 2, 2, 1, 1)
 
-            # Current cache size label
-            self.cache_size_label = QLabel('Current cache size: 0 MB')
-            self.advanced_cache_group.glayout.addWidget(self.cache_size_label, 3, 0, 1, 3)
+            # Cache size label and clear button
+            self.cache_size_label = QLabel('Cached: 0 MB')
+            self.advanced_cache_group.glayout.addWidget(self.cache_size_label, 3, 0, 1, 2)
+            self.btn_cache_clear = QPushButton('Clear cache')
+            self.advanced_cache_group.glayout.addWidget(self.btn_cache_clear, 3, 2, 1, 1)
 
             # --- dashed divider between the cache and the store parts ---
             self.advanced_cache_group.glayout.addWidget(self._dashed_divider(), 4, 0, 1, 3)
@@ -625,7 +627,7 @@ class ConvpaintWidget(QWidget):
             self.advanced_cache_group.glayout.addWidget(self.store_folder_label, 6, 0, 1, 2)
             self.btn_store_folder = QPushButton('Choose folder')
             self.advanced_cache_group.glayout.addWidget(self.btn_store_folder, 6, 2, 1, 1)
-            self.store_size_label = QLabel('Stored features: (store off)')
+            self.store_size_label = QLabel('Stored: (store off)')
             self.advanced_cache_group.glayout.addWidget(self.store_size_label, 7, 0, 1, 2)
             self.btn_store_delete = QPushButton('Delete stored features')
             self.btn_store_delete.setEnabled(self.store_enabled)
@@ -877,6 +879,7 @@ class ConvpaintWidget(QWidget):
             for w in [self.cache_max_ram_label, self.cache_max_ram_spinbox]:
                 w.setToolTip('Maximum memory (RAM) the feature cache may use.\nWhen full, the least recently used features are dropped.')
             self.cache_size_label.setToolTip('Memory currently used by the feature cache (and number of cached images/planes).')
+            self.btn_cache_clear.setToolTip('Drop all cached features (they are extracted again when needed).')
             self.check_use_store.setToolTip('Keep the extracted features of all processed images/planes (incl. Multifile batches) in the folder below (also across sessions),\n' +
                                             'so that stacks and movies only need to be extracted once (e.g. for re-predicting after re-training).\n' +
                                             'Nothing is dropped automatically; use "Delete stored features" to free the disk space.')
@@ -951,7 +954,7 @@ class ConvpaintWidget(QWidget):
                       self.btn_class_distribution_trained, self.btn_reset_training, self.channels_label,
                       self.text_input_channels, self.btn_switch_axes, self.check_add_seg, self.check_add_probas, self.btn_add_features, self.btn_add_features_stack,
                       self.pca_label, self.text_features_pca, self.kmeans_label, self.text_features_kmeans,
-                      self.check_use_cache, self.cache_max_ram_label, self.cache_max_ram_spinbox, self.cache_size_label,
+                      self.check_use_cache, self.cache_max_ram_label, self.cache_max_ram_spinbox, self.cache_size_label, self.btn_cache_clear,
                       self.check_use_store, self.store_folder_label, self.btn_store_folder, self.store_size_label, self.btn_store_delete,
                       self.btn_store_features]:
                 w.setToolTip('')
@@ -1035,17 +1038,17 @@ class ConvpaintWidget(QWidget):
         """Show the current sizes of the feature cache and store (called after ops that change them)."""
         fc = self.cp_model._feature_cache
         if fc is None:
-            self.cache_size_label.setText('Current cache size: 0 MB')
+            self.cache_size_label.setText('Cached: 0 MB')
         else:
             s = fc.stats()
-            self.cache_size_label.setText(f'Current cache size: {s["bytes"] / 1e6:.0f} MB ({s["entries"]} entries)')
+            self.cache_size_label.setText(f'Cached: {s["bytes"] / 1e6:.0f} MB ({s["entries"]} planes)')
         self.store_folder_label.setText(self.store_folder)
         fs = self.cp_model._feature_store
         if fs is None:
-            self.store_size_label.setText('Stored features: (store off)')
+            self.store_size_label.setText('Stored: (store off)')
         else:
             s = fs.stats()
-            self.store_size_label.setText(f'Stored features: {s["entries"]} planes, {s["bytes"] / 1e6:.0f} MB')
+            self.store_size_label.setText(f'Stored: {s["entries"]} planes, {s["bytes"] / 1e6:.0f} MB')
 
     def _apply_feature_store(self, *args, recreate=False):
         """Apply the feature store settings from the GUI controls to the active model
@@ -1076,6 +1079,12 @@ class ConvpaintWidget(QWidget):
         if folder:
             self.store_folder = folder
             self._apply_feature_store(recreate=True)
+
+    def _on_clear_cache(self):
+        """Drop all cached features (the cache stays enabled)."""
+        if self.cp_model._feature_cache is not None:
+            self.cp_model._feature_cache.clear()
+        self._refresh_reuse_labels()
 
     def _on_delete_stored_features(self):
         """Delete all entries of the feature store (after confirmation); the store stays active."""
@@ -1336,6 +1345,7 @@ class ConvpaintWidget(QWidget):
             self.check_use_cache.stateChanged.connect(self._apply_feature_cache)
             self.cache_max_ram_spinbox.valueChanged.connect(self._apply_feature_cache)
             self.cache_max_ram_spinbox.editingFinished.connect(self._warn_cache_ram)
+            self.btn_cache_clear.clicked.connect(self._on_clear_cache)
             self.check_use_store.stateChanged.connect(self._apply_feature_store)
             self.btn_store_folder.clicked.connect(self._on_choose_store_folder)
             self.btn_store_delete.clicked.connect(self._on_delete_stored_features)

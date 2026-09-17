@@ -245,11 +245,14 @@ def test_widget_store_controls(make_napari_viewer, tmp_path, monkeypatch):
     w.cp_model.set_params(channel_mode='rgb')
     w._on_train()
     w._on_predict()
-    assert len(fs) >= 1 and 'Stored features: 1 planes' in w.store_size_label.text()
+    assert len(fs) >= 1 and 'Stored: 1 planes' in w.store_size_label.text()
 
     monkeypatch.setattr(QMessageBox, 'question', lambda *a, **k: QMessageBox.Yes)
     w._on_delete_stored_features()
     assert len(fs) == 0 and w.cp_model._feature_store is fs   # emptied, still active
+    assert len(w.cp_model._feature_cache) >= 1
+    w._on_clear_cache()                                        # 'Clear cache' empties the cache, keeps it enabled
+    assert len(w.cp_model._feature_cache) == 0 and w.check_use_cache.isChecked()
 
     w.check_use_store.setChecked(False)
     assert w.cp_model._feature_store is None and not w.btn_store_delete.isEnabled()
