@@ -101,7 +101,7 @@ class ConvpaintWidget(QWidget):
         # Align rows in some tabs on top
         for tab_name in ['Home', 'Models', 'Advanced']:
             if tab_name in self.tabs.tab_names:
-                self.tabs.widget(self.tabs.tab_names.index(tab_name)).layout().setAlignment(Qt.AlignTop)
+                self.tabs.widget(self.tabs.tab_names.index(tab_name)).layout().setAlignment(Qt.AlignmentFlag.AlignTop)
 
         # === HOME TAB ===
 
@@ -192,7 +192,7 @@ class ConvpaintWidget(QWidget):
         self.image_processing_group.glayout.addWidget(self.radio_rgb, 2,0,1,1)
         # Create and add a label to act as a vertical divider
         divider_label = QLabel('¦\n¦\n¦\n¦')
-        divider_label.setAlignment(Qt.AlignCenter)
+        divider_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         divider_label.setStyleSheet("font-size: 13px; color: rgba(120, 120, 120, 35%);")
         self.image_processing_group.glayout.addWidget(divider_label, 0, 1, 3, 1)
         # "Normalize" radio buttons
@@ -284,7 +284,7 @@ class ConvpaintWidget(QWidget):
 
         # Add "FE layers" list to FE group
         self.fe_layer_selection = QListWidget()
-        self.fe_layer_selection.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.fe_layer_selection.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.fe_layer_selection.setFixedHeight(200)
         # self.fe_layer_selection.setMaximumHeight(200)
         # self.fe_layer_selection.setMinimumHeight(40)
@@ -360,7 +360,7 @@ class ConvpaintWidget(QWidget):
         if 'Classes' in self.tab_names:
             # Create the main layout
             self.classes_layout = QGridLayout()
-            self.classes_layout.setAlignment(Qt.AlignTop)
+            self.classes_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
             self.classes_widget = QWidget()
             self.classes_widget.setLayout(self.classes_layout)
              
@@ -565,7 +565,7 @@ class ConvpaintWidget(QWidget):
             self.tabs.add_named_tab('Multifile', self.multifile_settings_group.gbox, [12, 0, 1, 2])
 
             # Align on top
-            self.tabs.widget(self.tabs.tab_names.index('Multifile')).layout().setAlignment(Qt.AlignTop)
+            self.tabs.widget(self.tabs.tab_names.index('Multifile')).layout().setAlignment(Qt.AlignmentFlag.AlignTop)
 
             # --- Files group: folder selector + file list
             lbl_folder = QLabel('Folder:')
@@ -583,11 +583,11 @@ class ConvpaintWidget(QWidget):
             # Align the 'Image Filename' header label to the left for readability
             try:
                 header_item = self.multifile_list.horizontalHeaderItem(1)
-                header_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                header_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             except Exception:
                 pass
-            self.multifile_list.setSelectionBehavior(QAbstractItemView.SelectRows)
-            self.multifile_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+            self.multifile_list.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+            self.multifile_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
             # Allow sorting by clicking the header
             self.multifile_list.setSortingEnabled(True)
             self.multifile_list.horizontalHeader().setSectionsClickable(True)
@@ -599,9 +599,9 @@ class ConvpaintWidget(QWidget):
             # Keep an explicit maximum height for the widget area
             self.multifile_list.setFixedHeight(340)
             # Make filename column stretch and annotated column autosize
-            self.multifile_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-            self.multifile_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-            self.multifile_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+            self.multifile_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+            self.multifile_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+            self.multifile_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
             self.multifile_files_group.glayout.addWidget(self.multifile_list, 1, 0, 1, 3)
 
             self.multifile_clear_annotations_btn = QPushButton('Clear selected annot.')
@@ -3036,8 +3036,8 @@ class ConvpaintWidget(QWidget):
             return
         self.fe_layer_selection.clearSelection()
         for layer in layers:
-            # items = self.fe_layer_selection.findItems(layer, Qt.MatchExactly)
-            items = self.fe_layer_selection.findItems(layer, Qt.MatchContains) # In case the layer names in the GUI have indices added, we use contains instead of exactly
+            # items = self.fe_layer_selection.findItems(layer, Qt.MatchFlag.MatchExactly)
+            items = self.fe_layer_selection.findItems(layer, Qt.MatchFlag.MatchContains) # In case the layer names in the GUI have indices added, we use contains instead of exactly
             if not items:
                 warnings.warn(f'Tried to set the layer "{layer}", but it was not in the list of available layers. ' +
                                 'This might indicate a problem with the feature extractor selection.')
@@ -3176,7 +3176,7 @@ class ConvpaintWidget(QWidget):
         # self.fe_layer_selection.clearSelection()
         # default_layers = self._layer_keys_to_texts(self.default_cp_param.fe_layers)
         # for layer in default_layers:
-        #     items = self.fe_layer_selection.findItems(layer, Qt.MatchExactly)
+        #     items = self.fe_layer_selection.findItems(layer, Qt.MatchFlag.MatchExactly)
         #     for item in items:
         #         item.setSelected(True)
         # self.fe_scaling_factors.setCurrentText(str(self.default_cp_param.fe_scalings))
@@ -3873,8 +3873,8 @@ class ConvpaintWidget(QWidget):
                        '\n'.join(unsaved) + '\n')
             if existing_layers or unsaved:
                 msg += "\nDo you want to continue?"
-                resp = QMessageBox.question(self, 'Discard annots in memory and/or existing layers?', msg, QMessageBox.Yes | QMessageBox.No)
-                if resp != QMessageBox.Yes:
+                resp = QMessageBox.question(self, 'Discard annots in memory and/or existing layers?', msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                if resp != QMessageBox.StandardButton.Yes:
                     return
                 self._multifile_warned = True
             
@@ -3925,18 +3925,18 @@ class ConvpaintWidget(QWidget):
             self.multifile_list.insertRow(row)
             # Annotations column: red X for initial state (no annotations loaded)
             item_annot = QTableWidgetItem('✗')
-            item_annot.setTextAlignment(Qt.AlignCenter)
+            item_annot.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             item_annot.setForeground(QtGui.QBrush(QtGui.QColor('red')))
             # Segmentations column: red X for initial state (no segmentations loaded)
             item_seg = QTableWidgetItem('✗')
-            item_seg.setTextAlignment(Qt.AlignCenter)
+            item_seg.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             item_seg.setForeground(QtGui.QBrush(QtGui.QColor('red')))
             # make annotated and segmented flags non-editable
-            item_annot.setFlags(item_annot.flags() & ~Qt.ItemIsEditable)
-            item_seg.setFlags(item_seg.flags() & ~Qt.ItemIsEditable)
+            item_annot.setFlags(item_annot.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            item_seg.setFlags(item_seg.flags() & ~Qt.ItemFlag.ItemIsEditable)
             item_filename = QTableWidgetItem(fname)
             # make filename non-editable
-            item_filename.setFlags(item_filename.flags() & ~Qt.ItemIsEditable)
+            item_filename.setFlags(item_filename.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.multifile_list.setItem(row, 0, item_annot)
             self.multifile_list.setItem(row, 1, item_filename)
             self.multifile_list.setItem(row, 2, item_seg)
@@ -4012,8 +4012,8 @@ class ConvpaintWidget(QWidget):
                 msg = (f'The following files have unsaved annotations that will be lost if you reset the folder:\n' +
                        '\n'.join(unsaved) + '\n' +
                        '\nDo you want to continue?')
-                resp = QMessageBox.question(self, 'Unsaved annotations', msg, QMessageBox.Yes | QMessageBox.No)
-                if resp != QMessageBox.Yes:
+                resp = QMessageBox.question(self, 'Unsaved annotations', msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                if resp != QMessageBox.StandardButton.Yes:
                     return
 
         self.multifile_path_edit.setText('')
@@ -4188,8 +4188,8 @@ class ConvpaintWidget(QWidget):
                     item_annot = self.multifile_list.item(r, 0) # The annot cell of the selected image
                     if item_annot is None: # No cell found; should not happen...
                         item_annot = QTableWidgetItem()
-                        item_annot.setFlags(item_annot.flags() & ~Qt.ItemIsEditable)
-                        item_annot.setTextAlignment(Qt.AlignCenter)
+                        item_annot.setFlags(item_annot.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                        item_annot.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                         self.multifile_list.setItem(r, 0, item_annot)
                     # Distinguish imported/exported (persistent) annotations from in-memory ones
                     store = getattr(self, '_multifile_annotations_store', {})
@@ -4218,8 +4218,8 @@ class ConvpaintWidget(QWidget):
                     item_seg = self.multifile_list.item(r, 2) # The seg cell of the selected image
                     if item_seg is None:
                         item_seg = QTableWidgetItem()
-                        item_seg.setFlags(item_seg.flags() & ~Qt.ItemIsEditable)
-                        item_seg.setTextAlignment(Qt.AlignCenter)
+                        item_seg.setFlags(item_seg.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                        item_seg.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                         self.multifile_list.setItem(r, 2, item_seg)
                     store = getattr(self, '_multifile_segmentation_store', {})
                     val = store.get(filename, None)
@@ -4396,8 +4396,8 @@ class ConvpaintWidget(QWidget):
                 break
         if will_overwrite:
             msg = f"Some files in {out_dir} will be overwritten. Continue?"
-            resp = QMessageBox.question(self, 'Overwrite files?', msg, QMessageBox.Yes | QMessageBox.No)
-            if resp != QMessageBox.Yes:
+            resp = QMessageBox.question(self, 'Overwrite files?', msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if resp != QMessageBox.StandardButton.Yes:
                 return
 
         # Segment each selected file
@@ -4483,8 +4483,8 @@ class ConvpaintWidget(QWidget):
         #                      self._multifile_segmentation_store)
         #     if annots_conflict or seg_conflicts:
         #         msg = 'Importing annotations/segmentations might replace existing data in Convpaint. Continue?'
-        #         resp = QMessageBox.question(self, 'Replace existing data?', msg, QMessageBox.Yes | QMessageBox.No)
-        #         if resp != QMessageBox.Yes:
+        #         resp = QMessageBox.question(self, 'Replace existing data?', msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        #         if resp != QMessageBox.StandardButton.Yes:
         #             return
         #         self.multifile_import_warned = True
 
@@ -4569,8 +4569,8 @@ class ConvpaintWidget(QWidget):
             if amb_count:
                 parts.append(f'{amb_count} image(s) have multiple matching files and will be skipped')
             msg = 'Found: ' + '; '.join(parts) + '. Proceed?'
-            resp = QMessageBox.question(self, 'Import annotations/segmentations?', msg, QMessageBox.Yes | QMessageBox.No)
-            if resp != QMessageBox.Yes:
+            resp = QMessageBox.question(self, 'Import annotations/segmentations?', msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if resp != QMessageBox.StandardButton.Yes:
                 return
 
         # Perform import for single candidates
@@ -4661,8 +4661,8 @@ class ConvpaintWidget(QWidget):
                 break
         if will_overwrite:
             msg = f"Some files in {out_dir} will be overwritten. Continue?"
-            resp = QMessageBox.question(self, 'Overwrite files?', msg, QMessageBox.Yes | QMessageBox.No)
-            if resp != QMessageBox.Yes:
+            resp = QMessageBox.question(self, 'Overwrite files?', msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if resp != QMessageBox.StandardButton.Yes:
                 return
 
         exported = 0
