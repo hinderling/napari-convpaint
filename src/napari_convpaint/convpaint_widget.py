@@ -607,14 +607,14 @@ class ConvpaintWidget(QWidget):
             self.advanced_unsupervised_group.glayout.addWidget(self.text_features_kmeans, 1, 2, 1, 2)
 
             # Feature caching: explanatory note
-            cache_note = QLabel(
+            self.cache_note = QLabel(
                 "Reuse extracted features when segmenting or training the same image "
                 "repeatedly (e.g. while refining annotations), instead of recomputing "
                 "them. Bounded by the memory limit below; on stacks/movies the oldest "
                 "cached slices are dropped first.")
-            cache_note.setStyleSheet(style_for_infos)
-            cache_note.setWordWrap(True)
-            self.advanced_cache_group.glayout.addWidget(cache_note, 0, 0, 1, 3)
+            self.cache_note.setStyleSheet(style_for_infos)
+            self.cache_note.setWordWrap(True)
+            self.advanced_cache_group.glayout.addWidget(self.cache_note, 0, 0, 1, 3)
 
             # Enable/disable checkbox
             self.check_use_cache = QCheckBox('Enable feature caching')
@@ -1015,6 +1015,10 @@ class ConvpaintWidget(QWidget):
         chrome = self.width() - scroll_area.viewport().width() + (0 if scrollbar.isVisible() else scrollbar.sizeHint().width())
         widest = max(self.tabs.widget(i).minimumSizeHint().width() for i in range(self.tabs.count()))
         self.setMinimumWidth(widest + chrome)
+        # Word-wrapped notes in grid layouts do not always get the height they need when narrow:
+        # reserve the height they need at the narrowest width
+        for note in (self.advanced_note, self.cache_note):
+            note.setMinimumHeight(note.heightForWidth(widest + chrome - (self.width() - note.width())))
 
     def ensure_init(self):
         """Run deferred model initialization synchronously if it hasn't run yet.
