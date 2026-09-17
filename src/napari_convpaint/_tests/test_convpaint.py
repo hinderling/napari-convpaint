@@ -795,3 +795,23 @@ def test_all_models_train_predict(make_napari_viewer, fe_name, image_type):
     seg = viewer.layers['segmentation'].data
     assert seg.shape == annot.shape, f"Segmentation shape {seg.shape} != annotations shape {annot.shape}"
     assert np.unique(seg).size > 1, "Segmentation is uniform — model produced no meaningful output"
+
+def test_set_fe_model_reuses_the_temp_fe(make_napari_viewer, monkeypatch):
+    """'Set FE model' builds a temp FE to read its defaults; the new model must reuse that
+    instance instead of creating the FE a second time (heavy FEs load weights on creation)."""
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    viewer = make_napari_viewer()
+    my_widget = ConvpaintWidget(viewer)
+    my_widget.ensure_init()
+    viewer.add_image(np.random.random((64, 64)), name='img')
+    my_widget._on_select_layer()
+
+    created = []
+    orig_create_fe = ConvpaintModel.create_fe
+    monkeypatch.setattr(ConvpaintModel, 'create_fe', staticmethod(lambda *a, **k: created.append((a, k)) or orig_create_fe(*a, **k)))
+    my_widget.qcombo_fe_type.setCurrentText('gaussian_features') # (selecting creates a temp FE for the GUI, not counted)
+    created.clear()
+    my_widget._on_set_fe_model()
+    assert len(created) == 1, f"FE created {len(created)} times on 'Set FE model': {created}"
+    assert my_widget.cp_model.get_param('fe_name') == 'gaussian_features'
+
