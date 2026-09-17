@@ -86,3 +86,19 @@ def test_hookmodel_empty_layer_selection_resets_properties():
     assert (model.padding, model.patch_size, model.has_global_context) == (0, 1, False)
 
 
+
+
+def test_hookmodel_layer_order_independent():
+    """The features and FE properties must not depend on the order in which the layers are given
+    (the widget passes them in selection order): a deeper layer listed before a shallower one used
+    to be dropped silently, as the forward pass stopped at the shallower one."""
+    shallow = 'features.0 Conv2d(3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))'
+    deep = 'features.5 Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))'
+    img = np.random.default_rng(0).random((3, 1, 32, 32), dtype=np.float32)  # [C, Z, H, W]
+    ordered = Hookmodel(model_name='vgg16', layers=[shallow, deep])
+    reversed_ = Hookmodel(model_name='vgg16', layers=[deep, shallow])
+    f_ordered = ordered.extract_features_from_stack(img)
+    f_reversed = reversed_.extract_features_from_stack(img)
+    assert [f.shape for f in f_reversed] == [f.shape for f in f_ordered]
+    assert all(np.allclose(a, b) for a, b in zip(f_reversed, f_ordered))
+    assert (reversed_.padding, reversed_.patch_size) == (ordered.padding, ordered.patch_size)
