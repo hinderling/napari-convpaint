@@ -23,6 +23,19 @@ from collections import defaultdict
 # from .convpaint_model import ConvpaintModel
 
 
+class NoteLabel(QLabel):
+    """Word-wrapped label that always gets the height its text needs at the current width
+    (in grid layouts, wrapped labels are otherwise cut off when the widget gets narrow)."""
+
+    def __init__(self, text=''):
+        super().__init__(text)
+        self.setWordWrap(True)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.setMinimumHeight(self.heightForWidth(self.width()))
+
+
 class PathLabel(QLabel):
     """Label showing a path, elided in the middle when too long (full path as tooltip and in text())."""
 
@@ -461,11 +474,10 @@ class ConvpaintWidget(QWidget):
             self.tabs.add_named_tab('Advanced', self.advanced_cache_group.gbox)
 
             # Text to warn the user about their responsibility
-            self.advanced_note = QLabel("Applying these options may lead to situations where the tool does not function as expected. " +
+            self.advanced_note = NoteLabel("Applying these options may lead to situations where the tool does not function as expected. " +
                                         "In particular, it is the user's responsibility that the dimensions of images and annotations are compatible. " +
                                         "Please refer to the documentation or contact the developers for assistance.")
             self.advanced_note.setStyleSheet(style_for_infos)
-            self.advanced_note.setWordWrap(True)
             self.advanced_note_group.glayout.addWidget(self.advanced_note, 0, 0, 1, 2)
 
             # Show/hide tooltips
@@ -607,13 +619,12 @@ class ConvpaintWidget(QWidget):
             self.advanced_unsupervised_group.glayout.addWidget(self.text_features_kmeans, 1, 2, 1, 2)
 
             # Feature caching: explanatory note
-            self.cache_note = QLabel(
+            self.cache_note = NoteLabel(
                 "Reuse extracted features when segmenting or training the same image "
                 "repeatedly (e.g. while refining annotations), instead of recomputing "
                 "them. Bounded by the memory limit below; on stacks/movies the oldest "
                 "cached slices are dropped first.")
             self.cache_note.setStyleSheet(style_for_infos)
-            self.cache_note.setWordWrap(True)
             self.advanced_cache_group.glayout.addWidget(self.cache_note, 0, 0, 1, 3)
 
             # Enable/disable checkbox
@@ -1018,10 +1029,6 @@ class ConvpaintWidget(QWidget):
         chrome = self.width() - scroll_area.viewport().width() + (0 if scrollbar.isVisible() else scrollbar.sizeHint().width())
         widest = max(self.tabs.widget(i).minimumSizeHint().width() for i in range(self.tabs.count()))
         self.setMinimumWidth(widest + chrome)
-        # Word-wrapped notes in grid layouts do not always get the height they need when narrow:
-        # reserve the height they need at the narrowest width
-        for note in (self.advanced_note, self.cache_note):
-            note.setMinimumHeight(note.heightForWidth(widest + chrome - (self.width() - note.width())))
 
     def ensure_init(self):
         """Run deferred model initialization synchronously if it hasn't run yet.
