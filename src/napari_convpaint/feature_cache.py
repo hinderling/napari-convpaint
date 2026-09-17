@@ -46,6 +46,11 @@ def _payload_nbytes(payload) -> int:
 class FeatureCache:
     """LRU feature cache bounded by a memory budget.
 
+    Eviction prefers entries that were never used over least-recently-used ones: when a
+    stack larger than the cache is processed plane by plane, the first planes stay resident
+    instead of being pushed out one by one, so a second pass over the stack reuses them
+    (with plain LRU, every plane would evict the next one it needs -> no reuse at all).
+
     Parameters
     ----------
     max_bytes : int or None
@@ -55,7 +60,7 @@ class FeatureCache:
     """
 
     def __init__(self, max_bytes: int | None = None, enabled: bool = True):
-        self._store: "OrderedDict[tuple, tuple]" = OrderedDict()  # key -> (payload, nbytes)
+        self._store: "OrderedDict[tuple, tuple]" = OrderedDict()  # key -> (payload, nbytes, used)
         self._total_bytes = 0
         self.enabled = bool(enabled)
         if max_bytes is None:
@@ -77,6 +82,7 @@ class FeatureCache:
             return None
         item = self._store.get(key)
         if item is not None:
+            self._store[key] = (item[0], item[1], True) # Mark as used
             self._store.move_to_end(key)  # most-recently-used
             self.hits += 1
             return item[0]
@@ -101,12 +107,13 @@ class FeatureCache:
             self._evict_one()
         # The key is absent at this point (popped above if present), so
         # assignment appends at the MRU end.
-        self._store[key] = (payload, nbytes)
+        self._store[key] = (payload, nbytes, False) # (payload, size, used since stored)
         self._total_bytes += nbytes
 
     def _evict_one(self):
-        key, (payload, nbytes) = self._store.popitem(last=False)  # LRU = oldest
-        self._total_bytes -= nbytes
+        """Evict the newest never-used entry if there is one, else the least recently used."""
+        key = next((k for k in reversed(self._store) if not self._store[k][2]), next(iter(self._store)))
+        self._total_bytes -= self._store.pop(key)[1]
 
     # -- invalidation / limits --------------------------------------------
 
