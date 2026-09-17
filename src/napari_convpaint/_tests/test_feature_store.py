@@ -93,10 +93,27 @@ def test_store_size_cap(tmp_path):
 
 def test_store_refuses_foreign_folder(tmp_path):
     (tmp_path / "somefile.txt").write_text("not a store")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="not empty and not a feature store"):
         FeatureStore(tmp_path)
     # An empty folder is fine
     FeatureStore(tmp_path / "empty")
+    # A folder that cannot be created is rejected with a clear message, not an OSError
+    with pytest.raises(ValueError, match="Cannot create"):
+        FeatureStore(tmp_path / "somefile.txt" / "sub")
+
+
+def test_store_write_failure_degrades_to_not_storing(tmp_path, monkeypatch):
+    """If the folder becomes unwritable, put() warns once and stops storing instead of raising
+    inside the extraction (the store stays usable for reading)."""
+    rng = np.random.default_rng(4)
+    store = FeatureStore(tmp_path / "store")
+    store.put(("a", ("s",)), _payload(rng))
+    monkeypatch.setattr(np, "save", lambda *a, **k: (_ for _ in ()).throw(OSError(13, "Permission denied")))
+    with pytest.warns(UserWarning, match="cannot write"):
+        store.put(("b", ("s",)), _payload(rng))
+    assert len(store) == 1 and ("b", ("s",)) not in store
+    assert not any(d.name.endswith(".tmp") for d in (tmp_path / "store").iterdir())   # no leftovers
+    assert store.get(("a", ("s",))) is not None
 
 
 # --- integration with the model --------------------------------------------
@@ -237,6 +254,16 @@ def test_widget_store_controls(make_napari_viewer, tmp_path, monkeypatch):
     w.check_use_store.setChecked(False)
     assert w.cp_model._feature_store is None and not w.btn_store_delete.isEnabled()
     assert (tmp_path / 'store' / 'convpaint_feature_store.json').is_file()
+
+    # A folder that cannot be used: reported, checkbox stays off, the previous folder is kept,
+    # and the store can be enabled again right away (nothing sticky)
+    (tmp_path / 'dogs').mkdir(); (tmp_path / 'dogs' / 'dog1.png').write_bytes(b'x')
+    w.store_folder = str(tmp_path / 'dogs')
+    w.check_use_store.setChecked(True)
+    assert w.cp_model._feature_store is None and not w.check_use_store.isChecked()
+    assert w.store_folder == str(tmp_path / 'store') and not w.btn_store_features.isEnabled()
+    w.check_use_store.setChecked(True)
+    assert w.cp_model._feature_store is not None and w.cp_model._feature_store.folder == str(tmp_path / 'store')
 
 
 def test_widget_store_features_of_stack(make_napari_viewer, tmp_path):
