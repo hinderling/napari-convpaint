@@ -1091,15 +1091,18 @@ class ConvpaintWidget(QWidget):
     def _apply_feature_store(self, *args, recreate=False):
         """Apply the feature store settings from the GUI controls to the active model
         (see _apply_feature_cache). The store is on when the checkbox is checked, using the
-        chosen folder; unchecking only disconnects it (the stored files are kept)."""
+        chosen folder; unchecking only disconnects it (the stored files are kept).
+        A folder that cannot be used is reported and not kept."""
         self.store_enabled = self.check_use_store.isChecked()
         if not self.store_enabled:
             self.cp_model.disable_feature_store()
         elif self.cp_model._feature_store is None or recreate:
             try:
                 self.cp_model.enable_feature_store(self.store_folder)
-            except ValueError as e: # Folder not usable (e.g. not empty and not a feature store)
-                warnings.warn(str(e))
+                self._store_folder_ok = self.store_folder
+            except ValueError as e: # Folder not usable (not empty and not a feature store, no write access, ...)
+                show_info(f'Feature store not enabled: {e}')
+                self.store_folder = self._store_folder_ok # Back to the last usable folder
                 self.check_use_store.blockSignals(True)
                 self.check_use_store.setChecked(False)
                 self.check_use_store.blockSignals(False)
@@ -2733,6 +2736,7 @@ class ConvpaintWidget(QWidget):
         self.store_enabled = False # Feature store off by default (on = keep the features of all processed planes on disk)
         import platformdirs # (napari dependency)
         self.store_folder = str(Path(platformdirs.user_cache_dir('convpaint')) / 'feature_store') # Default folder of the feature store
+        self._store_folder_ok = self.store_folder # Last folder the store could be enabled with (to fall back to)
         self.fe_device = 'auto' # Device to use for the FE (if applicable); 'auto' will use GPU if available, otherwise CPU
         self.clf_device = 'auto' # Device to use for the classifier (if applicable); 'auto' will use GPU if available, otherwise CPU
         self.input_channels = "" # Input channels for the model (as txt, will be parsed)
