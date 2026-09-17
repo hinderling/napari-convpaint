@@ -78,6 +78,7 @@ class DinoJafarFeatures(FeatureExtractor):
         self.num_input_channels = [3]           # RGB
         self.norm_mode = "imagenet"
         self.rgb_input = True
+        self.has_global_context = True # ViT backbone: every token depends on the whole image (as in dino.py)
         # The largest scale equals the backbone patch size — at that scale
         # JAFAR is asked for native patch-resolution output (no upsampling).
         self.proposed_scalings = [[1],
