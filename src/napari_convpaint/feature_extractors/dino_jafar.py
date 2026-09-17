@@ -262,11 +262,10 @@ class DinoJafarFeatures(FeatureExtractor):
         else:
             tile_px = min(desired_tile_px, max_fit)
 
-        # Ensure overlap_tokens yields positive stride
-        # stride = tile_px - overlap_tokens*ps
-        max_overlap_tokens = (tile_px // ps) - 1  # need at least one stride
-        if max_overlap_tokens < 0:
-            max_overlap_tokens = 0
+        # Clamp overlap_tokens for a positive stride (tile_px - overlap*ps > 0) and for the
+        # blending window of _extract_tiled_multiscale (ramp/flat/ramp needs tile_px - 2*overlap*ps >= 0)
+        tiles = tile_px // ps
+        max_overlap_tokens = max(0, min(tiles - 1, tiles // 2))
         if overlap_tokens > max_overlap_tokens:
             overlap_tokens = max_overlap_tokens
 
