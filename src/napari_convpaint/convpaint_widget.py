@@ -766,8 +766,8 @@ class ConvpaintWidget(QWidget):
             # --- Settings group: checkboxes
             self.lbl_import_open_labels = QLabel('Import and auto-open:')
             self.multifile_settings_group.glayout.addWidget(self.lbl_import_open_labels, 0, 0, 1, 1)
-            self.check_open_import_annotations = QCheckBox('Annotations')
-            self.check_open_import_segmentations = QCheckBox('Segmentation')
+            self.check_open_import_annotations = QCheckBox('Annot.') # (as in the table header)
+            self.check_open_import_segmentations = QCheckBox('Segm.')
             self.check_open_import_annotations.setChecked(True)
             self.check_open_import_segmentations.setChecked(True)
             self.multifile_settings_group.glayout.addWidget(self.check_open_import_annotations, 0, 1, 1, 1)
