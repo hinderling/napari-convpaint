@@ -918,7 +918,7 @@ class ConvpaintWidget(QWidget):
                                             'so that stacks and movies only need to be extracted once (e.g. for re-predicting after re-training).\n' +
                                             'Nothing is dropped automatically; use "Delete stored features" to free the disk space.')
             for w in [self.store_folder_label, self.btn_store_folder]:
-                w.setToolTip('Folder of the feature store (must be empty, not yet existing, or a feature store).')
+                w.setToolTip('Folder of the feature store (must be empty, not yet existing, or a feature store); choosing one enables the store.')
             self.store_size_label.setToolTip('Number of stored images/planes and their size on disk.')
             self.btn_store_delete.setToolTip('Delete all stored features in the folder (the store stays active).')
             self.btn_store_features.setToolTip('Extract the features of the selected image (all planes of a stack) into the feature store now,\n' +
@@ -1082,32 +1082,35 @@ class ConvpaintWidget(QWidget):
 
     def _apply_feature_store(self, *args, recreate=False):
         """Apply the feature store settings from the GUI controls to the active model
-        (see _apply_feature_cache). The store is on when the checkbox is checked, using the
-        chosen folder; unchecking only disconnects it (the stored files are kept).
+        (see _apply_feature_cache): the store is on when the checkbox is checked, using the
+        chosen folder; unchecking only disconnects it (the stored files are kept). The model's
+        store is the single source of truth for the widget state (checkbox, buttons, labels).
         A folder that cannot be used is reported and not kept."""
-        self.store_enabled = self.check_use_store.isChecked()
-        if not self.store_enabled:
+        if not self.check_use_store.isChecked() or recreate:
             self.cp_model.disable_feature_store()
-        elif self.cp_model._feature_store is None or recreate:
+        if self.check_use_store.isChecked() and self.cp_model._feature_store is None:
             try:
                 self.cp_model.enable_feature_store(self.store_folder)
                 self._store_folder_ok = self.store_folder
             except ValueError as e: # Folder not usable (not empty and not a feature store, no write access, ...)
                 show_info(f'Feature store not enabled: {e}')
                 self.store_folder = self._store_folder_ok # Back to the last usable folder
-                self.check_use_store.blockSignals(True)
-                self.check_use_store.setChecked(False)
-                self.check_use_store.blockSignals(False)
-                self.store_enabled = False
-        self.btn_store_delete.setEnabled(self.cp_model._feature_store is not None)
-        self.btn_store_features.setEnabled(self.cp_model._feature_store is not None)
+        self.store_enabled = self.cp_model._feature_store is not None
+        self.check_use_store.blockSignals(True)
+        self.check_use_store.setChecked(self.store_enabled)
+        self.check_use_store.blockSignals(False)
+        self.btn_store_delete.setEnabled(self.store_enabled)
+        self.btn_store_features.setEnabled(self.store_enabled)
         self._refresh_reuse_labels()
 
     def _on_choose_store_folder(self):
-        """Let the user choose the folder of the feature store."""
+        """Let the user choose the folder of the feature store (and use it right away)."""
         folder = QFileDialog.getExistingDirectory(self, 'Choose a folder for the feature store', self.store_folder)
         if folder:
             self.store_folder = folder
+            self.check_use_store.blockSignals(True)
+            self.check_use_store.setChecked(True)
+            self.check_use_store.blockSignals(False)
             self._apply_feature_store(recreate=True)
 
     def _on_clear_cache(self):
