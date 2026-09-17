@@ -37,14 +37,21 @@ class FeatureStore:
     def __init__(self, folder, max_bytes=None):
         self.folder = str(folder)
         self.max_bytes = max_bytes
-        os.makedirs(self.folder, exist_ok=True)
+        # Validate the folder up front (creatable, a feature store or empty, writable), with one clear
+        # message per case, so that a bad folder is rejected here and not during extraction
+        try:
+            os.makedirs(self.folder, exist_ok=True)
+        except OSError as e:
+            raise ValueError(f"Cannot create the folder '{self.folder}' ({e.strerror}).")
         marker = os.path.join(self.folder, _MARKER)
-        if not os.path.isfile(marker):
-            if os.listdir(self.folder):
-                raise ValueError(f"'{self.folder}' is not empty and not a feature store. "
-                                 "Choose an empty (or not yet existing) folder.")
+        if not os.path.isfile(marker) and os.listdir(self.folder):
+            raise ValueError(f"'{self.folder}' is not empty and not a feature store. "
+                             "Choose an empty (or not yet existing) folder.")
+        try:
             with open(marker, 'w') as f:
                 json.dump({"format": 1}, f)
+        except OSError as e:
+            raise ValueError(f"No write access to '{self.folder}' ({e.strerror}).")
         self.hits = 0
         self.misses = 0
         self._warned_full = False
@@ -109,18 +116,25 @@ class FeatureStore:
         # Write into a temporary folder and rename it, so that readers never see a partial entry
         entry_dir = self._entry_dir(key)
         tmp_dir = entry_dir + ".tmp"
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        os.makedirs(tmp_dir)
-        meta = {"was_torch": bool(payload["was_torch"]), "scales": []}
-        for i, (arrays, pre_shape, reduced_shape) in enumerate(payload["scales"]):
-            for j, a in enumerate(arrays):
-                np.save(os.path.join(tmp_dir, f"s{i}_{j}.npy"), np.ascontiguousarray(a))
-            meta["scales"].append({"n_arrays": len(arrays),
-                                   "pre_shape": list(pre_shape),
-                                   "reduced_shape": list(reduced_shape)})
-        with open(os.path.join(tmp_dir, _META), 'w') as f:
-            json.dump(meta, f)
-        os.rename(tmp_dir, entry_dir)
+        try:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            os.makedirs(tmp_dir)
+            meta = {"was_torch": bool(payload["was_torch"]), "scales": []}
+            for i, (arrays, pre_shape, reduced_shape) in enumerate(payload["scales"]):
+                for j, a in enumerate(arrays):
+                    np.save(os.path.join(tmp_dir, f"s{i}_{j}.npy"), np.ascontiguousarray(a))
+                meta["scales"].append({"n_arrays": len(arrays),
+                                       "pre_shape": list(pre_shape),
+                                       "reduced_shape": list(reduced_shape)})
+            with open(os.path.join(tmp_dir, _META), 'w') as f:
+                json.dump(meta, f)
+            os.rename(tmp_dir, entry_dir)
+        except OSError as e: # E.g. the folder became unwritable (removed, locked by a sync client)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            if not self._warned_full:
+                warnings.warn(f"Feature store '{self.folder}': cannot write ({e.strerror}), features are not stored anymore.")
+                self._warned_full = True
+            return
         self._nbytes += sum(os.path.getsize(os.path.join(entry_dir, n)) for n in os.listdir(entry_dir))
 
     def clear(self):
