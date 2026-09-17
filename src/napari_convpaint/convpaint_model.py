@@ -1032,10 +1032,7 @@ class ConvpaintModel:
             if num_new == 0:
                 warnings.warn("No new annotations. Train with existing features.")
                 return [], [], [], [], params_for_extract.image_downsample
-            # Filter out the data where annots are totally empty (one keep-mask
-            # for data, ids and annotations — filtering img_ids against the
-            # already-filtered annotations would just truncate the list and
-            # misalign ids with images).
+            # Filter out the data where annots are totally empty (same mask for data, ids and annotations)
             else:
                 keep = [np.sum(ann > 0) > 0 for ann in annotations]
                 data = [d for d, k in zip(data, keep) if k]
