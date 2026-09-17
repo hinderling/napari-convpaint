@@ -72,3 +72,17 @@ def test_scale_img_image_and_labels_shape_match(factor, H, W, upscale):
         f"shape mismatch at factor={factor}, upscale={upscale}, (H,W)=({H},{W}): "
         f"img={img_out.shape[-2:]}  lbl={lbl_out.shape[-2:]}"
     )
+
+
+def test_hookmodel_empty_layer_selection_resets_properties():
+    """Re-hooking with an empty selection must reset padding / patch size / global context to
+    the neutral defaults instead of keeping the previous selection's values."""
+    model = Hookmodel(model_name='vgg16')
+    deep = ['features.0 Conv2d(3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))',
+            'features.12 Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))']
+    model.register_hooks(selected_layers=deep)
+    assert model.padding > 0 and model.patch_size > 1
+    model.register_hooks(selected_layers=[])
+    assert (model.padding, model.patch_size, model.has_global_context) == (0, 1, False)
+
+
