@@ -21,17 +21,34 @@ def test_hit_and_miss():
     assert c.stats()["misses"] == 1
 
 
-def test_lru_eviction_by_cap():
-    # Cap ~2.5 MB; each entry ~1 MB -> at most 2 fit, oldest evicted.
+def test_eviction_by_cap():
+    # Cap ~2.5 MB; each entry ~1 MB -> at most 2 fit. Nothing was used yet, so the newest
+    # never-used entry ("b") is evicted, not the oldest (see test_scan_larger_than_cache...).
     c = FeatureCache(max_bytes=int(2.5 * 10**6))
     c.put(("a",), _arr(1))
     c.put(("b",), _arr(1))
     assert len(c) == 2
-    c.put(("c",), _arr(1))  # evicts "a" (LRU)
+    c.put(("c",), _arr(1))  # evicts "b"
     assert len(c) == 2
-    assert c.get(("a",)) is None
-    assert c.get(("b",)) is not None
+    assert c.get(("b",)) is None
+    assert c.get(("a",)) is not None
     assert c.get(("c",)) is not None
+
+
+def test_scan_larger_than_cache_keeps_first_planes():
+    """A stack larger than the cache, processed plane by plane: the first planes stay resident
+    (never-used entries are evicted newest-first), so a second pass reuses them and only extracts
+    the rest. With plain LRU every plane would evict the next one needed -> zero hits."""
+    c = FeatureCache(max_bytes=int(30.5 * 10**6))       # room for 30 planes of 1 MB
+    for z in range(50):                                  # first pass: 50 misses
+        if c.get(("plane", z)) is None:
+            c.put(("plane", z), _arr(1))
+    assert len(c) == 30 and c.stats()["hits"] == 0
+    for z in range(50):                                  # second pass
+        if c.get(("plane", z)) is None:
+            c.put(("plane", z), _arr(1))
+    assert c.stats()["hits"] == 29                       # planes 0-28 reused (29 = room minus the one slot that cycles), the rest extracted again
+    assert all(("plane", z) in c._store for z in range(29))
 
 
 def test_lru_touch_on_get_protects_entry():
