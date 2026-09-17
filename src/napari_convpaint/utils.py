@@ -110,6 +110,10 @@ def guided_model_download(model_file: str, model_url: str, model_dir: str = None
     if use_napari:
         viewer.window._status_bar._toggle_activity_dock(True)
 
+    # Stream to a temporary ".part" file and only rename it into place once the
+    # download is complete, so an interrupted transfer never leaves a corrupt
+    # file cached where the existence check above would hand it back as valid.
+    tmp_path = model_path + '.part'
     try:
         with requests.get(model_url, stream=True) as r:
             r.raise_for_status()
@@ -128,14 +132,16 @@ def guided_model_download(model_file: str, model_url: str, model_dir: str = None
                 print(f"Downloading {model_file} ({total / 1e6:.2f} MB) from {model_url}...")
                 pbr_ctx = None
 
+            written = 0
             try:
                 if pbr_ctx is not None:
                     pbr_ctx.set_description("Downloading weights")
 
-                with open(model_path, 'wb') as f:
+                with open(tmp_path, 'wb') as f:
                     for i, chunk in enumerate(r.iter_content(chunk_size=chunk_size)):
                         if chunk:
                             f.write(chunk)
+                            written += len(chunk)
                         if pbr_ctx is not None:
                             if i % update_every == 0 or i == num_chunks - 1:
                                 pbr_ctx.update(update_every)
@@ -145,7 +151,15 @@ def guided_model_download(model_file: str, model_url: str, model_dir: str = None
                 if pbr_ctx is not None:
                     pbr_ctx.close()
 
+        # A truncated stream (e.g. the IncompleteRead HuggingFace occasionally
+        # throws) must not be published as if it were a complete file.
+        if total and written < total:
+            raise IOError(f"Incomplete download: got {written} of {total} bytes")
+        os.replace(tmp_path, model_path)  # atomic: the cache only ever sees a complete file
+
     except Exception as e:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)  # never leave a partial file behind
         if use_napari:
             show_error(
                 f"❌ Download failed: {e}\n\n"
