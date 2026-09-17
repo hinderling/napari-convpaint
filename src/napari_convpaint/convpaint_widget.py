@@ -2519,8 +2519,8 @@ class ConvpaintWidget(QWidget):
         self.cache_max_mb = 2048 # Max RAM (MB) the feature cache may use (2 GB default, clamped at startup to a quarter of the available RAM)
         self.untile_info_shown = False # Whether the user was informed that auto-segment with caching skips annotation tiles
         self.store_enabled = False # Feature store off by default (on = keep the features of all processed planes on disk)
-        import appdirs
-        self.store_folder = str(Path(appdirs.user_cache_dir('convpaint')) / 'feature_store') # Default folder of the feature store
+        import platformdirs # (napari dependency)
+        self.store_folder = str(Path(platformdirs.user_cache_dir('convpaint')) / 'feature_store') # Default folder of the feature store
         self.fe_device = 'auto' # Device to use for the FE (if applicable); 'auto' will use GPU if available, otherwise CPU
         self.clf_device = 'auto' # Device to use for the classifier (if applicable); 'auto' will use GPU if available, otherwise CPU
         self.input_channels = "" # Input channels for the model (as txt, will be parsed)
