@@ -105,31 +105,18 @@ class ConvpaintWidget(QWidget):
         tab_bar = self.tabs.tabBar()
         tab_bar.setUsesScrollButtons(True)
 
-        # (Do NOT reparent the tab bar into a custom header row: QTabWidget
-        # keeps managing its bar's geometry on every resize and re-centers it,
-        # fighting any outside layout. The docs link lives on the Home tab.)
-
         # Add to your main layout
         self.main_layout.addWidget(self.tabs)
 
-        # Remove the dead space around the tab content: no pane frame, tabs
-        # left-aligned on the bar row, and a tight top margin on each tab page.
+        # Spacing and margins like napari's own panels
         self.main_layout.setSpacing(0)
-        # Tight outer margins so the widget sits in its dock like napari's own
-        # panels (the default ~20px on every side reads as extra indentation
-        # compared to e.g. the layer controls); top matches the 4px gap
-        # between the tab bar and the first item.
         self.main_layout.setContentsMargins(6, 4, 6, 6)
         self._style_tabs()
         self.viewer.events.theme.connect(self._style_tabs)
         for i in range(self.tabs.count()):
             page_layout = self.tabs.widget(i).layout()
             if page_layout is not None:
-                # Zero left margin: the first tab starts exactly at the bar's
-                # left edge (x=0, measured), and a group box draws its frame at
-                # its widget edge — so any left page margin shows up as
-                # misalignment between tab headers and content. The small right
-                # margin keeps a gap between items and the vertical scrollbar.
+                # No left margin (group boxes align with the tab headers); right margin keeps a gap to the scrollbar
                 page_layout.setContentsMargins(0, 4, 6, 8)
 
         # Align rows in some tabs on top
@@ -257,9 +244,7 @@ class ConvpaintWidget(QWidget):
         self.image_processing_group.glayout.addWidget(self.radio_no_normalize, 0,2,1,1, Qt.AlignLeft)
         self.image_processing_group.glayout.addWidget(self.radio_normalize_over_stack, 1,2,1,1, Qt.AlignLeft)
         self.image_processing_group.glayout.addWidget(self.radio_normalize_by_image, 2,2,1,1, Qt.AlignLeft)
-        # Extra width goes to the two radio columns, not the divider column —
-        # otherwise the divider's cell grows and pushes the right column away
-        # from it (looks centered instead of left-aligned).
+        # Extra width goes to the two radio columns, not to the divider column
         self.image_processing_group.glayout.setColumnStretch(0, 1)
         self.image_processing_group.glayout.setColumnStretch(1, 0)
         self.image_processing_group.glayout.setColumnStretch(2, 1)
@@ -281,8 +266,6 @@ class ConvpaintWidget(QWidget):
         # "Tile annotations" checkbox
         self.check_tile_annotations = QCheckBox('Tile annotations for training')
         self.check_tile_annotations.setChecked(False)
-        # Stacked vertically: side by side these two are the widest row of the
-        # Home tab and would dictate the dock's minimum width.
         self.acceleration_group.glayout.addWidget(self.check_tile_annotations, 0,0,1,2)
         # "Tile image" checkbox
         self.check_tile_image = QCheckBox('Tile image for segmentation')
@@ -551,7 +534,6 @@ class ConvpaintWidget(QWidget):
 
             # Button to display a diagram of class distribution
             self.btn_class_distribution_trained = QPushButton('Show class distr. (trained)')
-            # Below the counts label (side by side they would be the widest row)
             self.advanced_training_group.glayout.addWidget(self.btn_class_distribution_trained, 4, 0, 1, 4)
 
             # Reset training button
@@ -736,8 +718,6 @@ class ConvpaintWidget(QWidget):
             self.multifile_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
             self.multifile_files_group.glayout.addWidget(self.multifile_list, 1, 0, 1, 3)
 
-            # 2+1 rows: three buttons side by side would be the widest row of
-            # the tab and dictate the dock's minimum width.
             self.multifile_clear_annotations_btn = QPushButton('Clear selected annot.')
             self.multifile_reset_group.glayout.addWidget(self.multifile_clear_annotations_btn, 1, 0, 1, 1)
             self.multifile_clear_segmentations_btn = QPushButton('Clear selected segm.')
@@ -750,8 +730,6 @@ class ConvpaintWidget(QWidget):
             self.multifile_preview_btn = QPushButton('Preview segmentation')
             self.multifile_segment_selected_btn = QPushButton('Segment selected')
 
-            # 2+1 rows: three buttons side by side would be the widest row of
-            # the tab and dictate the dock's minimum width.
             self.multifile_train_group.glayout.addWidget(self.multifile_train_all_annot_btn, 0, 0, 1, 1)
             self.multifile_train_group.glayout.addWidget(self.multifile_preview_btn, 0, 1, 1, 1)
             self.multifile_train_group.glayout.addWidget(self.multifile_segment_selected_btn, 1, 0, 1, 2)
