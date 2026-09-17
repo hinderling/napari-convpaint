@@ -53,6 +53,19 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install vcredist140 --no-progress
 
+      # Cache downloaded model weights (DINOv2/v3, JAFAR, VGG16, etc.) across
+      # runs so the tests don't re-fetch ~100s of MB from HuggingFace / PyTorch
+      # every time — the flaky network path that was intermittently failing the
+      # DINOv3 tests on the Windows runners. Bump the key suffix to invalidate.
+      - name: Cache model weights
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/torch/hub/checkpoints
+            ~/.cache/huggingface
+          key: convpaint-model-weights-${{ runner.os }}-v1
+          restore-keys: |
+            convpaint-model-weights-${{ runner.os }}-
 
       # note: if you need dependencies from conda, considering using
       # setup-miniconda: https://github.com/conda-incubator/setup-miniconda
