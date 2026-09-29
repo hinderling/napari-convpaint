@@ -956,29 +956,27 @@ class ConvpaintModel:
         h.update(str(arr.dtype).encode())
         return h.hexdigest()
 
-    def _extract_pyramid_cached(self, d, param, patched=True, device=None, skip_cache=False):
+    def _extract_pyramid_cached(self, d, param, patched=True, device=None, skip_reuse=False):
         """Extract the feature pyramid for one image, consulting the feature
         cache. Behaviour with the cache disabled (the default) is exactly
         extract_features_pyramid; enabled, it caches/reuses the native features
         (bit-identical output, since the pyramid split is exact)."""
         cache = self._feature_cache
         fe = self.fe_model
-        if skip_cache or cache is None or not cache.enabled or not fe.supports_feature_cache(param):
+        if skip_reuse or cache is None or not cache.enabled or not fe.supports_feature_reuse(param):
             return fe.extract_features_pyramid(d, param, patched=patched, device=device)
         key = (self._data_hash(d), self._fe_cache_signature())
-        payload = cache.get(key)
-        if payload is not None:
-            # Hit: reconstruct on `device` (the payload is lifted back to torch
-            # if that is the FE's native form) — same backend as a fresh
-            # extraction, so hits are as fast as (and identical to) misses.
-            return fe.features_from_cacheable(payload, d.shape, param,
-                                              patched=patched, device=device)
-        # Miss: one extraction pass yields both the features (reconstructed
-        # from the on-device native form) and the numpy payload to store.
-        features, payload = fe.cacheable_repr_and_features(d, param, device,
-                                                           patched=patched)
-        cache.put(key, payload)
-        return features
+        entry = cache.get(key)
+        if entry is not None:
+            # Hit: lift the native features back onto `device` (if that is the FE's native
+            # form) and reconstruct there — same backend as a fresh extraction, so hits are
+            # as fast as (and identical to) misses.
+            native = fe.native_from_numpy(entry, device)
+        else:
+            # Miss: extract once; the features and the cache entry both come from these natives
+            native = fe.extract_native(d, param, device)
+            cache.put(key, fe.native_to_numpy(native))
+        return fe.reconstruct_from_native(native, d.shape, param, patched)
 
 ### BACKEND METHOD FOR FEATURE EXTRACTION
 
@@ -1191,13 +1189,13 @@ class ConvpaintModel:
         )
         # Annotation tiles are cut around the (new) annotations, so they never repeat and
         # cannot serve a prediction -> do not cache them (only whole planes / prediction tiles)
-        skip_cache = use_annots and params_for_extract.tile_annotations
+        skip_reuse = use_annots and params_for_extract.tile_annotations
         features = [self._extract_pyramid_cached(
                 d,
                 params_for_extract,
                 patched=keep_patched,
                 device=fe_runtime_device,
-                skip_cache=skip_cache)
+                skip_reuse=skip_reuse)
                     for d in data]
         
         if pca_components:
