@@ -1825,19 +1825,18 @@ class ConvpaintWidget(QWidget):
             # Get the data
             image_plane = self._get_current_plane_norm()
             in_channels = self._parse_in_channels(self.input_channels)
-            min_size = self._parse_inst_min_size()
 
             # Predict image outputs; skip norm as it is done above
-            if self.add_seg or self.add_probas:
+            # The segmentation is only computed if it is needed (as output or as basis for the instances)
+            if self.add_seg or self.add_instances:
                 probas, segmentation = self.cp_model._predict(image_plane, add_seg=True, in_channels=in_channels, skip_norm=True,
                                                               use_dask=self.use_dask, fe_use_device=self.fe_device)
-                if self.add_instances: # If we already have segmentation, we can create instances from it directly instead of predicting them again
+                if self.add_instances:
                     from napari_convpaint.utils import create_instances_from_semantic
-                    instances = create_instances_from_semantic(segmentation, min_size=min_size)
-            elif self.add_instances: # If we only want instances, we can predict them directly
-                instances = self.cp_model.get_instances(image_plane, in_channels=in_channels, skip_norm=True,
-                                                        use_dask=self.use_dask, fe_use_device=self.fe_device,
-                                                        min_size=min_size)
+                    instances = create_instances_from_semantic(segmentation, min_size=self._parse_inst_min_size())
+            else: # Only the probabilities are needed
+                probas = self.cp_model._predict(image_plane, add_seg=False, in_channels=in_channels, skip_norm=True,
+                                                use_dask=self.use_dask, fe_use_device=self.fe_device)
 
         with warnings.catch_warnings():
             warnings.simplefilter(action="ignore", category=FutureWarning)
@@ -1954,12 +1953,15 @@ class ConvpaintWidget(QWidget):
             warnings.warn(f'Image stack has wrong dimensionality ({data_dims}) for predicting stacks. Prediction not performed.')
             return
         
-        # Create the segmentation layer if it is not already present
+        # Create the segmentation and instances layers if they are not already present
         # (NOTE: probabilities layer is created in the prediction loop, as we need to know the number of classes)
         if self.add_seg:
             self._check_create_segmentation_layer()
             # Set the flag to False, so we don't create a new layer every time
             self.new_seg = False
+        if self.add_instances:
+            self._check_create_instances_layer()
+            self.new_instances = False
 
         # Start prediction
         with warnings.catch_warnings():
@@ -1978,19 +1980,17 @@ class ConvpaintWidget(QWidget):
 
             # Predict the current step; skip normalization as it is done above
             in_channels = self._parse_in_channels(self.input_channels)
-            min_size = self._parse_inst_min_size()
 
-            # Use the backend function which returns probabilities and segmentation
-            if self.add_seg or self.add_probas:
+            # The segmentation is only computed if it is needed (as output or as basis for the instances)
+            if self.add_seg or self.add_instances:
                 probas, segmentation = self.cp_model._predict(image, add_seg=True, in_channels=in_channels, skip_norm=True,
                                                               use_dask=self.use_dask, fe_use_device=self.fe_device)
-                if self.add_instances: # If we already have segmentation, we can create instances from it directly instead of predicting them again
+                if self.add_instances:
                     from napari_convpaint.utils import create_instances_from_semantic
-                    instances = create_instances_from_semantic(segmentation, min_size=min_size)
-            elif self.add_instances: # If we only want instances, we can predict them directly
-                instances = self.cp_model.get_instances(image, in_channels=in_channels, skip_norm=True,
-                                                        use_dask=self.use_dask, fe_use_device=self.fe_device,
-                                                        min_size=min_size)
+                    instances = create_instances_from_semantic(segmentation, min_size=self._parse_inst_min_size())
+            else: # Only the probabilities are needed
+                probas = self.cp_model._predict(image, add_seg=False, in_channels=in_channels, skip_norm=True,
+                                                use_dask=self.use_dask, fe_use_device=self.fe_device)
 
             # In the first iteration, check if we need to create a new probas layer
             # (we need the information about the number of classes)
@@ -2009,9 +2009,6 @@ class ConvpaintWidget(QWidget):
                 self.viewer.layers[self.proba_prefix].data[..., step, :, :] = probas
                 self.viewer.layers[self.proba_prefix].refresh()
             if self.add_instances:
-                if step == 0:
-                    self._check_create_instances_layer()
-                    self.new_instances = False
                 self.viewer.layers[self.instances_prefix].data[step] = instances
                 self.viewer.layers[self.instances_prefix].refresh()
 
@@ -2797,20 +2794,26 @@ class ConvpaintWidget(QWidget):
         num_spatial = len(layer_shape)
         transform_kwargs = self._get_layer_transform_kwargs(img, num_spatial_dims=num_spatial, num_leading_dims=0)
 
+        # Create a new instances layer if it doesn't exist yet or we need a new one
         instances_exists = self.instances_prefix in self.viewer.layers
 
+        # If we replace a current layer, we can backup the old one, and remove it
         if self.new_instances & instances_exists:
+            # Backup the old instances layer if keep_layers is set (and the layer exists)
             if self.keep_layers:
                 self._rename_instances_for_backup()
+            # Otherwise, just remove the old instances layer
             else:
                 self.viewer.layers.remove(self.instances_prefix)
 
+        # If there was no instances layer, or we need a new one, create it
         if (not instances_exists) or self.new_instances:
             self.viewer.add_labels(
                 data=np.zeros((layer_shape), dtype=np.int32),
                 name=self.instances_prefix,
                 **transform_kwargs
                 )
+            # Save information about the instances layer to be able to rename it later
             self._set_old_instances_tag()
 
     def _check_create_features_layer(self, num_features):
