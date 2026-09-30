@@ -7,8 +7,8 @@ import pytest
 from napari_convpaint.feature_store import FeatureStore, _MARKER
 
 
-def _payload(rng, num_planes=1, was_torch=False):
-    """A payload like the FE protocol produces: 2 scales, 2 arrays each, [F, Z, h, w]."""
+def _entry(rng, num_planes=1, was_torch=False):
+    """An entry like the FE protocol produces: 2 scales, 2 arrays each, [F, Z, h, w]."""
     scales = []
     for h in (16, 8):
         arrays = [rng.random((5, num_planes, h, h), dtype=np.float32) for _ in range(2)]
@@ -33,11 +33,11 @@ def test_store_roundtrip(tmp_path):
     key = ("abc123", (("fe_name", "gaussian_features"), ("fe_scalings", (1, 2))))
     assert key not in store
     assert store.get(key) is None
-    payload = _payload(rng, was_torch=True)
-    store.put(key, payload)
+    entry = _entry(rng, was_torch=True)
+    store.put(key, entry)
     assert key in store and len(store) == 1
     got = store.get(key)
-    assert _equal(got, payload)
+    assert _equal(got, entry)
     assert store.stats()["hits"] == 1 and store.stats()["misses"] == 1
     assert store.nbytes > 0
     # Memory-mapped arrays must be usable like normal arrays (incl. torch lifting, copy-on-write)
@@ -49,7 +49,7 @@ def test_store_roundtrip(tmp_path):
 def test_store_keys_and_idempotent_put(tmp_path):
     rng = np.random.default_rng(1)
     store = FeatureStore(tmp_path / "store")
-    p1, p2 = _payload(rng), _payload(rng)
+    p1, p2 = _entry(rng), _entry(rng)
     key1 = ("data1", ("sig",))
     key2 = ("data1", ("other_sig",))  # same data, other FE settings -> other entry
     store.put(key1, p1)
@@ -64,7 +64,7 @@ def test_store_clear_and_reopen(tmp_path):
     rng = np.random.default_rng(2)
     folder = tmp_path / "store"
     store = FeatureStore(folder)
-    store.put(("d", ("s",)), _payload(rng))
+    store.put(("d", ("s",)), _entry(rng))
     # Reopening an existing store finds the entries
     store2 = FeatureStore(folder)
     assert ("d", ("s",)) in store2 and len(store2) == 1
@@ -74,18 +74,18 @@ def test_store_clear_and_reopen(tmp_path):
 
 def test_store_size_cap(tmp_path):
     rng = np.random.default_rng(3)
-    p1 = _payload(rng)
+    p1 = _entry(rng)
     one = sum(a.nbytes for arrays, _, _ in p1["scales"] for a in arrays)
     store = FeatureStore(tmp_path / "store", max_bytes=int(2.5 * one))
     store.put(("a", ("s",)), p1)
-    store.put(("b", ("s",)), _payload(rng))
+    store.put(("b", ("s",)), _entry(rng))
     assert len(store) == 2 and store.nbytes >= 2 * one
     with pytest.warns(UserWarning, match="size cap"):
-        store.put(("c", ("s",)), _payload(rng))       # would exceed the cap -> not stored
+        store.put(("c", ("s",)), _entry(rng))       # would exceed the cap -> not stored
     assert len(store) == 2 and ("c", ("s",)) not in store
     store.clear()
     assert store.nbytes == 0
-    store.put(("c", ("s",)), _payload(rng))           # room again after clearing
+    store.put(("c", ("s",)), _entry(rng))           # room again after clearing
     assert len(store) == 1
     # A reopened store knows its size
     assert FeatureStore(tmp_path / "store").nbytes == store.nbytes
@@ -107,10 +107,10 @@ def test_store_write_failure_degrades_to_not_storing(tmp_path, monkeypatch):
     inside the extraction (the store stays usable for reading)."""
     rng = np.random.default_rng(4)
     store = FeatureStore(tmp_path / "store")
-    store.put(("a", ("s",)), _payload(rng))
+    store.put(("a", ("s",)), _entry(rng))
     monkeypatch.setattr(np, "save", lambda *a, **k: (_ for _ in ()).throw(OSError(13, "Permission denied")))
     with pytest.warns(UserWarning, match="cannot write"):
-        store.put(("b", ("s",)), _payload(rng))
+        store.put(("b", ("s",)), _entry(rng))
     assert len(store) == 1 and ("b", ("s",)) not in store
     assert not any(d.name.endswith(".tmp") for d in (tmp_path / "store").iterdir())   # no leftovers
     assert store.get(("a", ("s",))) is not None
@@ -186,7 +186,7 @@ def test_model_cache_and_store_together(tmp_path):
         assert store.stats()['hits'] == 6 and len(fc2) == 3
         f5 = cp.get_feature_image(stack)               # from the cache
         assert store.stats()['hits'] == 6 and fc2.stats()['hits'] == 3
-        assert all(not isinstance(a, np.memmap) for arrays, _, _ in next(iter(fc2._store.values()))[0]["scales"] for a in arrays)
+        assert all(not isinstance(a, np.memmap) for arrays, _, _ in next(iter(fc2._entries.values()))[0]["scales"] for a in arrays)
     assert np.array_equal(f1, f2) and np.array_equal(f1, f3)
     assert np.array_equal(f1, f4) and np.array_equal(f1, f5)
 

@@ -13,10 +13,10 @@ def _arr(mb):
 def test_hit_and_miss():
     c = FeatureCache(max_bytes=100 * 10**6)
     assert c.get(("img", 0, "sig")) is None
-    payload = _arr(1)
-    c.put(("img", 0, "sig"), payload)
+    entry = _arr(1)
+    c.put(("img", 0, "sig"), entry)
     got = c.get(("img", 0, "sig"))
-    assert got is payload
+    assert got is entry
     assert c.stats()["hits"] == 1
     assert c.stats()["misses"] == 1
 
@@ -48,7 +48,7 @@ def test_scan_larger_than_cache_keeps_first_planes():
         if c.get(("plane", z)) is None:
             c.put(("plane", z), _arr(1))
     assert c.stats()["hits"] == 29                       # planes 0-28 reused (29 = room minus the one slot that cycles), the rest extracted again
-    assert all(("plane", z) in c._store for z in range(29))
+    assert all(("plane", z) in c._entries for z in range(29))
 
 
 def test_lru_touch_on_get_protects_entry():
@@ -61,7 +61,7 @@ def test_lru_touch_on_get_protects_entry():
     assert c.get(("b",)) is None
 
 
-def test_single_oversize_payload_is_not_cached():
+def test_single_oversize_entry_is_not_cached():
     c = FeatureCache(max_bytes=1 * 10**6)
     c.put(("big",), _arr(5))  # 5 MB into a 1 MB cap -> skipped, not cached
     assert len(c) == 0
@@ -72,7 +72,7 @@ def test_overwrite_updates_size():
     c = FeatureCache(max_bytes=100 * 10**6)
     c.put(("k",), _arr(1))
     b0 = c.nbytes
-    c.put(("k",), _arr(3))  # replace with a bigger payload
+    c.put(("k",), _arr(3))  # replace with a bigger entry
     assert c.nbytes > b0
     assert len(c) == 1
 
@@ -93,7 +93,7 @@ def test_disabled_cache_is_noop():
     assert len(c) == 0
 
 
-def test_list_payload_size_accounted():
+def test_list_entry_size_accounted():
     c = FeatureCache(max_bytes=int(2.5 * 10**6))
     c.put(("a",), [_arr(1), _arr(1)])  # ~2 MB as a list of arrays
     assert len(c) == 1
@@ -169,8 +169,8 @@ def test_cached_prediction_bit_identical_and_hits():
         assert np.array_equal(seg_second, cp2.segment(img))
 
 
-def test_nn_fe_cache_hit_matches_fresh_and_uses_torch_payload():
-    """NN FEs keep their native features on-device (torch); the cache payload
+def test_nn_fe_cache_hit_matches_fresh_and_uses_torch_native():
+    """NN FEs keep their native features on-device (torch); the cache entry
     is cast to numpy for storage but remembers it was torch, so hits are
     lifted back and reconstructed with the SAME torch backend as fresh
     extractions. Guards against a hit/miss backend split (skimage vs torch)
@@ -187,17 +187,17 @@ def test_nn_fe_cache_hit_matches_fresh_and_uses_torch_payload():
         feat_off = cp.get_feature_image(img)             # cache disabled: fresh
         fc = cp.enable_feature_cache(max_bytes=512 * 10**6)
         feat_miss = cp.get_feature_image(img)            # miss: fills cache
-        feat_hit = cp.get_feature_image(img)             # hit: from payload
+        feat_hit = cp.get_feature_image(img)             # hit: from entry
     assert fc.stats()['hits'] >= 1
     assert np.array_equal(feat_off, feat_miss), "cache-on (miss) differs from cache-off"
     assert np.array_equal(feat_miss, feat_hit), "cache hit differs from miss"
-    payload = next(iter(fc._store.values()))[0]
-    assert payload['was_torch'] is True
-    for features, _, _ in payload['scales']:             # stored form is numpy
+    entry = next(iter(fc._entries.values()))[0]
+    assert entry['was_torch'] is True
+    for features, _, _ in entry['scales']:             # stored form is numpy
         assert all(isinstance(f, np.ndarray) for f in features)
 
 
-def test_numpy_fe_payload_stays_numpy_and_identical():
+def test_numpy_fe_entry_stays_numpy_and_identical():
     """Numpy-native FEs (e.g. gaussian) must NOT be lifted to torch on a hit —
     their fresh path is skimage, and hit/miss must keep sharing it."""
     import warnings as _w
@@ -213,8 +213,8 @@ def test_numpy_fe_payload_stays_numpy_and_identical():
         feat_hit = cp.get_feature_image(img)
     assert np.array_equal(feat_off, feat_miss)
     assert np.array_equal(feat_miss, feat_hit)
-    payload = next(iter(fc._store.values()))[0]
-    assert payload['was_torch'] is False
+    entry = next(iter(fc._entries.values()))[0]
+    assert entry['was_torch'] is False
 
 
 def test_annotation_tiles_are_not_cached():
