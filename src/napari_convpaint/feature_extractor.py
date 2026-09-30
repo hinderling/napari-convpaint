@@ -630,27 +630,27 @@ class FeatureExtractor:
         return native
 
     @staticmethod
-    def split_payload_planes(payload):
-        """Split the cache payload of a stack into one payload per plane (along Z)."""
-        num_planes = payload["scales"][0][0][0].shape[1]
+    def split_native_planes(native):
+        """Split the native features of a stack (numpy form) into one per plane (along Z)."""
+        num_planes = native["scales"][0][0][0].shape[1]
         planes = []
         for z in range(num_planes):
             scales = [([np.ascontiguousarray(a[:, z:z+1]) for a in arrays],
                        (pre_shape[0], 1) + tuple(pre_shape[2:]),
                        (reduced_shape[0], 1) + tuple(reduced_shape[2:]))
-                      for arrays, pre_shape, reduced_shape in payload["scales"]]
-            planes.append({"scales": scales, "was_torch": payload["was_torch"]})
+                      for arrays, pre_shape, reduced_shape in native["scales"]]
+            planes.append({"scales": scales, "was_torch": native["was_torch"]})
         return planes
 
     @staticmethod
-    def join_payload_planes(payloads):
-        """Join per-plane payloads (see split_payload_planes) into the payload of the stack."""
-        num_planes = len(payloads)
+    def join_native_planes(planes):
+        """Join the per-plane native features (see split_native_planes) into those of the stack."""
+        num_planes = len(planes)
         scales = []
-        for i, (arrays, pre_shape, reduced_shape) in enumerate(payloads[0]["scales"]):
-            joined = [np.concatenate([p["scales"][i][0][j] for p in payloads], axis=1)
+        for i, (arrays, pre_shape, reduced_shape) in enumerate(planes[0]["scales"]):
+            joined = [np.concatenate([p["scales"][i][0][j] for p in planes], axis=1)
                       for j in range(len(arrays))]
             scales.append((joined,
                            (pre_shape[0], num_planes) + tuple(pre_shape[2:]),
                            (reduced_shape[0], num_planes) + tuple(reduced_shape[2:])))
-        return {"scales": scales, "was_torch": payloads[0]["was_torch"]}
+        return {"scales": scales, "was_torch": planes[0]["was_torch"]}

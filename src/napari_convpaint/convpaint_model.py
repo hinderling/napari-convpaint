@@ -1018,26 +1018,26 @@ class ConvpaintModel:
         """Whether extracted features are reused (cache or store enabled)."""
         return self._feature_cache is not None or self._feature_store is not None
 
-    def _reuse_payload(self, key):
-        """Get the payload of a plane from the cache or the store, or None.
+    def _reuse_native(self, key):
+        """Get the native features of a plane from the cache or the store, or None.
         A store hit is also put into the cache (as a copy in RAM, not the memory-mapped files),
         so that repeated use of the same plane does not read from disk every time."""
-        payload = self._feature_cache.get(key) if self._feature_cache is not None else None
-        if payload is None and self._feature_store is not None:
-            payload = self._feature_store.get(key)
-            if payload is not None and self._feature_cache is not None:
+        native = self._feature_cache.get(key) if self._feature_cache is not None else None
+        if native is None and self._feature_store is not None:
+            native = self._feature_store.get(key)
+            if native is not None and self._feature_cache is not None:
                 in_ram = {"scales": [([np.array(a) for a in arrays], pre_shape, reduced_shape)
-                                     for arrays, pre_shape, reduced_shape in payload["scales"]],
-                          "was_torch": payload["was_torch"]}
+                                     for arrays, pre_shape, reduced_shape in native["scales"]],
+                          "was_torch": native["was_torch"]}
                 self._feature_cache.put(key, in_ram)
-        return payload
+        return native
 
-    def _keep_payload(self, key, payload):
-        """Keep the payload of a plane in the cache and/or the store."""
+    def _keep_native(self, key, native):
+        """Keep the native features of a plane in the cache and/or the store."""
         if self._feature_cache is not None:
-            self._feature_cache.put(key, payload)
+            self._feature_cache.put(key, native)
         if self._feature_store is not None:
-            self._feature_store.put(key, payload)
+            self._feature_store.put(key, native)
 
     def _extract_or_reuse_pyramid(self, d, param, patched=True, device=None, skip_reuse=False):
         """Extract the feature pyramid for one prepared image [C, Z, H, W], reusing the
@@ -1055,27 +1055,27 @@ class ConvpaintModel:
         else:
             planes = [d[:, z:z+1] for z in range(d.shape[1])]
         keys = [(self._data_signature(plane), fe_sig) for plane in planes]
-        payloads = [self._reuse_payload(key) for key in keys]
-        missing = [z for z, payload in enumerate(payloads) if payload is None]
+        natives = [self._reuse_native(key) for key in keys]
+        missing = [z for z, native in enumerate(natives) if native is None]
         if len(missing) == len(keys):
             # Nothing reusable: extract everything in one pass, keep the numpy form and
             # reconstruct from the on-device native features (no detour over the numpy copy)
             fresh = fe.extract_native(d, param, device)
             in_numpy = fe.native_to_numpy(fresh)
-            per_key = [in_numpy] if len(keys) == 1 else fe.split_payload_planes(in_numpy)
-            for key, plane_payload in zip(keys, per_key):
-                self._keep_payload(key, plane_payload)
+            per_key = [in_numpy] if len(keys) == 1 else fe.split_native_planes(in_numpy)
+            for key, plane_native in zip(keys, per_key):
+                self._keep_native(key, plane_native)
             return fe.reconstruct_from_native(fresh, d.shape, param, patched)
         if missing:
             # Some planes reusable: extract the others in one (batched) pass, keep them plane by plane
             fresh = fe.native_to_numpy(fe.extract_native(d[:, missing], param, device))
-            for z, plane_payload in zip(missing, fe.split_payload_planes(fresh)):
-                payloads[z] = plane_payload
-                self._keep_payload(keys[z], plane_payload)
+            for z, plane_native in zip(missing, fe.split_native_planes(fresh)):
+                natives[z] = plane_native
+                self._keep_native(keys[z], plane_native)
         # Reconstruct on `device` (the native features are lifted back to torch if that is the
         # FE's native form), i.e. with the same backend as a fresh extraction
-        payload = payloads[0] if len(payloads) == 1 else fe.join_payload_planes(payloads)
-        return fe.reconstruct_from_native(fe.native_from_numpy(payload, device), d.shape, param, patched)
+        native = natives[0] if len(natives) == 1 else fe.join_native_planes(natives)
+        return fe.reconstruct_from_native(fe.native_from_numpy(native, device), d.shape, param, patched)
 
 ### BACKEND METHOD FOR FEATURE EXTRACTION
 
