@@ -553,8 +553,8 @@ class ConvpaintWidget(QWidget):
             cache_note = QLabel(
                 "Reuse extracted features when segmenting or training the same image "
                 "repeatedly (e.g. while refining annotations), instead of recomputing "
-                "them. Bounded by the memory limit below; on stacks/movies the oldest "
-                "cached slices are dropped first.")
+                "them. Bounded by the memory limit below; features you have reused are "
+                "kept longest.")
             cache_note.setStyleSheet(style_for_infos)
             cache_note.setWordWrap(True)
             self.advanced_cache_group.glayout.addWidget(cache_note, 0, 0, 1, 3)
@@ -793,7 +793,10 @@ class ConvpaintWidget(QWidget):
             self.check_use_cache.setToolTip('Keep the extracted features of recently processed images in memory,\n' +
                                             'so that re-training or re-segmenting the same image does not extract them again.')
             for w in [self.cache_max_ram_label, self.cache_max_ram_spinbox]:
-                w.setToolTip('Maximum memory (RAM) the feature cache may use.\nWhen full, the least recently used features are dropped.')
+                w.setToolTip('Maximum memory (RAM) the feature cache may use.\n' +
+                             'When full, features you have reused are kept longest; among the never reused,\n' +
+                             'the most recently cached go first (so a stack larger than the cache keeps its\n' +
+                             'first slices instead of cycling through them).')
             self.cache_size_label.setToolTip('Memory currently used by the feature cache (and number of cached images/planes).')
 
         if 'Multifile' in self.tab_names:
