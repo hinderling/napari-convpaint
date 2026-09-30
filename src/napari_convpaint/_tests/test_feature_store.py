@@ -294,3 +294,20 @@ def test_widget_store_features_of_stack(make_napari_viewer, tmp_path):
     assert len(fs) == 3 and fs.stats()['misses'] == 3, fs.stats()   # training reused the stored plane
     w._on_predict_all()
     assert len(fs) == 3 and fs.stats()['misses'] == 3, fs.stats()   # nothing extracted anymore
+
+
+def test_clear_feature_store_keeps_the_store(tmp_path):
+    """clear_feature_store() deletes the stored features but leaves the store enabled."""
+    import warnings as _w
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    img = np.random.default_rng(0).random((32, 32)).astype(np.float32)
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        cp = ConvpaintModel('gaussian')
+        fs = cp.enable_feature_store(tmp_path / "store")
+        cp.get_feature_image(img)
+        assert len(fs) == 1
+        cp.clear_feature_store()
+        assert len(fs) == 0 and cp._feature_store is fs
+        cp.get_feature_image(img)                      # still usable afterwards
+        assert len(fs) == 1

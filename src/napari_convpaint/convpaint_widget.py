@@ -1033,10 +1033,12 @@ class ConvpaintWidget(QWidget):
         # Get normalized data (entire stack, and stats prepared given the radio buttons)
         image_stack_norm = self._get_data_channel_first_norm(img) # Normalize the entire stack
         in_channels = self._parse_in_channels(self.input_channels)
+
+        # Store features in the feature store (single image or stack)
         if data_dims in ['2D', '2D_RGB', '3D_multi']: # Single image
             self.cp_model.store_features(image_stack_norm, in_channels=in_channels, skip_norm=True,
                                          fe_use_device=self.fe_device)
-        else: # Stack: step through the planes (as prediction does); skip norm as it is done above
+        else: # Stack: step through the planes for progress bar (as _on_predict_all does); skip norm as it is done above
             num_steps = image_stack_norm.shape[-3]
             for step in progress(range(num_steps)):
                 image = image_stack_norm[..., step, :, :]
@@ -1046,12 +1048,16 @@ class ConvpaintWidget(QWidget):
         with warnings.catch_warnings():
             warnings.simplefilter(action="ignore", category=FutureWarning)
             self.viewer.window._status_bar._toggle_activity_dock(False)
+
+        # Update the labels to reflect the new state
         self._refresh_reuse_labels()
+
         # Point out the one setting that decides whether training profits from the store as well
-        if (self.cp_model.get_param('tile_annotations') and not self.auto_seg
-                and not self.cp_model.get_param('tile_image')):
+        # (auto-segment switches the tiling off by itself, but only if the image is not tiled; see _on_train)
+        untiles = self.auto_seg and not self.cp_model.get_param('tile_image')
+        if self.cp_model.get_param('tile_annotations') and not untiles:
             show_info("All planes of this image are stored. Training reuses them too, once 'Tile annotations for training' "
-                      "is off (annotation tiles are not stored); with 'Auto segment' on, this happens automatically.")
+                      "is off (annotation tiles are not stored); with 'Auto segment' on and 'Tile image for segmentation' off, automatically.")
 
     def _warn_cache_ram(self):
         """Warn if the feature cache limit exceeds half of the currently available RAM."""
