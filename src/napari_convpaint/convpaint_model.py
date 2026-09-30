@@ -620,7 +620,9 @@ class ConvpaintModel:
                 layers=fe_layers
             )
             if self._feature_cache is not None:
-                self._feature_cache.clear() # Cached features belong to the old FE
+                # The cache key holds the FE signature, so entries of the old FE could never be
+                # returned anyway; clearing frees the RAM they would occupy until evicted
+                self._feature_cache.clear()
         
         # Set the parameters
         self._param.set(fe_name=fe_name, fe_layers=fe_layers)
@@ -932,6 +934,11 @@ class ConvpaintModel:
         from .feature_cache import FeatureCache
         self._feature_cache = FeatureCache(max_bytes=max_bytes, enabled=enabled)
         return self._feature_cache
+
+    def clear_feature_cache(self):
+        """Drop the cached features, keeping the cache itself (and its budget) in place."""
+        if self._feature_cache is not None:
+            self._feature_cache.clear()
 
     def _fe_cache_signature(self):
         """The FE-relevant part of the cache key: the parameters whose change
