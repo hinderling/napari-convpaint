@@ -117,8 +117,8 @@ class GaussianFeatures(FeatureExtractor):
 #    Define the full feature extraction process, including the feature pyramid. Input = [C, Z, H ,W]
 #    Important: Output needs to be 4D: [nb_features, Z, H, W]
 #
-#    Note: extract_features_pyramid = _pyramid_native (scale, crop and extract per scaling, giving the
-#    "native" features) + _pyramid_reconstruct (rescale, concatenate). These two halves can also be
+#    Note: extract_features_pyramid = extract_native (scale, crop and extract per scaling, giving the
+#    "native" features) + reconstruct_from_native (rescale, concatenate). These two halves can also be
 #    overridden separately, e.g. for a custom multi-scale scheme.
 
 
@@ -127,8 +127,8 @@ class GaussianFeatures(FeatureExtractor):
 # ConvpaintModel can reuse extracted features (RAM cache, disk store) instead of recomputing them.
 # This works automatically for any feature extractor implementing a), b) or c): what is kept is the
 # native output of your method (before rescaling), and the rescaling is done by the base class.
-# Also works if you override the two halves of d) separately, as long as _pyramid_native returns one
+# Also works if you override the two halves of d) separately, as long as extract_native returns one
 # (features_list, pre_reduction_shape, reduced_shape) per scaling with arrays [nb_features, Z, h, w],
-# and _pyramid_reconstruct only depends on that, the parameters and the shapes.
+# and reconstruct_from_native only depends on that, the parameters and the shapes.
 # Overriding extract_features_pyramid as a whole excludes the extractor from feature reuse
-# (see supports_feature_cache() in the base class).
+# (see supports_feature_reuse() in the base class).

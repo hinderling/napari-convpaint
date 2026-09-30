@@ -82,7 +82,7 @@ class FeatureStore:
         return os.path.isfile(os.path.join(self._entry_dir(key), _META))
 
     def get(self, key):
-        """Return the stored payload for `key` (arrays memory-mapped, copy-on-write), or None."""
+        """Return the stored entry for `key` (arrays memory-mapped, copy-on-write), or None."""
         entry_dir = self._entry_dir(key)
         meta_path = os.path.join(entry_dir, _META)
         if not os.path.isfile(meta_path):
@@ -98,11 +98,11 @@ class FeatureStore:
         self.hits += 1
         return {"scales": scales, "was_torch": meta["was_torch"]}
 
-    def put(self, key, payload):
-        """Store `payload` under `key` (no-op if present or if the disk would get too full)."""
+    def put(self, key, entry):
+        """Store `entry` under `key` (no-op if present or if the disk would get too full)."""
         if key in self:
             return
-        nbytes = sum(a.nbytes for arrays, _, _ in payload["scales"] for a in arrays)
+        nbytes = sum(a.nbytes for arrays, _, _ in entry["scales"] for a in arrays)
         if self.max_bytes is not None and self._nbytes + nbytes > self.max_bytes:
             if not self._warned_full:
                 warnings.warn(f"Feature store '{self.folder}': size cap ({self.max_bytes / 1e9:.1f} GB) reached, features are not stored anymore.")
@@ -119,8 +119,8 @@ class FeatureStore:
         try:
             shutil.rmtree(tmp_dir, ignore_errors=True)
             os.makedirs(tmp_dir)
-            meta = {"was_torch": bool(payload["was_torch"]), "scales": []}
-            for i, (arrays, pre_shape, reduced_shape) in enumerate(payload["scales"]):
+            meta = {"was_torch": bool(entry["was_torch"]), "scales": []}
+            for i, (arrays, pre_shape, reduced_shape) in enumerate(entry["scales"]):
                 for j, a in enumerate(arrays):
                     np.save(os.path.join(tmp_dir, f"s{i}_{j}.npy"), np.ascontiguousarray(a))
                 meta["scales"].append({"n_arrays": len(arrays),

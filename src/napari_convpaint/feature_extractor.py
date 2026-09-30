@@ -367,16 +367,16 @@ class FeatureExtractor:
             The extracted features of the image as a single array with [nb_features, Z, H, W]
         """
 
-        native = self._pyramid_native(data, param, device)
-        return self._pyramid_reconstruct(native, data.shape, param, patched)
+        native = self.extract_native(data, param, device)
+        return self.reconstruct_from_native(native, data.shape, param, patched)
 
-    def _pyramid_native(self, data, param, device=torch.device("cpu")):
+    def extract_native(self, data, param, device=torch.device("cpu")):
         """Expensive half of the pyramid: extract the per-scale *native* (pre-rescale) features.
         Returns one entry per scale of (features_list, pre_reduction_shape, reduced_shape).
         The features stay in the form the extractor produced them (for NN FEs, torch tensors
-        on the extraction device), so that _pyramid_reconstruct can rescale on-device.
-        This is also the cacheable representation (independent of the requested output resolution;
-        for patched FEs it is the small patch-grid features, not the full-resolution stack)."""
+        on the extraction device), so that reconstruct_from_native can rescale on-device.
+        They are also what is reused (independent of the requested output resolution;
+        for patched FEs the small patch-grid features, not the full-resolution stack)."""
         # Check if the given selection of scalings is in the proposed scalings, and if not, give a warning
         if not param.fe_scalings in self.get_proposed_scalings():
             warnings.warn(f"The selected scalings {param.fe_scalings} are not in the proposed scalings {self.proposed_scalings}. Please check if this is intentional.")
@@ -407,8 +407,8 @@ class FeatureExtractor:
 
         return native
 
-    def _pyramid_reconstruct(self, native, data_shape, param, patched=True):
-        """Cheap half of the pyramid: rescale the native per-scale features (from _pyramid_native)
+    def reconstruct_from_native(self, native, data_shape, param, patched=True):
+        """Cheap half of the pyramid: rescale the native per-scale features (from extract_native)
         to the requested resolution and concatenate across channel-series and scales.
         data_shape is the original (pre-scaling) input shape [C, Z, H, W]."""
         patch_size = self.get_patch_size()
@@ -596,18 +596,18 @@ class FeatureExtractor:
 # that implements one of the hierarchical extraction methods above. Only an FE that overrides
 # extract_features_pyramid itself is automatically excluded from feature reuse.
 
-    def supports_feature_cache(self, param):
+    def supports_feature_reuse(self, param):
         """Whether the features of this FE can be reused (cached/stored). The default excludes
         FEs that override extract_features_pyramid, since reuse relies on its native/reconstruct
         split; FEs that are cheap to recompute can also return False."""
         return type(self).extract_features_pyramid is FeatureExtractor.extract_features_pyramid
 
     @staticmethod
-    def _native_to_payload(native):
-        """Cast a native pyramid (whose feature arrays may be on-device torch tensors) to a
-        device-independent cache payload (CPU numpy arrays). `was_torch` records the native form,
-        so reconstruction from the cache can lift the payload back to tensors and use the same
-        rescale backend as a fresh extraction (cached results must be identical to fresh ones)."""
+    def native_to_numpy(native):
+        """Cast the native features (for NN FEs on-device torch tensors) to CPU numpy arrays,
+        the device-independent form that is kept in the cache and the store. `was_torch` records
+        the native form, so native_from_numpy can lift them back and reconstruct with the same
+        rescale backend as a fresh extraction (reused results must be identical to fresh ones)."""
         was_torch = any(isinstance(f, torch.Tensor)
                         for features, _, _ in native for f in features)
         scales = [([f.detach().cpu().numpy() if isinstance(f, torch.Tensor) else f
@@ -615,52 +615,42 @@ class FeatureExtractor:
                   for features, pre_shape, red_shape in native]
         return {"scales": scales, "was_torch": was_torch}
 
-    def cacheable_repr_and_features(self, data, param, device=torch.device("cpu"), patched=True, features=True):
-        """Compute the features AND the cache payload in one extraction pass (the cache's miss path).
-        Extension point for FEs with a custom payload (override together with features_from_cacheable).
-        The reconstruction runs from the on-device native form; only the stored payload is cast to CPU numpy.
-        With features=False, only the payload is computed (features are returned as None)."""
-        native = self._pyramid_native(data, param, device)
-        payload = self._native_to_payload(native)
-        features = self._pyramid_reconstruct(native, data.shape, param, patched) if features else None
-        return features, payload
+    @staticmethod
+    def native_from_numpy(entry, device=None):
+        """Lift the native features from their numpy form (see native_to_numpy) back onto `device`
+        if the FE produced them as torch tensors. Pass the same resolved device the fresh extraction
+        would use; device=None reconstructs on the CPU, which matches a CPU extraction but not
+        bit-exactly a GPU one (interpolation kernels differ)."""
+        native = entry["scales"]
+        if entry.get("was_torch"):
+            lift_device = device if device is not None else "cpu"
+            native = [([torch.from_numpy(f).to(lift_device)
+                        for f in features], pre_shape, red_shape)
+                      for features, pre_shape, red_shape in native]
+        return native
 
     @staticmethod
-    def split_payload_planes(payload):
-        """Split the cache payload of a stack into one payload per plane (along Z)."""
-        num_planes = payload["scales"][0][0][0].shape[1]
+    def split_native_planes(native):
+        """Split the native features of a stack (numpy form) into one per plane (along Z)."""
+        num_planes = native["scales"][0][0][0].shape[1]
         planes = []
         for z in range(num_planes):
             scales = [([np.ascontiguousarray(a[:, z:z+1]) for a in arrays],
                        (pre_shape[0], 1) + tuple(pre_shape[2:]),
                        (reduced_shape[0], 1) + tuple(reduced_shape[2:]))
-                      for arrays, pre_shape, reduced_shape in payload["scales"]]
-            planes.append({"scales": scales, "was_torch": payload["was_torch"]})
+                      for arrays, pre_shape, reduced_shape in native["scales"]]
+            planes.append({"scales": scales, "was_torch": native["was_torch"]})
         return planes
 
     @staticmethod
-    def join_payload_planes(payloads):
-        """Join per-plane payloads (see split_payload_planes) into the payload of the stack."""
-        num_planes = len(payloads)
+    def join_native_planes(planes):
+        """Join the per-plane native features (see split_native_planes) into those of the stack."""
+        num_planes = len(planes)
         scales = []
-        for i, (arrays, pre_shape, reduced_shape) in enumerate(payloads[0]["scales"]):
-            joined = [np.concatenate([p["scales"][i][0][j] for p in payloads], axis=1)
+        for i, (arrays, pre_shape, reduced_shape) in enumerate(planes[0]["scales"]):
+            joined = [np.concatenate([p["scales"][i][0][j] for p in planes], axis=1)
                       for j in range(len(arrays))]
             scales.append((joined,
                            (pre_shape[0], num_planes) + tuple(pre_shape[2:]),
                            (reduced_shape[0], num_planes) + tuple(reduced_shape[2:])))
-        return {"scales": scales, "was_torch": payloads[0]["was_torch"]}
-
-    def features_from_cacheable(self, payload, data_shape, param, patched=True, device=None):
-        """Reconstruct the features from a cached payload (the cache's hit path).
-        If the payload originated from torch tensors, it is lifted back onto `device` first, so that
-        hits use the same (on-device) rescale backend as fresh extractions and give identical results.
-        Pass the same resolved device the fresh extraction would use; device=None reconstructs on the
-        CPU, which matches a CPU extraction but not bit-exactly a GPU one (interpolation kernels differ)."""
-        native = payload["scales"]
-        if payload.get("was_torch"):
-            lift_device = device if device is not None else "cpu"
-            native = [([torch.from_numpy(f).to(lift_device)
-                        for f in features], pre_shape, red_shape)
-                      for features, pre_shape, red_shape in native]
-        return self._pyramid_reconstruct(native, data_shape, param, patched)
+        return {"scales": scales, "was_torch": planes[0]["was_torch"]}
