@@ -193,7 +193,7 @@ def test_nn_fe_cache_hit_matches_fresh_and_uses_torch_native():
     assert np.array_equal(feat_miss, feat_hit), "cache hit differs from miss"
     entry = next(iter(fc._entries.values()))[0]
     assert entry['was_torch'] is True
-    for features, _, _ in entry['scales']:             # stored form is numpy
+    for features, _, _ in entry['levels']:             # stored form is numpy
         assert all(isinstance(f, np.ndarray) for f in features)
 
 
@@ -296,3 +296,14 @@ def test_3d_context_fe_is_reused_per_stack():
         cp.get_feature_image(stack[1])                 # a single plane is another unit
         assert fc.stats()['hits'] == 1 and len(fc) == 2
     assert np.array_equal(f1, f2)
+
+def test_clear_feature_cache_keeps_the_cache():
+    """clear_feature_cache() drops the entries but leaves the cache (and its budget) in place."""
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    img = np.random.default_rng(0).random((32, 32)).astype(np.float32)
+    cp = ConvpaintModel('gaussian')
+    fc = cp.enable_feature_cache(max_bytes=10**7)
+    cp.get_feature_image(img)
+    assert len(fc) == 1
+    cp.clear_feature_cache()
+    assert len(fc) == 0 and cp._feature_cache is fc and fc.stats()["max_bytes"] == 10**7

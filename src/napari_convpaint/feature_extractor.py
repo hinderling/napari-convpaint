@@ -371,8 +371,9 @@ class FeatureExtractor:
         return self.reconstruct_from_native(native, data.shape, param, patched)
 
     def extract_native(self, data, param, device=torch.device("cpu")):
-        """Expensive half of the pyramid: extract the per-scale *native* (pre-rescale) features.
-        Returns one entry per scale of (features_list, pre_reduction_shape, reduced_shape).
+        """Expensive half of the pyramid: extract the *native* (pre-rescale) features per level.
+        Returns one level per scaling: (features, scaled_shape, cropped_shape), where the shapes
+        are those of the scaled input before and after cropping it to a multiple of the patch size.
         The features stay in the form the extractor produced them (for NN FEs, torch tensors
         on the extraction device), so that reconstruct_from_native can rescale on-device.
         They are also what is reused (independent of the requested output resolution;
@@ -381,7 +382,7 @@ class FeatureExtractor:
         if not param.fe_scalings in self.get_proposed_scalings():
             warnings.warn(f"The selected scalings {param.fe_scalings} are not in the proposed scalings {self.proposed_scalings}. Please check if this is intentional.")
 
-        # Iterate over the scales and extract features for each scale
+        # Iterate over the scalings and extract the features for each (one level per scaling)
         native = []
         for s in param.fe_scalings:
 
@@ -390,10 +391,10 @@ class FeatureExtractor:
 
             # Make sure the downscaled part is a multiple of the patch size
             patch_size = self.get_patch_size()
-            pre_reduction_shape  = image_scaled.shape
+            scaled_shape = image_scaled.shape
             # NOTE: reduce_to_patch_multiple should not do anything if the inputs are already multiples of the patch size at all scales
             image_scaled = reduce_to_patch_multiple(image_scaled, patch_size)
-            reduced_shape = image_scaled.shape
+            cropped_shape = image_scaled.shape
 
             # Extract features as list for different channel_series (and layers if applicable)
             # Each element is [nb_features, z, w, h]
@@ -403,17 +404,17 @@ class FeatureExtractor:
             if not isinstance(features, list):
                 features = [features]
 
-            native.append((features, pre_reduction_shape, reduced_shape))
+            native.append((features, scaled_shape, cropped_shape))
 
         return native
 
     def reconstruct_from_native(self, native, data_shape, param, patched=True):
-        """Cheap half of the pyramid: rescale the native per-scale features (from extract_native)
+        """Cheap half of the pyramid: rescale the native features of each level (from extract_native)
         to the requested resolution and concatenate across channel-series and scales.
         data_shape is the original (pre-scaling) input shape [C, Z, H, W]."""
         patch_size = self.get_patch_size()
         features_all_scales = []
-        for features, pre_reduction_shape, reduced_shape in native:
+        for features, scaled_shape, cropped_shape in native:
             # Resize the features from this downscaling to the size of the (possibly patched) input
             # NOTE: this shouldn't do anything for scaling of 1, unless we want to "unpatch"
             if patched:
@@ -424,16 +425,16 @@ class FeatureExtractor:
             else:
                 # When not patched, but patch_size > 1, we handle possible cropping due to reduce_to_patch_multiple
                 # NOTE: this should not be necessary if the inputs are already multiples of the patch size at all scales
-                if patch_size > 1 and reduced_shape[2:] != pre_reduction_shape[2:] :
+                if patch_size > 1 and cropped_shape[2:] != scaled_shape[2:] :
                     # Step 1: rescale to the reduced (cropped to patch multiple) shape
                     features = [rescale_features(
                                     feature_img=f,
-                                    target_shape=reduced_shape,
+                                    target_shape=cropped_shape,
                                     order=param.fe_order)
                                 for f in features]
 
-                    # Step 2: pad back to original pre_reduction_shape (but still downscaled)
-                    features = [pad_to_shape(f, pre_reduction_shape[2:] ) for f in features]
+                    # Step 2: pad back to the (still downscaled) shape before the cropping
+                    features = [pad_to_shape(f, scaled_shape[2:] ) for f in features]
 
                 # Rescale to the full original shape
                 target_shape = data_shape
@@ -605,52 +606,53 @@ class FeatureExtractor:
     @staticmethod
     def native_to_numpy(native):
         """Cast the native features (for NN FEs on-device torch tensors) to CPU numpy arrays,
-        the device-independent form that is kept in the cache and the store. `was_torch` records
-        the native form, so native_from_numpy can lift them back and reconstruct with the same
+        the device-independent form that is kept in the cache and the store: one level per scaling
+        (as returned by extract_native), each with its shapes. `was_torch` records the native
+        form, so native_from_numpy can lift them back and reconstruct with the same
         rescale backend as a fresh extraction (reused results must be identical to fresh ones)."""
         was_torch = any(isinstance(f, torch.Tensor)
                         for features, _, _ in native for f in features)
-        scales = [([f.detach().cpu().numpy() if isinstance(f, torch.Tensor) else f
-                    for f in features], pre_shape, red_shape)
-                  for features, pre_shape, red_shape in native]
-        return {"scales": scales, "was_torch": was_torch}
+        levels = [([f.detach().cpu().numpy() if isinstance(f, torch.Tensor) else f
+                    for f in features], scaled_shape, cropped_shape)
+                  for features, scaled_shape, cropped_shape in native]
+        return {"levels": levels, "was_torch": was_torch}
 
     @staticmethod
     def native_from_numpy(entry, device=None):
-        """Lift the native features from their numpy form (see native_to_numpy) back onto `device`
-        if the FE produced them as torch tensors. Pass the same resolved device the fresh extraction
-        would use; device=None reconstructs on the CPU, which matches a CPU extraction but not
-        bit-exactly a GPU one (interpolation kernels differ)."""
-        native = entry["scales"]
+        """Lift the native features of every level from their numpy form (see native_to_numpy)
+        back onto `device` if the FE produced them as torch tensors. Pass the same resolved
+        device the fresh extraction would use; device=None reconstructs on the CPU, which
+        matches a CPU extraction but not bit-exactly a GPU one (interpolation kernels differ)."""
+        native = entry["levels"]
         if entry.get("was_torch"):
             lift_device = device if device is not None else "cpu"
             native = [([torch.from_numpy(f).to(lift_device)
-                        for f in features], pre_shape, red_shape)
-                      for features, pre_shape, red_shape in native]
+                        for f in features], scaled_shape, cropped_shape)
+                      for features, scaled_shape, cropped_shape in native]
         return native
 
     @staticmethod
     def split_native_planes(native):
-        """Split the native features of a stack (numpy form) into one per plane (along Z)."""
-        num_planes = native["scales"][0][0][0].shape[1]
+        """Split the native features of a stack (numpy form, one level per scaling) into one per plane (along Z)."""
+        num_planes = native["levels"][0][0][0].shape[1]
         planes = []
         for z in range(num_planes):
-            scales = [([np.ascontiguousarray(a[:, z:z+1]) for a in arrays],
-                       (pre_shape[0], 1) + tuple(pre_shape[2:]),
-                       (reduced_shape[0], 1) + tuple(reduced_shape[2:]))
-                      for arrays, pre_shape, reduced_shape in native["scales"]]
-            planes.append({"scales": scales, "was_torch": native["was_torch"]})
+            levels = [([np.ascontiguousarray(f[:, z:z+1]) for f in features],
+                       (scaled_shape[0], 1) + tuple(scaled_shape[2:]),
+                       (cropped_shape[0], 1) + tuple(cropped_shape[2:]))
+                      for features, scaled_shape, cropped_shape in native["levels"]]
+            planes.append({"levels": levels, "was_torch": native["was_torch"]})
         return planes
 
     @staticmethod
     def join_native_planes(planes):
         """Join the per-plane native features (see split_native_planes) into those of the stack."""
         num_planes = len(planes)
-        scales = []
-        for i, (arrays, pre_shape, reduced_shape) in enumerate(planes[0]["scales"]):
-            joined = [np.concatenate([p["scales"][i][0][j] for p in planes], axis=1)
-                      for j in range(len(arrays))]
-            scales.append((joined,
-                           (pre_shape[0], num_planes) + tuple(pre_shape[2:]),
-                           (reduced_shape[0], num_planes) + tuple(reduced_shape[2:])))
-        return {"scales": scales, "was_torch": planes[0]["was_torch"]}
+        levels = []
+        for i, (features, scaled_shape, cropped_shape) in enumerate(planes[0]["levels"]):
+            joined = [np.concatenate([p["levels"][i][0][j] for p in planes], axis=1)
+                      for j in range(len(features))]
+            levels.append((joined,
+                           (scaled_shape[0], num_planes) + tuple(scaled_shape[2:]),
+                           (cropped_shape[0], num_planes) + tuple(cropped_shape[2:])))
+        return {"levels": levels, "was_torch": planes[0]["was_torch"]}
