@@ -637,6 +637,7 @@ class FeatureExtractor:
         num_planes = native["levels"][0][0][0].shape[1]
         planes = []
         for z in range(num_planes):
+            # Create a separate native with Z=1 for each plane
             levels = [([np.ascontiguousarray(f[:, z:z+1]) for f in features],
                        (scaled_shape[0], 1) + tuple(scaled_shape[2:]),
                        (cropped_shape[0], 1) + tuple(cropped_shape[2:]))
@@ -649,10 +650,11 @@ class FeatureExtractor:
         """Join the per-plane native features (see split_native_planes) into those of the stack."""
         num_planes = len(planes)
         levels = []
+        # Build the levels one by one; the planes are joined inside (along Z)
         for i, (features, scaled_shape, cropped_shape) in enumerate(planes[0]["levels"]):
-            joined = [np.concatenate([p["levels"][i][0][j] for p in planes], axis=1)
-                      for j in range(len(features))]
-            levels.append((joined,
+            joined = [np.concatenate([p["levels"][i][0][j] for p in planes], axis=1) # Join planes
+                      for j in range(len(features))] # ... for each array of the level
+            levels.append((joined, # Level tuple: joined arrays, shapes with Z back to num_planes
                            (scaled_shape[0], num_planes) + tuple(scaled_shape[2:]),
                            (cropped_shape[0], num_planes) + tuple(cropped_shape[2:])))
         return {"levels": levels, "was_torch": planes[0]["was_torch"]}

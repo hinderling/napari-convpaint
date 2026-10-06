@@ -87,10 +87,19 @@ def test_clear():
 
 
 def test_disabled_cache_is_noop():
-    c = FeatureCache(max_bytes=100 * 10**6, enabled=False)
-    c.put(("a",), _arr(1))
-    assert c.get(("a",)) is None
-    assert len(c) == 0
+    """Without a cache the model extracts every time; disabling drops the entries."""
+    import warnings as _w
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    img = np.random.default_rng(0).random((32, 32)).astype(np.float32)
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        cp = ConvpaintModel('gaussian')
+        fc = cp.enable_feature_cache()
+        f1 = cp.get_feature_image(img)
+        assert len(fc) == 1
+        cp.disable_feature_cache()
+        f2 = cp.get_feature_image(img)                 # no cache -> extracted again
+    assert cp._feature_cache is None and np.array_equal(f1, f2)
 
 
 def test_list_entry_size_accounted():
@@ -140,9 +149,9 @@ def test_cache_key_follows_user_params():
     change of e.g. fe_scalings changes the key even for FEs that enforce their own."""
     from napari_convpaint.convpaint_model import ConvpaintModel
     cp = ConvpaintModel('gaussian')
-    sig_before = cp._fe_signature()
+    sig_before = cp._extraction_signature()
     cp.set_params(fe_scalings=[1, 2])
-    assert cp._fe_signature() != sig_before
+    assert cp._extraction_signature() != sig_before
 
 
 def test_cached_prediction_bit_identical_and_hits():
