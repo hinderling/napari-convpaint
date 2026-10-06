@@ -604,8 +604,8 @@ class ConvpaintWidget(QWidget):
             self.cache_note = NoteLabel(
                 "Reuse extracted features when segmenting or training the same image "
                 "repeatedly (e.g. while refining annotations), instead of recomputing "
-                "them. Bounded by the memory limit below; on stacks/movies the oldest "
-                "cached slices are dropped first.")
+                "them. Bounded by the memory limit below; features you have reused are "
+                "kept longest.")
             self.cache_note.setStyleSheet(style_for_infos)
             self.advanced_cache_group.glayout.addWidget(self.cache_note, 0, 0, 1, 3)
 
@@ -890,7 +890,10 @@ class ConvpaintWidget(QWidget):
                                             'so that re-training or re-segmenting the same image does not extract them again.\n' +
                                             'Features of annotation tiles (see "Tile annotations") are not kept, since predictions cannot reuse them.')
             for w in [self.cache_max_ram_label, self.cache_max_ram_spinbox]:
-                w.setToolTip('Maximum memory (RAM) the feature cache may use.\nWhen full, the least recently used features are dropped.')
+                w.setToolTip('Maximum memory (RAM) the feature cache may use.\n' +
+                             'When full, features you have reused are kept longest; among the never reused,\n' +
+                             'the most recently cached go first (so a stack larger than the cache keeps its\n' +
+                             'first slices instead of cycling through them).')
             self.cache_size_label.setToolTip('Memory currently used by the feature cache (and number of cached images/planes).')
             self.btn_cache_clear.setToolTip('Drop all cached features (they are extracted again when needed).')
             self.check_use_store.setToolTip('Keep the extracted features of all processed images/planes (incl. Multifile batches) in the folder below (also across sessions),\n' +
@@ -1043,22 +1046,6 @@ class ConvpaintWidget(QWidget):
             fc.set_max_bytes(max_bytes)
         self._refresh_reuse_labels()
 
-    def _refresh_reuse_labels(self):
-        """Show the current sizes of the feature cache and store (called after ops that change them)."""
-        fc = self.cp_model._feature_cache
-        if fc is None:
-            self.cache_size_label.setText('Cached: 0 MB')
-        else:
-            s = fc.stats()
-            self.cache_size_label.setText(f'Cached: {s["bytes"] / 1e6:.0f} MB ({s["entries"]} planes)')
-        self.store_folder_label.setText(self.store_folder)
-        fs = self.cp_model._feature_store
-        if fs is None:
-            self.store_size_label.setText('Stored: (store off)')
-        else:
-            s = fs.stats()
-            self.store_size_label.setText(f'Stored: {s["entries"]} planes, {s["bytes"] / 1e6:.0f} MB')
-
     def _apply_feature_store(self, *args, recreate=False):
         """Apply the feature store settings from the GUI controls to the active model
         (see _apply_feature_cache): the store is on when the checkbox is checked, using the
@@ -1081,82 +1068,6 @@ class ConvpaintWidget(QWidget):
         self.btn_store_delete.setEnabled(self.store_enabled)
         self.btn_store_features.setEnabled(self.store_enabled)
         self._refresh_reuse_labels()
-
-    def _on_choose_store_folder(self):
-        """Let the user choose the folder of the feature store (and use it right away)."""
-        folder = QFileDialog.getExistingDirectory(self, 'Choose a folder for the feature store', self.store_folder)
-        if folder:
-            self.store_folder = folder
-            self.check_use_store.blockSignals(True)
-            self.check_use_store.setChecked(True)
-            self.check_use_store.blockSignals(False)
-            self._apply_feature_store(recreate=True)
-
-    def _on_clear_cache(self):
-        """Drop all cached features (the cache stays enabled)."""
-        if self.cp_model._feature_cache is not None:
-            self.cp_model._feature_cache.clear()
-        self._refresh_reuse_labels()
-
-    def _on_delete_stored_features(self):
-        """Delete all entries of the feature store (after confirmation); the store stays active."""
-        fs = self.cp_model._feature_store
-        if fs is None:
-            return
-        answer = QMessageBox.question(self, 'Delete stored features',
-                                      f'Delete all stored features in\n{fs.folder} ?\n\n' +
-                                      'The store stays active and the folder is kept.',
-                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if answer == QMessageBox.Yes:
-            fs.clear()
-            self._refresh_reuse_labels()
-
-    def _on_store_features(self):
-        """Extract the features of the selected image (plane by plane for stacks) into the
-        feature store, so that training and prediction can reuse them."""
-        if self.cp_model._feature_store is None:
-            warnings.warn('No feature store enabled. Features not stored.')
-            return
-        img = self._get_selected_img(check=True)
-        data_dims = self._get_data_dims(img.data, img.ndim) if img is not None else None
-        if data_dims not in self.supported_data_dims:
-            warnings.warn(f'Non-supported image dimensions {data_dims}. Features not stored.')
-            return
-
-        with warnings.catch_warnings():
-            warnings.simplefilter(action="ignore", category=FutureWarning)
-            self.viewer.window._status_bar._toggle_activity_dock(True)
-
-        # Get normalized data (entire stack, and stats prepared given the radio buttons)
-        image_stack_norm = self._get_data_channel_first_norm(img) # Normalize the entire stack
-        in_channels = self._parse_in_channels(self.input_channels)
-        if data_dims in ['2D', '2D_RGB', '3D_multi']: # Single image
-            self.cp_model.store_features(image_stack_norm, in_channels=in_channels, skip_norm=True,
-                                         fe_use_device=self.fe_device)
-        else: # Stack: step through the planes (as prediction does); skip norm as it is done above
-            num_steps = image_stack_norm.shape[-3]
-            for step in progress(range(num_steps)):
-                image = image_stack_norm[..., step, :, :]
-                self.cp_model.store_features(image, in_channels=in_channels, skip_norm=True,
-                                             fe_use_device=self.fe_device)
-
-        with warnings.catch_warnings():
-            warnings.simplefilter(action="ignore", category=FutureWarning)
-            self.viewer.window._status_bar._toggle_activity_dock(False)
-        self._refresh_reuse_labels()
-        # Point out the one setting that decides whether training profits from the store as well
-        if (self.cp_model.get_param('tile_annotations') and not self.auto_seg
-                and not self.cp_model.get_param('tile_image')):
-            show_info("All planes of this image are stored. Training reuses them too, once 'Tile annotations for training' "
-                      "is off (annotation tiles are not stored); with 'Auto segment' on, this happens automatically.")
-
-    def _warn_cache_ram(self):
-        """Warn if the feature cache limit exceeds half of the currently available RAM."""
-        import psutil
-        available_mb = psutil.virtual_memory().available / 1e6
-        if self.cache_max_ram_spinbox.value() > available_mb / 2:
-            show_info(f'The feature cache limit ({self.cache_max_ram_spinbox.value()} MB) exceeds half of the '
-                      f'currently available RAM ({available_mb:.0f} MB).')
 
     def _late_init(self):
         """Populate UI widgets with defaults from ConvpaintModel, set up connections, and reset model.
@@ -2907,6 +2818,23 @@ class ConvpaintWidget(QWidget):
 
 ### Helper functions
 
+    def _refresh_reuse_labels(self):
+        """Show the current sizes of the feature cache and store (called after ops that change them)."""
+        fc = self.cp_model._feature_cache
+        if fc is None:
+            self.cache_size_label.setText('Cached: 0 MB')
+        else:
+            s = fc.stats()
+            self.cache_size_label.setText(f'Cached: {s["bytes"] / 1e6:.0f} MB ({s["entries"]} planes)')
+        self.store_folder_label.setText(self.store_folder)
+        fs = self.cp_model._feature_store
+        if fs is None:
+            self.store_size_label.setText('Stored: (store off)')
+        else:
+            s = fs.stats()
+            self.store_size_label.setText(f'Stored: {s["entries"]} planes, {s["bytes"] / 1e6:.0f} MB')
+
+
     def _get_layer_transform_kwargs(self, img_layer, num_spatial_dims, num_leading_dims=0):
         """Get transform kwargs from image layer for creating a derived layer.
 
@@ -4022,6 +3950,89 @@ class ConvpaintWidget(QWidget):
         self._set_model_description()
 
 ### ADVANCED TAB
+
+    def _on_clear_cache(self):
+        """Drop all cached features (the cache stays enabled)."""
+        if self.cp_model._feature_cache is not None:
+            self.cp_model._feature_cache.clear()
+        self._refresh_reuse_labels()
+
+    def _on_choose_store_folder(self):
+        """Let the user choose the folder of the feature store (and use it right away)."""
+        folder = QFileDialog.getExistingDirectory(self, 'Choose a folder for the feature store', self.store_folder)
+        if folder:
+            self.store_folder = folder
+            self.check_use_store.blockSignals(True)
+            self.check_use_store.setChecked(True)
+            self.check_use_store.blockSignals(False)
+            self._apply_feature_store(recreate=True)
+
+    def _on_delete_stored_features(self):
+        """Delete all entries of the feature store (after confirmation); the store stays active."""
+        fs = self.cp_model._feature_store
+        if fs is None:
+            return
+        answer = QMessageBox.question(self, 'Delete stored features',
+                                      f'Delete all stored features in\n{fs.folder} ?\n\n' +
+                                      'The store stays active and the folder is kept.',
+                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer == QMessageBox.Yes:
+            fs.clear()
+            self._refresh_reuse_labels()
+
+    def _on_store_features(self):
+        """Extract the features of the selected image (plane by plane for stacks) into the
+        feature store, so that training and prediction can reuse them."""
+        if self.cp_model._feature_store is None:
+            warnings.warn('No feature store enabled. Features not stored.')
+            return
+        img = self._get_selected_img(check=True)
+        data_dims = self._get_data_dims(img.data, img.ndim) if img is not None else None
+        if data_dims not in self.supported_data_dims:
+            warnings.warn(f'Non-supported image dimensions {data_dims}. Features not stored.')
+            return
+
+        with warnings.catch_warnings():
+            warnings.simplefilter(action="ignore", category=FutureWarning)
+            self.viewer.window._status_bar._toggle_activity_dock(True)
+
+        # Get normalized data (entire stack, and stats prepared given the radio buttons)
+        image_stack_norm = self._get_data_channel_first_norm(img) # Normalize the entire stack
+        in_channels = self._parse_in_channels(self.input_channels)
+
+        # Store features in the feature store (single image or stack)
+        if data_dims in ['2D', '2D_RGB', '3D_multi']: # Single image
+            self.cp_model.store_features(image_stack_norm, in_channels=in_channels, skip_norm=True,
+                                         fe_use_device=self.fe_device)
+        else: # Stack: step through the planes for progress bar (as _on_predict_all does); skip norm as it is done above
+            num_steps = image_stack_norm.shape[-3]
+            for step in progress(range(num_steps)):
+                image = image_stack_norm[..., step, :, :]
+                self.cp_model.store_features(image, in_channels=in_channels, skip_norm=True,
+                                             fe_use_device=self.fe_device)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter(action="ignore", category=FutureWarning)
+            self.viewer.window._status_bar._toggle_activity_dock(False)
+
+        # Update the labels to reflect the new state
+        self._refresh_reuse_labels()
+
+        # Point out the one setting that decides whether training profits from the store as well
+        # (auto-segment switches the tiling off by itself, but only if the image is not tiled; see _on_train)
+        untiles = self.auto_seg and not self.cp_model.get_param('tile_image')
+        if self.cp_model.get_param('tile_annotations') and not untiles:
+            show_info("All planes of this image are stored. Training reuses them too, once 'Tile annotations for training' "
+                      "is off (annotation tiles are not stored); with 'Auto segment' on and 'Tile image for segmentation' off, automatically.")
+
+    def _warn_cache_ram(self):
+        """Warn if the feature cache limit exceeds half of the currently available RAM."""
+        import psutil
+        available_mb = psutil.virtual_memory().available / 1e6
+        if self.cache_max_ram_spinbox.value() > available_mb / 2:
+            show_info(f'The feature cache limit ({self.cache_max_ram_spinbox.value()} MB) exceeds half of the '
+                      f'currently available RAM ({available_mb:.0f} MB).')
+
 
     def _on_add_all_annot_layers(self):
         """Add annotations layers for all image layers selected in the layers widget (napari).

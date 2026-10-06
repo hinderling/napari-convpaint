@@ -3,7 +3,7 @@
 Keeps the native (pre-rescale) features of every processed plane as .npy files in a
 user-chosen folder, without eviction: extract a stack once, then train and predict from
 the stored features (also across sessions). Entries use the same key as the RAM cache
-(content hash of the prepared plane + FE signature), so the store is self-invalidating:
+(content hash of the prepared plane + extraction signature), so the store is self-invalidating:
 a changed image or setting simply misses. Hits are memory-mapped, so only the planes
 actually used are read from disk.
 """
@@ -54,7 +54,7 @@ class FeatureStore:
             raise ValueError(f"No write access to '{self.folder}' ({e.strerror}).")
         self.hits = 0
         self.misses = 0
-        self._warned_full = False
+        self._warned_no_write = False
         self._nbytes = sum(os.path.getsize(os.path.join(d, n)) # Size on disk, kept up to date by put/clear
                            for d in self._entry_dirs() for n in os.listdir(d))
 
@@ -62,10 +62,10 @@ class FeatureStore:
 
     @staticmethod
     def _entry_name(key):
-        """Folder name of an entry: <data signature>_<hash of the FE signature>."""
-        data_sig, fe_sig = key
-        fe_hash = hashlib.blake2b(repr(fe_sig).encode(), digest_size=8).hexdigest()
-        return f"{data_sig}_{fe_hash}"
+        """Folder name of an entry: <data signature>_<hash of the extraction signature>."""
+        data_sig, extraction_sig = key
+        extraction_hash = hashlib.blake2b(repr(extraction_sig).encode(), digest_size=8).hexdigest()
+        return f"{data_sig}_{extraction_hash}"
 
     def _entry_dir(self, key):
         return os.path.join(self.folder, self._entry_name(key))
@@ -90,28 +90,28 @@ class FeatureStore:
             return None
         with open(meta_path) as f:
             meta = json.load(f)
-        scales = []
-        for i, scale in enumerate(meta["scales"]):
-            arrays = [np.load(os.path.join(entry_dir, f"s{i}_{j}.npy"), mmap_mode='c')
-                      for j in range(scale["n_arrays"])]
-            scales.append((arrays, tuple(scale["pre_shape"]), tuple(scale["reduced_shape"])))
+        levels = []
+        for i, level_meta in enumerate(meta["levels"]):
+            arrays = [np.load(os.path.join(entry_dir, f"l{i}_{j}.npy"), mmap_mode='c')
+                      for j in range(level_meta["n_arrays"])]
+            levels.append((arrays, tuple(level_meta["scaled_shape"]), tuple(level_meta["cropped_shape"])))
         self.hits += 1
-        return {"scales": scales, "was_torch": meta["was_torch"]}
+        return {"levels": levels, "was_torch": meta["was_torch"]}
 
     def put(self, key, entry):
         """Store `entry` under `key` (no-op if present or if the disk would get too full)."""
         if key in self:
             return
-        nbytes = sum(a.nbytes for arrays, _, _ in entry["scales"] for a in arrays)
+        nbytes = sum(a.nbytes for arrays, _, _ in entry["levels"] for a in arrays)
         if self.max_bytes is not None and self._nbytes + nbytes > self.max_bytes:
-            if not self._warned_full:
+            if not self._warned_no_write:
                 warnings.warn(f"Feature store '{self.folder}': size cap ({self.max_bytes / 1e9:.1f} GB) reached, features are not stored anymore.")
-                self._warned_full = True
+                self._warned_no_write = True
             return
         if shutil.disk_usage(self.folder).free - nbytes < _DISK_HEADROOM_BYTES:
-            if not self._warned_full:
+            if not self._warned_no_write:
                 warnings.warn(f"Feature store '{self.folder}': disk (almost) full, features are not stored anymore.")
-                self._warned_full = True
+                self._warned_no_write = True
             return
         # Write into a temporary folder and rename it, so that readers never see a partial entry
         entry_dir = self._entry_dir(key)
@@ -119,21 +119,21 @@ class FeatureStore:
         try:
             shutil.rmtree(tmp_dir, ignore_errors=True)
             os.makedirs(tmp_dir)
-            meta = {"was_torch": bool(entry["was_torch"]), "scales": []}
-            for i, (arrays, pre_shape, reduced_shape) in enumerate(entry["scales"]):
+            meta = {"was_torch": bool(entry["was_torch"]), "levels": []}
+            for i, (arrays, scaled_shape, cropped_shape) in enumerate(entry["levels"]):
                 for j, a in enumerate(arrays):
-                    np.save(os.path.join(tmp_dir, f"s{i}_{j}.npy"), np.ascontiguousarray(a))
-                meta["scales"].append({"n_arrays": len(arrays),
-                                       "pre_shape": list(pre_shape),
-                                       "reduced_shape": list(reduced_shape)})
+                    np.save(os.path.join(tmp_dir, f"l{i}_{j}.npy"), np.ascontiguousarray(a))
+                meta["levels"].append({"n_arrays": len(arrays),
+                                       "scaled_shape": list(scaled_shape),
+                                       "cropped_shape": list(cropped_shape)})
             with open(os.path.join(tmp_dir, _META), 'w') as f:
                 json.dump(meta, f)
             os.rename(tmp_dir, entry_dir)
         except OSError as e: # E.g. the folder became unwritable (removed, locked by a sync client)
             shutil.rmtree(tmp_dir, ignore_errors=True)
-            if not self._warned_full:
+            if not self._warned_no_write:
                 warnings.warn(f"Feature store '{self.folder}': cannot write ({e.strerror}), features are not stored anymore.")
-                self._warned_full = True
+                self._warned_no_write = True
             return
         self._nbytes += sum(os.path.getsize(os.path.join(entry_dir, n)) for n in os.listdir(entry_dir))
 
@@ -142,7 +142,7 @@ class FeatureStore:
         for d in self._entry_dirs(include_tmp=True):
             shutil.rmtree(d, ignore_errors=True)
         self._nbytes = 0
-        self._warned_full = False
+        self._warned_no_write = False
 
     def __len__(self):
         return len(self._entry_dirs())

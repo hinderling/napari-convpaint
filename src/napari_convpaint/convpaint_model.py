@@ -621,7 +621,9 @@ class ConvpaintModel:
                 layers=fe_layers
             )
             if self._feature_cache is not None:
-                self._feature_cache.clear() # Cached features belong to the old FE
+                # The cache key holds the extraction signature, so entries of the old FE could never be
+                # returned anyway; clearing frees the RAM they would occupy until evicted
+                self._feature_cache.clear()
         
         # Set the parameters
         self._param.set(fe_name=fe_name, fe_layers=fe_layers)
@@ -938,6 +940,11 @@ class ConvpaintModel:
         """Turn off feature caching and free the cached features."""
         self._feature_cache = None
 
+    def clear_feature_cache(self):
+        """Drop the cached features, keeping the cache itself (and its budget) in place."""
+        if self._feature_cache is not None:
+            self._feature_cache.clear()
+
     def enable_feature_store(self, folder, max_bytes=None):
         """Turn on the feature store: the native features of every extracted plane are
         kept as files in ``folder`` (no eviction, also across sessions) and reused like
@@ -950,8 +957,13 @@ class ConvpaintModel:
         return self._feature_store
 
     def disable_feature_store(self):
-        """Turn off the feature store (the stored files are kept; see FeatureStore.clear)."""
+        """Turn off the feature store (the stored files are kept; see clear_feature_store)."""
         self._feature_store = None
+
+    def clear_feature_store(self):
+        """Delete the stored features from disk, keeping the store itself enabled."""
+        if self._feature_store is not None:
+            self._feature_store.clear()
 
     def store_features(self, image, in_channels=None, skip_norm=False, fe_use_device=None):
         """
@@ -978,12 +990,9 @@ class ConvpaintModel:
         if self._feature_store is None:
             raise ValueError('No feature store enabled (see enable_feature_store).')
         # Prepare the data as in _predict (dimensions, channels, normalization of the whole image)
+        # not inside _get_features, since planes are split below but norm needs the whole stack
         data, _ = self._prep_dims(image)
-        if in_channels is not None:
-            self._check_in_channels(data, in_channels)
-            data = [d[in_channels] for d in data]
-        if not skip_norm:
-            data = [self._norm_single_image(d) for d in data]
+        data = self._prep_whole_images(data, in_channels, skip_norm)
         # Extract plane by plane (bounded memory); FEs with 3D context need the whole stack
         for d in data:
             units = [d] if self.fe_model.get_has_3d_context() else [d[:, z:z+1] for z in range(d.shape[1])]
@@ -991,13 +1000,13 @@ class ConvpaintModel:
                 self._get_features(unit, restore_input_form=False, in_channels=None, skip_norm=True,
                                    use_device=fe_use_device)
 
-    def _fe_signature(self):
-        """The FE-relevant part of the cache/store key: the parameters whose change
+    def _extraction_signature(self):
+        """The settings part of the cache/store key: the parameters whose change
         invalidates extracted features (the model's own train-reset set), taken
         from the user's params (before FE enforcement, which e.g. moves the
         JAFAR scalings out of the Param)."""
         def _hashable(v):
-            # fe_scalings / fe_layers are lists -> make them hashable for the key.
+            # fe_scalings / fe_layers are lists -> tuples (same order and nesting) to be hashable.
             if isinstance(v, (list, tuple)):
                 return tuple(_hashable(x) for x in v)
             return v
@@ -1025,9 +1034,11 @@ class ConvpaintModel:
         native = self._feature_cache.get(key) if self._feature_cache is not None else None
         if native is None and self._feature_store is not None:
             native = self._feature_store.get(key)
+            # Promote the store hit: np.array() copies the memory-mapped arrays into RAM,
+            # so the cached entry does not keep reading from (or depend on) the files
             if native is not None and self._feature_cache is not None:
-                in_ram = {"scales": [([np.array(a) for a in arrays], pre_shape, reduced_shape)
-                                     for arrays, pre_shape, reduced_shape in native["scales"]],
+                in_ram = {"levels": [([np.array(a) for a in arrays], scaled_shape, cropped_shape)
+                                     for arrays, scaled_shape, cropped_shape in native["levels"]],
                           "was_torch": native["was_torch"]}
                 self._feature_cache.put(key, in_ram)
         return native
@@ -1049,12 +1060,12 @@ class ConvpaintModel:
         fe = self.fe_model
         if skip_reuse or not self._reuse_enabled() or not fe.supports_feature_reuse(param):
             return fe.extract_features_pyramid(d, param, patched=patched, device=device)
-        fe_sig = self._fe_signature()
+        extraction_sig = self._extraction_signature()
         if fe.get_has_3d_context():
             planes = [d] # Planes are not independent -> the whole stack is the unit of reuse
         else:
             planes = [d[:, z:z+1] for z in range(d.shape[1])]
-        keys = [(self._data_signature(plane), fe_sig) for plane in planes]
+        keys = [(self._data_signature(plane), extraction_sig) for plane in planes]
         natives = [self._reuse_native(key) for key in keys]
         missing = [z for z, native in enumerate(natives) if native is None]
         if len(missing) == len(keys):
@@ -1159,16 +1170,9 @@ class ConvpaintModel:
         # Make sure data is a list of images with [C, Z, H, W] shape
         data, annotations = self._prep_dims(data, annotations, get_coords=False)
 
-        # --- Channel subset ------------------------------------------------------
-        if in_channels is not None:
-            self._check_in_channels(data, in_channels)
-            data = [d[in_channels] for d in data]
-
-        # --- Normalization -------------------------------------------------------
-        if not skip_norm:
-            data = [self._norm_single_image(d) for d in data]
-        # if self.fe_model.norm_mode == "imagenet":
-        #     data = [utils.normalize_image_imagenet(d) for d in data]
+        # --- Channel subset and normalization ------------------------------------
+        # (skipped by the callers that prepared the whole image before cutting planes or tiles)
+        data = self._prep_whole_images(data, in_channels, skip_norm)
 
         # Record originals BEFORE any padding / resampling for reshaping and rescaling later
         self.original_shapes = [d.shape for d in data]  # list of (C,Z,H,W)
@@ -1693,14 +1697,8 @@ class ConvpaintModel:
         # Make sure data is a list of images with [C, Z, H, W] shape
         data, _ = self._prep_dims(data)
 
-        # If in_channels is given, extract the channels selected by in_channels from the data
-        if in_channels is not None:
-            self._check_in_channels(data, in_channels)
-            data = [d[in_channels] for d in data]
-
-        # If not done previously, normalize the images (separately and according to the parameter)
-        if not skip_norm:
-            data = [self._norm_single_image(d) for d in data]
+        # Channels and normalization on the whole images, before they are cut into tiles
+        data = self._prep_whole_images(data, in_channels, skip_norm)
 
         # Get class probabilities, using tiling if enabled
         if self._param.tile_image:
@@ -2141,7 +2139,19 @@ class ConvpaintModel:
             raise ValueError(f'Image and annotations have different (non-channel) dimensions: {img.shape[1:]} vs {annotations.shape}')
 
         return img, annotations
-    
+
+    def _prep_whole_images(self, data, in_channels=None, skip_norm=False):
+        """
+        Takes the channel subset and normalizes the images (list of [C, Z, H, W], see _prep_dims),
+        before any planes or tiles are cut from them (the normalization uses the whole image).
+        """
+        if in_channels is not None:
+            self._check_in_channels(data, in_channels)
+            data = [d[in_channels] for d in data]
+        if not skip_norm:
+            data = [self._norm_single_image(d) for d in data]
+        return data
+
     def _check_in_channels(self, data, in_channels=None):
         """
         Checks if the conditions for using the given in_channels are met, and raise an error if not.

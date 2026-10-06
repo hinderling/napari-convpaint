@@ -5,12 +5,12 @@ same image (or z-slice / movie frame) is segmented repeatedly while refining
 scribbles, its features can be reused instead of recomputed. This module holds a
 generic, feature-extractor-agnostic cache: it stores an *opaque entry* defined
 by each FE (e.g. DINO patch tokens — tiny and lossless to upsample), keyed by
-`(img_id, slice, FE-signature)`, and owns everything storage-related — LRU
+`(data signature, extraction signature)`, and owns everything storage-related — LRU
 eviction and, crucially, a memory budget so caching a 100-slice stack or a
 300-frame movie can never grow unbounded and crash the kernel.
 
 Before storing an entry, its size is checked against the configured cap. If it
-does not fit, the least-recently-used entries are evicted; if it still does not
+does not fit, entries are evicted (see FeatureCache for the order); if it still does not
 fit (a single entry larger than the cap), it is simply not cached and the
 caller recomputes.
 
@@ -55,19 +55,17 @@ class FeatureCache:
     ----------
     max_bytes : int or None
         Hard cap on the cache's size. None → `_DEFAULT_MAX_BYTES` (2 GB).
-    enabled : bool
-        Master switch; when False, get() always misses and put() is a no-op.
     """
 
-    def __init__(self, max_bytes: int | None = None, enabled: bool = True):
+    def __init__(self, max_bytes: int | None = None):
         self._entries: "OrderedDict[tuple, tuple]" = OrderedDict()  # key -> (entry, nbytes, used)
         self._total_bytes = 0
-        self.enabled = bool(enabled)
         if max_bytes is None:
             max_bytes = _DEFAULT_MAX_BYTES
         self._max_bytes = int(max_bytes)
         self.hits = 0
         self.misses = 0
+
     # -- budget helpers ----------------------------------------------------
 
     def _fits(self, nbytes: int) -> bool:
@@ -78,8 +76,6 @@ class FeatureCache:
 
     def get(self, key):
         """Return the cached entry for `key`, or None."""
-        if not self.enabled:
-            return None
         item = self._entries.get(key)
         if item is not None:
             self._entries[key] = (item[0], item[1], True) # Mark as used
@@ -89,13 +85,12 @@ class FeatureCache:
         self.misses += 1
         return None
 
-    def put(self, key, entry, nbytes: int | None = None):
+    def put(self, key, entry):
         """Store `entry` under `key` if it fits the budget; else evict LRU and
-        retry. A entry that can never fit is not cached (the caller recomputes)."""
-        if not self.enabled or entry is None:
+        retry. An entry that can never fit is not cached (the caller recomputes)."""
+        if entry is None:
             return
-        if nbytes is None:
-            nbytes = _nbytes(entry)
+        nbytes = _nbytes(entry)
         # Overwrite of an existing key: drop the old size first.
         if key in self._entries:
             self._total_bytes -= self._entries.pop(key)[1]
@@ -111,7 +106,9 @@ class FeatureCache:
         self._total_bytes += nbytes
 
     def _evict_one(self):
-        """Evict the newest never-used entry if there is one, else the least recently used."""
+        """Evict the newest never-used entry if there is one, else the least recently used
+        (plain LRU would cycle through a stack larger than the cache: every plane evicts
+        the one needed next, so nothing is ever reused; see the class docstring)."""
         key = next((k for k in reversed(self._entries) if not self._entries[k][2]), next(iter(self._entries)))
         self._total_bytes -= self._entries.pop(key)[1]
 
@@ -128,12 +125,6 @@ class FeatureCache:
         self._max_bytes = int(max_bytes)
         while self._entries and self._total_bytes > self._max_bytes:
             self._evict_one()
-
-    def set_enabled(self, enabled: bool):
-        """Enable/disable in place; disabling clears the cache to free space."""
-        self.enabled = bool(enabled)
-        if not self.enabled:
-            self.clear()
 
     @property
     def nbytes(self) -> int:
