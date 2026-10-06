@@ -128,7 +128,7 @@ class GaussianFeatures(FeatureExtractor):
 # This works automatically for any feature extractor implementing a), b) or c): what is kept is the
 # native output of your method (before rescaling), and the rescaling is done by the base class.
 # Also works if you override the two halves of d) separately, as long as extract_native returns one
-# (features_list, pre_reduction_shape, reduced_shape) per scaling with arrays [nb_features, Z, h, w],
+# (features, scaled_shape, cropped_shape) per scaling ("level") with arrays [nb_features, Z, h, w],
 # and reconstruct_from_native only depends on that, the parameters and the shapes.
 # Overriding extract_features_pyramid as a whole excludes the extractor from feature reuse
 # (see supports_feature_reuse() in the base class).

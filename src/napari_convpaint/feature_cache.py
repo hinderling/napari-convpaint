@@ -10,7 +10,7 @@ eviction and, crucially, a memory budget so caching a 100-slice stack or a
 300-frame movie can never grow unbounded and crash the kernel.
 
 Before storing an entry, its size is checked against the configured cap. If it
-does not fit, the least-recently-used entries are evicted; if it still does not
+does not fit, entries are evicted (see FeatureCache for the order); if it still does not
 fit (a single entry larger than the cap), it is simply not cached and the
 caller recomputes.
 
@@ -68,6 +68,7 @@ class FeatureCache:
         self._max_bytes = int(max_bytes)
         self.hits = 0
         self.misses = 0
+
     # -- budget helpers ----------------------------------------------------
 
     def _fits(self, nbytes: int) -> bool:
@@ -89,13 +90,12 @@ class FeatureCache:
         self.misses += 1
         return None
 
-    def put(self, key, entry, nbytes: int | None = None):
-        """Store `entry` under `key` if it fits the budget; else evict LRU and
-        retry. A entry that can never fit is not cached (the caller recomputes)."""
+    def put(self, key, entry):
+        """Store `entry` under `key` if it fits the budget; else evict (see _evict_one)
+        and retry. An entry that can never fit is not cached (the caller recomputes)."""
         if not self.enabled or entry is None:
             return
-        if nbytes is None:
-            nbytes = _nbytes(entry)
+        nbytes = _nbytes(entry)
         # Overwrite of an existing key: drop the old size first.
         if key in self._entries:
             self._total_bytes -= self._entries.pop(key)[1]
@@ -111,7 +111,9 @@ class FeatureCache:
         self._total_bytes += nbytes
 
     def _evict_one(self):
-        """Evict the newest never-used entry if there is one, else the least recently used."""
+        """Evict the newest never-used entry if there is one, else the least recently used
+        (plain LRU would cycle through a stack larger than the cache: every plane evicts
+        the one needed next, so nothing is ever reused; see the class docstring)."""
         key = next((k for k in reversed(self._entries) if not self._entries[k][2]), next(iter(self._entries)))
         self._total_bytes -= self._entries.pop(key)[1]
 
@@ -124,7 +126,7 @@ class FeatureCache:
         self._total_bytes = 0
 
     def set_max_bytes(self, max_bytes: int):
-        """Change the cap in place, evicting LRU entries if over."""
+        """Change the cap in place, evicting (see _evict_one) while over it."""
         self._max_bytes = int(max_bytes)
         while self._entries and self._total_bytes > self._max_bytes:
             self._evict_one()

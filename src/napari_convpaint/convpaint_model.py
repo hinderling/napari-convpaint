@@ -621,7 +621,9 @@ class ConvpaintModel:
                 layers=fe_layers
             )
             if self._feature_cache is not None:
-                self._feature_cache.clear() # Cached features belong to the old FE
+                # The cache key holds the FE signature, so entries of the old FE could never be
+                # returned anyway; clearing frees the RAM they would occupy until evicted
+                self._feature_cache.clear()
         
         # Set the parameters
         self._param.set(fe_name=fe_name, fe_layers=fe_layers)
@@ -928,7 +930,9 @@ class ConvpaintModel:
         scribbles, or the train->predict of one image — instead of recomputing them.
         Entries are content-addressed (a hash of the prepared plane), so the cache is
         self-invalidating: a changed image simply misses. Bounded by a RAM budget
-        (``max_bytes``, default 2 GB; least recently used entries are dropped).
+        (``max_bytes``, default 2 GB; reused entries are kept longest, and among the
+        never reused the newest is dropped first, so a stack larger than the cache
+        keeps its first planes).
         Off by default in the API; the widget enables it by default."""
         from .feature_cache import FeatureCache
         self._feature_cache = FeatureCache(max_bytes=max_bytes)
@@ -937,6 +941,11 @@ class ConvpaintModel:
     def disable_feature_cache(self):
         """Turn off feature caching and free the cached features."""
         self._feature_cache = None
+
+    def clear_feature_cache(self):
+        """Drop the cached features, keeping the cache itself (and its budget) in place."""
+        if self._feature_cache is not None:
+            self._feature_cache.clear()
 
     def enable_feature_store(self, folder, max_bytes=None):
         """Turn on the feature store: the native features of every extracted plane are
@@ -1026,8 +1035,8 @@ class ConvpaintModel:
         if native is None and self._feature_store is not None:
             native = self._feature_store.get(key)
             if native is not None and self._feature_cache is not None:
-                in_ram = {"scales": [([np.array(a) for a in arrays], pre_shape, reduced_shape)
-                                     for arrays, pre_shape, reduced_shape in native["scales"]],
+                in_ram = {"levels": [([np.array(a) for a in arrays], scaled_shape, cropped_shape)
+                                     for arrays, scaled_shape, cropped_shape in native["levels"]],
                           "was_torch": native["was_torch"]}
                 self._feature_cache.put(key, in_ram)
         return native

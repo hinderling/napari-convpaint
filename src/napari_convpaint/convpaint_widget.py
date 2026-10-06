@@ -553,8 +553,8 @@ class ConvpaintWidget(QWidget):
             cache_note = QLabel(
                 "Reuse extracted features when segmenting or training the same image "
                 "repeatedly (e.g. while refining annotations), instead of recomputing "
-                "them. Bounded by the memory limit below; on stacks/movies the oldest "
-                "cached slices are dropped first.")
+                "them. Bounded by the memory limit below; features you have reused are "
+                "kept longest.")
             cache_note.setStyleSheet(style_for_infos)
             cache_note.setWordWrap(True)
             cache_note.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed) # Word-wrapped labels must not absorb vertical resizing
@@ -816,7 +816,10 @@ class ConvpaintWidget(QWidget):
                                             'so that re-training or re-segmenting the same image does not extract them again.\n' +
                                             'Features of annotation tiles (see "Tile annotations") are not kept, since predictions cannot reuse them.')
             for w in [self.cache_max_ram_label, self.cache_max_ram_spinbox]:
-                w.setToolTip('Maximum memory (RAM) the feature cache may use.\nWhen full, the least recently used features are dropped.')
+                w.setToolTip('Maximum memory (RAM) the feature cache may use.\n' +
+                             'When full, features you have reused are kept longest; among the never reused,\n' +
+                             'the most recently cached go first (so a stack larger than the cache keeps its\n' +
+                             'first slices instead of cycling through them).')
             self.cache_size_label.setToolTip('Memory currently used by the feature cache (and number of cached images/planes).')
             self.check_use_store.setToolTip('Keep the extracted features of all processed images/planes (incl. Multifile batches) in the folder below (also across sessions),\n' +
                                             'so that stacks and movies only need to be extracted once (e.g. for re-predicting after re-training).\n' +

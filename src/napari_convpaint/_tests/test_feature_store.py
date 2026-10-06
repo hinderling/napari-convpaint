@@ -8,19 +8,19 @@ from napari_convpaint.feature_store import FeatureStore, _MARKER
 
 
 def _entry(rng, num_planes=1, was_torch=False):
-    """An entry like the FE protocol produces: 2 scales, 2 arrays each, [F, Z, h, w]."""
-    scales = []
+    """An entry like the FE protocol produces: 2 levels, 2 arrays each, [F, Z, h, w]."""
+    levels = []
     for h in (16, 8):
         arrays = [rng.random((5, num_planes, h, h), dtype=np.float32) for _ in range(2)]
-        scales.append((arrays, (3, num_planes, h, h), (3, num_planes, h, h)))
-    return {"scales": scales, "was_torch": was_torch}
+        levels.append((arrays, (3, num_planes, h, h), (3, num_planes, h, h)))
+    return {"levels": levels, "was_torch": was_torch}
 
 
 def _equal(p1, p2):
-    if p1["was_torch"] != p2["was_torch"] or len(p1["scales"]) != len(p2["scales"]):
+    if p1["was_torch"] != p2["was_torch"] or len(p1["levels"]) != len(p2["levels"]):
         return False
-    for (a1, pre1, red1), (a2, pre2, red2) in zip(p1["scales"], p2["scales"]):
-        if tuple(pre1) != tuple(pre2) or tuple(red1) != tuple(red2) or len(a1) != len(a2):
+    for (a1, scaled1, cropped1), (a2, scaled2, cropped2) in zip(p1["levels"], p2["levels"]):
+        if tuple(scaled1) != tuple(scaled2) or tuple(cropped1) != tuple(cropped2) or len(a1) != len(a2):
             return False
         if not all(np.array_equal(x, y) for x, y in zip(a1, a2)):
             return False
@@ -42,7 +42,7 @@ def test_store_roundtrip(tmp_path):
     assert store.nbytes > 0
     # Memory-mapped arrays must be usable like normal arrays (incl. torch lifting, copy-on-write)
     import torch
-    t = torch.from_numpy(got["scales"][0][0][0])
+    t = torch.from_numpy(got["levels"][0][0][0])
     assert t.shape == (5, 1, 16, 16)
 
 
@@ -75,7 +75,7 @@ def test_store_clear_and_reopen(tmp_path):
 def test_store_size_cap(tmp_path):
     rng = np.random.default_rng(3)
     p1 = _entry(rng)
-    one = sum(a.nbytes for arrays, _, _ in p1["scales"] for a in arrays)
+    one = sum(a.nbytes for arrays, _, _ in p1["levels"] for a in arrays)
     store = FeatureStore(tmp_path / "store", max_bytes=int(2.5 * one))
     store.put(("a", ("s",)), p1)
     store.put(("b", ("s",)), _entry(rng))
@@ -186,7 +186,7 @@ def test_model_cache_and_store_together(tmp_path):
         assert store.stats()['hits'] == 6 and len(fc2) == 3
         f5 = cp.get_feature_image(stack)               # from the cache
         assert store.stats()['hits'] == 6 and fc2.stats()['hits'] == 3
-        assert all(not isinstance(a, np.memmap) for arrays, _, _ in next(iter(fc2._entries.values()))[0]["scales"] for a in arrays)
+        assert all(not isinstance(a, np.memmap) for arrays, _, _ in next(iter(fc2._entries.values()))[0]["levels"] for a in arrays)
     assert np.array_equal(f1, f2) and np.array_equal(f1, f3)
     assert np.array_equal(f1, f4) and np.array_equal(f1, f5)
 

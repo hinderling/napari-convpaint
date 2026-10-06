@@ -90,19 +90,19 @@ class FeatureStore:
             return None
         with open(meta_path) as f:
             meta = json.load(f)
-        scales = []
-        for i, scale in enumerate(meta["scales"]):
-            arrays = [np.load(os.path.join(entry_dir, f"s{i}_{j}.npy"), mmap_mode='c')
-                      for j in range(scale["n_arrays"])]
-            scales.append((arrays, tuple(scale["pre_shape"]), tuple(scale["reduced_shape"])))
+        levels = []
+        for i, level in enumerate(meta["levels"]):
+            arrays = [np.load(os.path.join(entry_dir, f"l{i}_{j}.npy"), mmap_mode='c')
+                      for j in range(level["n_arrays"])]
+            levels.append((arrays, tuple(level["scaled_shape"]), tuple(level["cropped_shape"])))
         self.hits += 1
-        return {"scales": scales, "was_torch": meta["was_torch"]}
+        return {"levels": levels, "was_torch": meta["was_torch"]}
 
     def put(self, key, entry):
         """Store `entry` under `key` (no-op if present or if the disk would get too full)."""
         if key in self:
             return
-        nbytes = sum(a.nbytes for arrays, _, _ in entry["scales"] for a in arrays)
+        nbytes = sum(a.nbytes for arrays, _, _ in entry["levels"] for a in arrays)
         if self.max_bytes is not None and self._nbytes + nbytes > self.max_bytes:
             if not self._warned_full:
                 warnings.warn(f"Feature store '{self.folder}': size cap ({self.max_bytes / 1e9:.1f} GB) reached, features are not stored anymore.")
@@ -119,13 +119,13 @@ class FeatureStore:
         try:
             shutil.rmtree(tmp_dir, ignore_errors=True)
             os.makedirs(tmp_dir)
-            meta = {"was_torch": bool(entry["was_torch"]), "scales": []}
-            for i, (arrays, pre_shape, reduced_shape) in enumerate(entry["scales"]):
+            meta = {"was_torch": bool(entry["was_torch"]), "levels": []}
+            for i, (arrays, scaled_shape, cropped_shape) in enumerate(entry["levels"]):
                 for j, a in enumerate(arrays):
-                    np.save(os.path.join(tmp_dir, f"s{i}_{j}.npy"), np.ascontiguousarray(a))
-                meta["scales"].append({"n_arrays": len(arrays),
-                                       "pre_shape": list(pre_shape),
-                                       "reduced_shape": list(reduced_shape)})
+                    np.save(os.path.join(tmp_dir, f"l{i}_{j}.npy"), np.ascontiguousarray(a))
+                meta["levels"].append({"n_arrays": len(arrays),
+                                       "scaled_shape": list(scaled_shape),
+                                       "cropped_shape": list(cropped_shape)})
             with open(os.path.join(tmp_dir, _META), 'w') as f:
                 json.dump(meta, f)
             os.rename(tmp_dir, entry_dir)
