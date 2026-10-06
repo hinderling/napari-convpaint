@@ -415,18 +415,11 @@ class ConvpaintWidget(QWidget):
         # === CLASSES TAB ===
 
         if 'Classes' in self.tab_names:
-            # Create the main layout
-            self.classes_layout = QGridLayout()
+            # Create the group box and use its layout directly (as the other tabs do)
+            self.classes_group = VHGroup('Class names (optional)', orientation='G')
+            self.classes_layout = self.classes_group.glayout
             self.classes_layout.setAlignment(Qt.AlignTop)
-            self.classes_widget = QWidget()
-            self.classes_widget.setLayout(self.classes_layout)
              
-            # Add text to instruct the user (note that it is optional to use)
-            class_names_text = QLabel('Set the names of the classes (optional):')
-            class_names_text.setWordWrap(True)
-            # class_names_text.setStyleSheet("font-size: 11px; color: rgba(120, 120, 120, 70%)")#; font-style: italic")
-            self.classes_layout.addWidget(class_names_text, 0, 0, 1, 10)
-
             # Add buttons ("add class", "remove class", import/export and reset)
             self.add_class_btn = QPushButton('Add class')
             self.remove_class_btn = QPushButton('Remove class')
@@ -439,11 +432,9 @@ class ConvpaintWidget(QWidget):
             # Create the class names
             self._create_default_class_names()
 
-            # Add the widget to the tab, in a group box like the other tabs
+            # Add the group box to the tab, like the other tabs
             self.classes_layout.setColumnStretch(1, 1)
             self.classes_layout.setColumnStretch(5, 1)
-            self.classes_group = VHGroup('Classes', orientation='G')
-            self.classes_group.glayout.addWidget(self.classes_widget, 0, 0, 1, 1)
             self.tabs.add_named_tab('Classes', self.classes_group.gbox)
 
         # === ADVANCED TAB ===
@@ -457,7 +448,7 @@ class ConvpaintWidget(QWidget):
             self.advanced_input_group = VHGroup('Input', orientation='G')
             self.advanced_output_group = VHGroup('Output', orientation='G')
             self.advanced_unsupervised_group = VHGroup('Unsupervised extraction (without annotations)', orientation='G')
-            self.advanced_cache_group = VHGroup('Feature reuse (cache and store)', orientation='G')
+            self.advanced_cache_group = VHGroup('Feature reuse (cache && store)', orientation='G')
 
             # Add groups to the tab
             self.tabs.add_named_tab('Advanced', self.advanced_note_group.gbox)
@@ -759,16 +750,11 @@ class ConvpaintWidget(QWidget):
 
         # === Match napari's control density ===
         # Qt's default grid spacing is looser than napari's own panels; tighten
-        # the vertical spacing between rows inside all group boxes (and the
-        # Classes grid, which lives in a plain widget).
+        # the spacing between the rows inside all group boxes.
         for gbox in self.findChildren(QtWidgets.QGroupBox):
-            gbox_layout = gbox.layout()
-            if isinstance(gbox_layout, QGridLayout):
+            for gbox_layout in gbox.findChildren(QGridLayout):
                 gbox_layout.setVerticalSpacing(4)
                 gbox_layout.setHorizontalSpacing(4)
-        if hasattr(self, 'classes_layout'):
-            self.classes_layout.setVerticalSpacing(4)
-            self.classes_layout.setHorizontalSpacing(4)
 
         # === Show tooltips by default ===
 
@@ -1471,14 +1457,14 @@ class ConvpaintWidget(QWidget):
         if not hasattr(self, '_classes_divider1'):
             self._classes_divider1 = self._dashed_divider()
             self._classes_divider2 = self._dashed_divider()
-        self.classes_layout.addWidget(self.add_class_btn, n_classes+1, 0, 1, 5)
-        self.classes_layout.addWidget(self.remove_class_btn, n_classes+1, 5, 1, 5)
-        self.classes_layout.addWidget(self._classes_divider1, n_classes+2, 0, 1, 10)
-        self.classes_layout.addWidget(self.export_class_names_btn, n_classes+3, 0, 1, 10)
-        self.classes_layout.addWidget(self.import_class_names_btn, n_classes+4, 0, 1, 10)
-        self.classes_layout.addWidget(self._classes_divider2, n_classes+5, 0, 1, 10)
-        self.classes_layout.addWidget(self.reset_class_names_btn, n_classes+6, 0, 1, 10)
-        self.classes_layout.addWidget(self.btn_class_distribution_annot, n_classes+7, 0, 1, 10)
+        self.classes_layout.addWidget(self.add_class_btn, n_classes, 0, 1, 5)
+        self.classes_layout.addWidget(self.remove_class_btn, n_classes, 5, 1, 5)
+        self.classes_layout.addWidget(self._classes_divider1, n_classes+1, 0, 1, 10)
+        self.classes_layout.addWidget(self.export_class_names_btn, n_classes+2, 0, 1, 10)
+        self.classes_layout.addWidget(self.import_class_names_btn, n_classes+3, 0, 1, 10)
+        self.classes_layout.addWidget(self._classes_divider2, n_classes+4, 0, 1, 10)
+        self.classes_layout.addWidget(self.reset_class_names_btn, n_classes+5, 0, 1, 10)
+        self.classes_layout.addWidget(self.btn_class_distribution_annot, n_classes+6, 0, 1, 10)
 
     def _on_add_class(self, text=None):
         """Add a new class name and icon to the layout and update all annotations and segmentation layers."""
@@ -1489,7 +1475,7 @@ class ConvpaintWidget(QWidget):
         self.class_names.append(new_name)
         class_num = len(self.class_names)  # Class number is the length of the list
         # Add the new name to the layout
-        self.classes_layout.addWidget(new_name, class_num, 1, 1, 9)
+        self.classes_layout.addWidget(new_name, class_num-1, 1, 1, 9)
         # Set the text of the new name
         text_str = text if text is not None else f'Class {class_num}'
         new_name.setText(text_str)
@@ -1505,7 +1491,7 @@ class ConvpaintWidget(QWidget):
         # Add a new icon
         new_icon = QtWidgets.QLabel()
         self.class_icons.append(new_icon)
-        self.classes_layout.addWidget(new_icon, class_num, 0)
+        self.classes_layout.addWidget(new_icon, class_num-1, 0)
         new_icon.mousePressEvent = lambda event: self._set_all_labels_classes(class_num, event)
         
         # Update the icon with the color of the last label and all class names
@@ -2961,11 +2947,12 @@ class ConvpaintWidget(QWidget):
         if img is None:
             warnings.warn('No image selected. No layers added.')
             return
+
         prev_active = self.viewer.layers.selection.active
         layer_shape = self._get_annot_shape(img)
         num_spatial = len(layer_shape)
         transform_kwargs = self._get_layer_transform_kwargs(img, num_spatial_dims=num_spatial, num_leading_dims=0)
-    
+
         # Create a new segmentation layer if it doesn't exist yet or we need a new one
         seg_exists = self.seg_tag in self.viewer.layers
 
@@ -3000,7 +2987,7 @@ class ConvpaintWidget(QWidget):
         if img is None:
             warnings.warn('No image selected. No layers added.')
             return
-        
+
         prev_active = self.viewer.layers.selection.active
         spatial_dims = self._get_annot_shape(img)
         if isinstance(num_classes, int):
@@ -3044,7 +3031,7 @@ class ConvpaintWidget(QWidget):
         if img is None:
             warnings.warn('No image selected. No layers added.')
             return
-        
+
         prev_active = self.viewer.layers.selection.active
         spatial_dims = self._get_annot_shape(img)
 
@@ -3952,9 +3939,8 @@ class ConvpaintWidget(QWidget):
 ### ADVANCED TAB
 
     def _on_clear_cache(self):
-        """Drop all cached features (the cache stays enabled)."""
-        if self.cp_model._feature_cache is not None:
-            self.cp_model._feature_cache.clear()
+        """Drop the cached features (the cache stays enabled)."""
+        self.cp_model.clear_feature_cache()
         self._refresh_reuse_labels()
 
     def _on_choose_store_folder(self):
@@ -3977,7 +3963,7 @@ class ConvpaintWidget(QWidget):
                                       'The store stays active and the folder is kept.',
                                       QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if answer == QMessageBox.Yes:
-            fs.clear()
+            self.cp_model.clear_feature_store()
             self._refresh_reuse_labels()
 
     def _on_store_features(self):
