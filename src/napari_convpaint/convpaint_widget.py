@@ -2564,6 +2564,7 @@ class ConvpaintWidget(QWidget):
         self.check_add_probas.setChecked(self.add_probas)
         self.check_add_instances.setChecked(self.add_instances)
         self.text_inst_min_size.setText(self.inst_min_size)
+        self.check_split_touching.setChecked(self.split_touching)
         self.text_features_pca.setText(self.features_pca_components)
         self.text_features_kmeans.setText(self.features_kmeans_clusters)
         # Reset the model description
