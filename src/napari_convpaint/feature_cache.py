@@ -24,8 +24,17 @@ from __future__ import annotations
 from collections import OrderedDict
 
 
-# Default cap (same as the widget default of 2048 MB).
+# Default cap, see default_max_bytes().
 _DEFAULT_MAX_BYTES = 2048 * 10**6  # 2 GB
+_DEFAULT_RAM_SHARE = 4  # At most a quarter of the available RAM
+
+
+def default_max_bytes() -> int:
+    """The cap used when none is given: 2 GB, but at most a quarter of the RAM that is
+    currently available, so that the cache stays harmless on small machines. API and
+    widget both start from this budget."""
+    import psutil
+    return min(_DEFAULT_MAX_BYTES, int(psutil.virtual_memory().available / _DEFAULT_RAM_SHARE))
 
 
 def _nbytes(entry) -> int:
@@ -55,14 +64,14 @@ class FeatureCache:
     Parameters
     ----------
     max_bytes : int or None
-        Hard cap on the cache's size. None → `_DEFAULT_MAX_BYTES` (2 GB).
+        Hard cap on the cache's size. None → `default_max_bytes()`.
     """
 
     def __init__(self, max_bytes: int | None = None):
         self._entries: "OrderedDict[tuple, tuple]" = OrderedDict()  # key -> (entry, nbytes, used, scope)
         self._total_bytes = 0
         if max_bytes is None:
-            max_bytes = _DEFAULT_MAX_BYTES
+            max_bytes = default_max_bytes()
         self._max_bytes = int(max_bytes)
         self._scope = 0
         self.hits = 0

@@ -37,6 +37,8 @@ dependencies = [
     "napari-guitils>=0.2.0",
     "numpy",
     "omegaconf",
+    "platformdirs",
+    "psutil",
     "pyyaml",
     "qtpy",
     "scikit-learn",

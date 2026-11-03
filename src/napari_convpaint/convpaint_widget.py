@@ -2645,7 +2645,7 @@ class ConvpaintWidget(QWidget):
 
     def _reset_attributes(self):
         """Reset all attributes of the widget."""
-        import psutil # For the available RAM the feature cache limit is clamped to
+        from .feature_cache import default_max_bytes # The budget the API starts from as well
         # Set widget-specific attributes
         self.image_mean = None
         self.image_std = None
@@ -2674,10 +2674,10 @@ class ConvpaintWidget(QWidget):
         self.cont_training = "Image" # Update features for subsequent training ("Image" or "Off" or "Global")
         self.use_dask = False # Use Dask for parallel processing
         self.cache_enabled = True # Feature cache on by default: reuse extracted features when re-segmenting / re-training the same image
-        self.cache_max_mb = min(2048, int(psutil.virtual_memory().available / 4e6)) # Max RAM (MB) the feature cache may use (2 GB default, clamped to a quarter of the available RAM for small machines)
+        self.cache_max_mb = int(default_max_bytes() / 1e6) # Max RAM (MB) the feature cache may use (2 GB, clamped to a quarter of the available RAM for small machines)
         self.untile_info_shown = False # Whether the user was informed that auto-segment with caching skips annotation tiles
         self.store_enabled = False # Feature store off by default (on = keep the features of all processed planes on disk)
-        import platformdirs # (napari dependency)
+        import platformdirs
         self.store_folder = str(Path(platformdirs.user_cache_dir('convpaint')) / 'feature_store') # Default folder of the feature store
         self._store_folder_ok = self.store_folder # Last folder the store could be enabled with (to fall back to)
         self.fe_device = 'auto' # Device to use for the FE (if applicable); 'auto' will use GPU if available, otherwise CPU

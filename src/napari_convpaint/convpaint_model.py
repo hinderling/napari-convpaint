@@ -978,7 +978,8 @@ class ConvpaintModel:
         scribbles, or the train->predict of one image — instead of recomputing them.
         Entries are content-addressed (a hash of the prepared plane), so the cache is
         self-invalidating: a changed image simply misses. Bounded by a RAM budget
-        (``max_bytes``, default 2 GB; least recently used entries are dropped).
+        (``max_bytes``, default: 2 GB, clamped to a quarter of the available RAM;
+        least recently used entries are dropped).
         Off by default in the API; the widget enables it by default."""
         from .feature_cache import FeatureCache
         self._feature_cache = FeatureCache(max_bytes=max_bytes)
