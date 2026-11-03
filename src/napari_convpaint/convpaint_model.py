@@ -307,7 +307,7 @@ class ConvpaintModel:
         # Input and output parameters
         def_param.image_downsample = 1
         def_param.seg_smoothening = 1
-        def_param.tile_annotations = True
+        def_param.tile_annotations = False
         def_param.tile_image = False
         def_param.use_dask = False
         def_param.unpatch_order = 1

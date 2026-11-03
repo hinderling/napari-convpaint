@@ -277,38 +277,34 @@ class ConvpaintWidget(QWidget):
         self.train_group.glayout.addWidget(self.segment_all_btn, 1,1,1,1)
 
         # Add elements to "Acceleration" group
-        # "Tile annotations" checkbox
-        self.check_tile_annotations = QCheckBox('Tile annotations for training')
-        self.check_tile_annotations.setChecked(False)
-        self.acceleration_group.glayout.addWidget(self.check_tile_annotations, 0,0,1,2)
-        # "Tile image" checkbox
+        # "Tile image" checkbox ("Tile annotations" is on the Advanced tab)
         self.check_tile_image = QCheckBox('Tile image for segmentation')
         self.check_tile_image.setChecked(False)
-        self.acceleration_group.glayout.addWidget(self.check_tile_image, 1,0,1,2)
+        self.acceleration_group.glayout.addWidget(self.check_tile_image, 0,0,1,2)
         # Use Device/GPU dropdown
         self.device_options_default = ['auto', 'gpu', 'cpu']
         self.device_options_gpu_only_clf = ['auto', 'gpu (only classifier)', 'cpu']
         self.device_dropdown = QComboBox()
         self.device_dropdown.addItems(self.device_options_default)
         self.device_label = QLabel('Device (GPU/CPU)')
-        self.acceleration_group.glayout.addWidget(self.device_label, 2,0,1,1)
-        self.acceleration_group.glayout.addWidget(self.device_dropdown, 2,1,1,1)
+        self.acceleration_group.glayout.addWidget(self.device_label, 1,0,1,1)
+        self.acceleration_group.glayout.addWidget(self.device_dropdown, 1,1,1,1)
         # "Downsample" spinbox
         self.spin_downsample = QSpinBox()
         self.spin_downsample.setMinimum(-20)
         self.spin_downsample.setMaximum(20)
         self.spin_downsample.setValue(1)
         self.downsample_label = QLabel('Downsample input')
-        self.acceleration_group.glayout.addWidget(self.downsample_label, 3,0,1,1)
-        self.acceleration_group.glayout.addWidget(self.spin_downsample, 3,1,1,1)
+        self.acceleration_group.glayout.addWidget(self.downsample_label, 2,0,1,1)
+        self.acceleration_group.glayout.addWidget(self.spin_downsample, 2,1,1,1)
         # "Smoothen output" spinbox
         self.spin_smoothen = QSpinBox()
         self.spin_smoothen.setMinimum(1)
         self.spin_smoothen.setMaximum(20)
         self.spin_smoothen.setValue(1)
         self.smoothen_label = QLabel('Smoothen output')
-        self.acceleration_group.glayout.addWidget(self.smoothen_label, 4,0,1,1)
-        self.acceleration_group.glayout.addWidget(self.spin_smoothen, 4,1,1,1)
+        self.acceleration_group.glayout.addWidget(self.smoothen_label, 3,0,1,1)
+        self.acceleration_group.glayout.addWidget(self.spin_smoothen, 3,1,1,1)
 
         # === MODEL TAB ===
 
@@ -506,6 +502,11 @@ class ConvpaintWidget(QWidget):
             self.advanced_labels_group.glayout.setColumnStretch(0, 1)
             self.advanced_labels_group.glayout.setColumnStretch(1, 1)
 
+            # "Tile annotations" checkbox, above the continuous training part it does not belong to
+            self.check_tile_annotations = QCheckBox('Tile annotations for training')
+            self.check_tile_annotations.setChecked(False)
+            self.advanced_training_group.glayout.addWidget(self.check_tile_annotations, 0, 0, 1, 4)
+
             # Button for training on selected images
             self.btn_train_on_selected = QPushButton('Train on selected data')
             # self.advanced_training_group.glayout.addWidget(self.btn_train_on_selected, 1, 0, 1, 2)
@@ -544,7 +545,7 @@ class ConvpaintWidget(QWidget):
             self.advanced_training_group.glayout.addWidget(self._dashed_divider(), 6, 0, 1, 4)
             self.check_use_dask = QCheckBox('Put image tiles on Dask workers')
             self.check_use_dask.setChecked(self.use_dask)
-            self.advanced_training_group.glayout.addWidget(self.check_use_dask, 7, 0, 1, 4)
+            self.advanced_training_group.glayout.addWidget(self.check_use_dask, 8, 0, 1, 4)
 
             # Input channels option
             self.text_input_channels = QtWidgets.QLineEdit()
@@ -821,10 +822,6 @@ class ConvpaintWidget(QWidget):
         self.check_auto_seg.setToolTip('Automatically segment image after training.')
         self.segment_btn.setToolTip('Segment 2D image or current slice/frame of 3D image/movie.')
         self.segment_all_btn.setToolTip('Segment all slices/frames of 3D image/movie.')
-        self.check_tile_annotations.setToolTip('Crop around annotated regions to speed up training.\n' +
-                                               'Disable for models that extract long range features (e.g. DINO).\n' +
-                                               'Skipped when training with auto-segment and feature caching on\n' +
-                                               '(the whole plane is extracted, since the prediction needs it anyway).')
         self.check_tile_image.setToolTip('Tile image to reduce memory usage.\n' +
                                          'Use with care when using models that extract long range features (e.g. DINO).')
         # Do not toggle device dropdown, as we want to show tooltips dynamically and permanently
@@ -882,6 +879,10 @@ class ConvpaintWidget(QWidget):
             self.radio_img_training.setToolTip('Keep features in memory, updating them only for new annotations in each training, as long as the image is not changed.')
             self.radio_global_training.setToolTip('Keep features in memory, updating them only for new annotations in each training, until reset manually.')
             self.radio_single_training.setToolTip('Extract all features freshly for each training.')
+            self.check_tile_annotations.setToolTip('Crop around annotated regions to speed up training.\n' +
+                                                   'Disable for models that extract long range features (e.g. DINO).\n' +
+                                                   'Skipped when training with auto-segment and feature caching on\n' +
+                                                   '(the whole plane is extracted, since the prediction needs it anyway).')
             self.check_use_dask.setToolTip('Distribute the tiles of a tiled segmentation to parallel Dask workers\n' +
                                            '(only applies with "Tile image for segmentation").')
             # self.check_cont_training.setToolTip('Save and use combined features in memory for training')
@@ -961,7 +962,7 @@ class ConvpaintWidget(QWidget):
                   self.add_layers_btn, self.radio_single_channel, self.radio_multi_channel, self.radio_rgb,
                   self.radio_no_normalize, self.radio_normalize_over_stack, self.radio_normalize_by_image,
                   self.train_classifier_btn, self.check_auto_seg, self.segment_btn, self.segment_all_btn,
-                  self.check_tile_annotations, self.check_tile_image, self.device_label, #self.device_dropdown,
+                  self.check_tile_image, self.device_label, #self.device_dropdown,
                   self.downsample_label, self.spin_downsample, self.smoothen_label, self.spin_smoothen]:
             w.setToolTip('')
 
@@ -989,7 +990,8 @@ class ConvpaintWidget(QWidget):
                       self.check_keep_layers, self.btn_add_all_annot_layers,
                       self.check_auto_select_annot, # 	self.text_annot_prefix,
                       self.btn_train_on_selected, self.radio_img_training, self.radio_global_training, self.radio_single_training, # self.check_cont_training,
-                      self.btn_class_distribution_trained, self.btn_reset_training, self.check_use_dask, self.channels_label,
+                      self.btn_class_distribution_trained, self.btn_reset_training,
+                      self.check_tile_annotations, self.check_use_dask, self.channels_label,
                       self.text_input_channels, self.btn_switch_axes, self.check_add_seg, self.check_add_probas, self.check_add_instances, self.inst_min_size_label, self.text_inst_min_size, self.check_split_touching, self.btn_add_features, self.btn_add_features_stack,
                       self.pca_label, self.text_features_pca, self.kmeans_label, self.text_features_kmeans,
                       self.check_use_cache, self.cache_max_ram_label, self.cache_max_ram_spinbox, self.cache_size_label, self.btn_cache_clear,
@@ -1213,8 +1215,6 @@ class ConvpaintWidget(QWidget):
             self.cp_model.set_param('seg_smoothening', self.spin_smoothen.value(), ignore_warnings=True))
         # set self.use_device according to the drop down value
         self.device_dropdown.currentIndexChanged.connect(self._on_change_device)
-        self.check_tile_annotations.stateChanged.connect(lambda:
-            self.cp_model.set_param('tile_annotations', self.check_tile_annotations.isChecked(), ignore_warnings=True))
         self.check_tile_image.stateChanged.connect(lambda:
             self.cp_model.set_param('tile_image', self.check_tile_image.isChecked(), ignore_warnings=True))
 
@@ -1272,6 +1272,8 @@ class ConvpaintWidget(QWidget):
                 self, 'auto_add_layers', self.check_auto_add_layers.isChecked()))
             self.check_keep_layers.stateChanged.connect(lambda: setattr(
                 self, 'keep_layers', self.check_keep_layers.isChecked()))
+            self.check_tile_annotations.stateChanged.connect(lambda:
+                self.cp_model.set_param('tile_annotations', self.check_tile_annotations.isChecked(), ignore_warnings=True))
             self.check_use_dask.stateChanged.connect(lambda: setattr(
                 self, 'use_dask', self.check_use_dask.isChecked()))
             self.btn_add_all_annot_layers.clicked.connect(self._on_add_all_annot_layers)
@@ -2810,12 +2812,9 @@ class ConvpaintWidget(QWidget):
                       fe_order = self.spin_interpolation_order.value(),
                       fe_use_min_features = self.check_use_min_features.isChecked())
 
-        # Get default non-FE params from a temp model built with the
-        # user-selected layers so defaults (e.g. tile_annotations) reflect
-        # has_global_context for the chosen layers rather than the FE's
-        # module-level defaults.
-        # Create a temp FE using the user-selected layers so defaults (like
-        # tile_annotations) reflect the chosen layers' properties.
+        # Get the default non-FE params from a temp model built with the user-selected
+        # layers, so that layer-dependent defaults reflect the chosen layers rather than
+        # the FE's module-level ones.
         temp_fe_model_for_defaults = self._cpm_class.create_fe(new_param.fe_name, layers=new_layers)
         fe_defaults = temp_fe_model_for_defaults.get_default_params()
         adjusted_params = [] # List of adjusted parameters for raising a warning
