@@ -2313,7 +2313,10 @@ class ConvpaintWidget(QWidget):
         
         # Step through the stack and predict each image
         num_steps = image_stack_norm.shape[-3]
-        for step in progress(range(num_steps)):
+        reuse_before = self._reuse_counts() # To show on the bar what the run reuses
+        pbr = progress(range(num_steps))
+        for step in pbr:
+            pbr.set_description(self._reuse_progress_text('Prediction', reuse_before))
 
             # Take the slice of the 3rd last dimension (since images are C, Z, H, W or Z, H, W)
             image = image_stack_norm[..., step, :, :]
@@ -2399,7 +2402,10 @@ class ConvpaintWidget(QWidget):
         else: # No kmeans, can do step-by-step to save memory (and show progress)
             # Step through the stack and predict each image
             num_steps = image_stack_norm.shape[-3]
-            for step in progress(range(num_steps)):
+            reuse_before = self._reuse_counts() # To show on the bar what the run reuses
+            pbr = progress(range(num_steps))
+            for step in pbr:
+                pbr.set_description(self._reuse_progress_text('Feature extraction', reuse_before))
 
                 # Take the slice of the 3rd last dimension (since images are C, Z, H, W or Z, H, W)
                 image = image_stack_norm[..., step, :, :]
@@ -2952,6 +2958,23 @@ class ConvpaintWidget(QWidget):
 
 
 ### Helper functions
+
+    def _reuse_counts(self):
+        """Lookups served from the cache or the store so far, and lookups in total. The cache is
+        asked first, so a store hit is a cache miss as well and the two cannot simply be summed."""
+        fc, fs = self.cp_model._feature_cache, self.cp_model._feature_store
+        reused = (fc.hits if fc is not None else 0) + (fs.hits if fs is not None else 0)
+        total = (fc.hits + fc.misses) if fc is not None else (fs.hits + fs.misses) if fs is not None else 0
+        return reused, total
+
+    def _reuse_progress_text(self, label, before):
+        """`label` with what has been reused since the counts in `before` (see _reuse_counts), to
+        show on the progress bar of a run: a run that reuses nothing although it should points at
+        a setting that changed, which otherwise only shows as the run being slow again. Plain
+        `label` while nothing is looked up at all (neither cache nor store on)."""
+        reused, total = self._reuse_counts()
+        reused, total = reused - before[0], total - before[1]
+        return f'{label} - {reused} of {total} reused' if total else label
 
     def _refresh_reuse_labels(self):
         """Show the current sizes of the feature cache and store (called after ops that change them)."""
@@ -4221,7 +4244,10 @@ class ConvpaintWidget(QWidget):
                                          fe_use_device=self.fe_device)
         else: # Stack: step through the planes for progress bar (as _on_predict_all does); skip norm as it is done above
             num_steps = image_stack_norm.shape[-3]
-            for step in progress(range(num_steps)):
+            reuse_before = self._reuse_counts() # To show on the bar what the run reuses
+            pbr = progress(range(num_steps))
+            for step in pbr:
+                pbr.set_description(self._reuse_progress_text('Storing features', reuse_before))
                 image = image_stack_norm[..., step, :, :]
                 self.cp_model.store_features(image, in_channels=in_channels, skip_norm=True,
                                              fe_use_device=self.fe_device)
@@ -5045,12 +5071,14 @@ class ConvpaintWidget(QWidget):
             warnings.simplefilter(action="ignore", category=FutureWarning)
             self.viewer.window._status_bar._toggle_activity_dock(True)
 
+        reuse_before = self._reuse_counts() # To show on the bar what the run reuses
         with progress(total=len(filenames)) as pbr:
             pbr.set_description('Segmenting')
 
             segmented = 0
             for fname in filenames:
                 pbr.update(1)
+                pbr.set_description(self._reuse_progress_text('Segmenting', reuse_before))
                 try:
                     img_path = folder / fname
                     arr = imageio.imread(str(img_path))

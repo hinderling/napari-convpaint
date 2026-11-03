@@ -117,6 +117,26 @@ def test_clear():
     assert c.nbytes == 0
 
 
+def test_widget_reuse_progress_text(make_napari_viewer, tmp_path):
+    """The progress bars report what a run reused, counting cache and store together (the cache
+    is asked first, so its misses are the number of lookups); plain label without any reuse."""
+    from napari_convpaint.convpaint_widget import ConvpaintWidget
+    w = ConvpaintWidget(make_napari_viewer())
+    w.ensure_init()
+    img = np.random.default_rng(0).random((32, 32)).astype(np.float32)
+
+    before = w._reuse_counts()
+    w.cp_model.get_feature_image(img)                   # Extracted
+    assert w._reuse_progress_text('Prediction', before) == 'Prediction - 0 of 1 reused'
+    w.cp_model.get_feature_image(img)                   # Reused
+    assert w._reuse_progress_text('Prediction', before) == 'Prediction - 1 of 2 reused'
+
+    w.check_use_cache.setChecked(False)                 # Neither cache nor store
+    before = w._reuse_counts()
+    w.cp_model.get_feature_image(img)
+    assert w._reuse_progress_text('Prediction', before) == 'Prediction'
+
+
 def test_disabled_cache_is_noop():
     """Without a cache the model extracts every time; disabling drops the entries."""
     import warnings as _w
