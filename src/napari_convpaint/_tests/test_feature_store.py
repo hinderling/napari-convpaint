@@ -299,6 +299,40 @@ def test_store_features_prepares_a_stack(tmp_path):
 
 # --- widget ------------------------------------------------------------------
 
+def test_widget_choose_folder_starts_where_the_store_is(make_napari_viewer, tmp_path, monkeypatch):
+    """The dialog opens at the folder in use - the default one (created for it) until another
+    one was chosen - so that confirming it right away stores in the folder that is shown."""
+    import napari_convpaint.convpaint_widget as cw
+    w = cw.ConvpaintWidget(make_napari_viewer())
+    w.ensure_init()
+    offered = []
+    monkeypatch.setattr(cw.QFileDialog, 'getExistingDirectory',
+                        staticmethod(lambda *a, **k: offered.append(a[-1]) or a[-1]))
+    w._on_choose_store_folder()
+    assert offered == [w._store_folder_default] and w.store_folder == w._store_folder_default
+
+    chosen = tmp_path / 'elsewhere'
+    monkeypatch.setattr(cw.QFileDialog, 'getExistingDirectory',  # As Qt answers, with forward slashes
+                        staticmethod(lambda *a, **k: offered.append(a[-1]) or str(chosen).replace('\\', '/')))
+    w._on_choose_store_folder()
+    assert w.store_folder == str(chosen) # Spelled as the OS does, so that it is recognized again
+    w._on_choose_store_folder()
+    assert offered[-1] == str(chosen)
+
+
+def test_widget_notes_the_folders_used(make_napari_viewer, tmp_path):
+    """Every folder the store is enabled with is listed once in Convpaint's own folder."""
+    from napari_convpaint.convpaint_widget import ConvpaintWidget, _store_folders_file
+    w = ConvpaintWidget(make_napari_viewer())
+    w.ensure_init()
+    for folder in [tmp_path / 'one', tmp_path / 'two', tmp_path / 'one']:
+        w.store_folder = str(folder)
+        w.check_use_store.setChecked(True)
+        w._apply_feature_store(recreate=True)
+    assert _store_folders_file().read_text(encoding='utf-8').split() == [str(tmp_path / 'one'),
+                                                                        str(tmp_path / 'two')]
+
+
 def test_widget_store_controls(make_napari_viewer, tmp_path, monkeypatch):
     """Checkbox connects/disconnects the store on the model; train+predict fill it;
     delete (confirmed) empties it but keeps it active; unchecking keeps the files."""

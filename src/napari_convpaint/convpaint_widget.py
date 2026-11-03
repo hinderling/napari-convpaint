@@ -23,6 +23,18 @@ from collections import defaultdict
 # from .convpaint_model import ConvpaintModel
 
 
+def _convpaint_cache_dir():
+    """Convpaint's own folder: the feature store goes here unless another one is chosen, and the
+    folders that were used are listed here. The OS location for data that can be re-created."""
+    import platformdirs
+    return Path(platformdirs.user_cache_dir('convpaint', appauthor=False))
+
+
+def _store_folders_file():
+    """File listing the folders features were stored in (a record only, see _note_store_folder)."""
+    return _convpaint_cache_dir() / 'feature_store_folders.txt'
+
+
 class NoteLabel(QLabel):
     """Word-wrapped label that always gets the height its text needs at the current width
     (in grid layouts, wrapped labels are otherwise cut off when the widget gets narrow)."""
@@ -44,9 +56,11 @@ class PathLabel(QLabel):
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred) # Takes the available width, never forces it
         self.setText(path)
 
-    def setText(self, path):
+    def setText(self, path, text=None, tooltip=None):
+        """Show `text` in place of the path if given; the tooltip is the full path by default."""
         self._path = path
-        self.setToolTip(path)
+        self._text = path if text is None else text
+        self.setToolTip(path if tooltip is None else tooltip)
         self._elide()
 
     def text(self):
@@ -57,7 +71,7 @@ class PathLabel(QLabel):
         self._elide()
 
     def _elide(self):
-        super().setText(self.fontMetrics().elidedText(self.text(), Qt.ElideMiddle, self.width()))
+        super().setText(self.fontMetrics().elidedText(getattr(self, '_text', ''), Qt.ElideMiddle, self.width()))
 
 
 class ConvpaintWidget(QWidget):
@@ -923,7 +937,8 @@ class ConvpaintWidget(QWidget):
                                             'so that stacks and movies only need to be extracted once (e.g. for re-predicting after re-training).\n' +
                                             'Unlike the cache above, nothing is dropped when it grows; use "Delete stored features" to free the disk space.')
             for w in [self.store_folder_label, self.btn_store_folder]:
-                w.setToolTip('Folder of the feature store (must be empty, not yet existing, or a feature store); choosing one enables the store.')
+                w.setToolTip('Folder of the feature store (must be empty, not yet existing, or a feature store); choosing one enables the store.\n' +
+                             'The folders used so far are listed in\n' + str(_store_folders_file()) + '.')
             self.store_size_label.setToolTip('Number of stored images/planes and their size on disk.')
             self.btn_store_delete.setToolTip('Delete all stored features in the folder (the store stays active).')
             self.btn_store_features.setToolTip('Extract the features of the selected image (all planes of a stack) into the feature store now,\n' +
@@ -1084,6 +1099,7 @@ class ConvpaintWidget(QWidget):
             try:
                 self.cp_model.enable_feature_store(self.store_folder)
                 self._store_folder_ok = self.store_folder # Keep as the fall-back for the next call
+                self._note_store_folder(self.store_folder)
             except ValueError as e: # Folder not usable (not empty and not a feature store, no write access, ...)
                 # enable_feature_store only replaces the store once the new folder works, so a store
                 # that was already running is still there: follow the model and keep it connected
@@ -1098,6 +1114,20 @@ class ConvpaintWidget(QWidget):
         self.btn_store_delete.setEnabled(self.store_enabled)
         self.btn_store_features.setEnabled(self.store_enabled)
         self._refresh_reuse_labels()
+
+    def _note_store_folder(self, folder):
+        """Add the folder to the list of the folders features were stored in, so that they can be
+        found (and deleted) again later. A record only: nothing reads it back, and deleting it
+        loses no features, just the history."""
+        try:
+            path = _store_folders_file()
+            if folder in (path.read_text(encoding='utf-8').splitlines() if path.is_file() else []):
+                return
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, 'a', encoding='utf-8') as f: # Appending one line, so that sessions do not overwrite each other
+                f.write(folder + '\n')
+        except OSError:
+            pass # Not worth a message: the features are stored either way
 
     def _late_init(self):
         """Populate UI widgets with defaults from ConvpaintModel, set up connections, and reset model.
@@ -2679,8 +2709,8 @@ class ConvpaintWidget(QWidget):
         self.cache_max_mb = int(default_max_bytes() / 1e6) # Max RAM (MB) the feature cache may use (2 GB, clamped to a quarter of the available RAM for small machines)
         self.untile_info_shown = False # Whether the user was informed that auto-segment with caching skips annotation tiles
         self.store_enabled = False # Feature store off by default (on = keep the features of all processed planes on disk)
-        import platformdirs
-        self.store_folder = str(Path(platformdirs.user_cache_dir('convpaint')) / 'feature_store') # Default folder of the feature store
+        self.store_folder = str(_convpaint_cache_dir() / 'feature_store') # Default folder of the feature store
+        self._store_folder_default = self.store_folder # Shown as the default rather than as a path
         self._store_folder_ok = self.store_folder # Last folder the store could be enabled with (to fall back to)
         self.fe_device = 'auto' # Device to use for the FE (if applicable); 'auto' will use GPU if available, otherwise CPU
         self.clf_device = 'auto' # Device to use for the classifier (if applicable); 'auto' will use GPU if available, otherwise CPU
@@ -2931,7 +2961,12 @@ class ConvpaintWidget(QWidget):
         else:
             s = fc.stats()
             self.cache_size_label.setText(f'Cached: {s["bytes"] / 1e6:.0f} MB ({s["entries"]} planes)')
-        self.store_folder_label.setText(self.store_folder)
+        if self.store_folder == self._store_folder_default:
+            self.store_folder_label.setText(self.store_folder, text='Default location',
+                                            tooltip="Convpaint's own folder:\n" + self.store_folder +
+                                                    "\nNothing here is ever deleted automatically.")
+        else:
+            self.store_folder_label.setText(self.store_folder)
         fs = self.cp_model._feature_store
         if fs is None:
             self.store_size_label.setText('Stored: (store off)')
@@ -4127,10 +4162,21 @@ class ConvpaintWidget(QWidget):
     def _on_choose_store_folder(self):
         """Let the user choose the folder of the feature store, and use it right away: as in the API,
         where a folder comes with enabling the store, the folder is checked when it is chosen (an
-        unusable one is reported and nothing changes) instead of only when the box is ticked."""
-        folder = QFileDialog.getExistingDirectory(self, 'Choose a folder for the feature store', self.store_folder)
+        unusable one is reported and nothing changes) instead of only when the box is ticked.
+        The dialog opens at the folder in use, so that confirming it right away does what ticking
+        the box does; the default folder is created for that, as enabling the store would do."""
+        if self.store_folder == self._store_folder_default:
+            try:
+                Path(self.store_folder).mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass # The dialog then opens at the nearest folder that does exist
+        start = Path(self.store_folder)
+        while not start.is_dir() and start.parent != start: # A chosen folder may be gone (external drive)
+            start = start.parent
+        folder = QFileDialog.getExistingDirectory(self, 'Choose a folder for the feature store', str(start))
         if folder:
-            self.store_folder = folder
+            self.store_folder = str(Path(folder)) # Qt answers with forward slashes, the rest of the widget
+                                                  # uses the separator of the OS (comparing and listing folders)
             self.check_use_store.blockSignals(True) # Applied once below, not per signal
             self.check_use_store.setChecked(True)
             self.check_use_store.blockSignals(False)
