@@ -445,7 +445,7 @@ class ConvpaintWidget(QWidget):
             self.advanced_input_group = VHGroup('Input', orientation='G')
             self.advanced_output_group = VHGroup('Output', orientation='G')
             self.advanced_unsupervised_group = VHGroup('Unsupervised extraction (without annotations)', orientation='G')
-            self.advanced_cache_group = VHGroup('Feature reuse (cache && store)', orientation='G')
+            self.advanced_cache_group = VHGroup('Feature reuse (RAM cache && disk store)', orientation='G')
 
             # Add groups to the tab
             self.tabs.add_named_tab('Advanced', self.advanced_note_group.gbox)
@@ -618,15 +618,14 @@ class ConvpaintWidget(QWidget):
 
             # Feature caching: explanatory note
             self.cache_note = NoteLabel(
-                "Reuse extracted features when segmenting or training the same image "
-                "repeatedly (e.g. while refining annotations), instead of recomputing "
-                "them. Bounded by the memory limit below; features you have reused are "
-                "kept longest.")
+                "Reuse extracted features instead of recomputing them: in RAM while you "
+                "work (bounded by the limit below, where features you have reused are kept "
+                "longest) and, optionally, on disk (kept across sessions).")
             self.cache_note.setStyleSheet(style_for_infos)
             self.advanced_cache_group.glayout.addWidget(self.cache_note, 0, 0, 1, 3)
 
             # Enable/disable checkbox
-            self.check_use_cache = QCheckBox('Enable feature caching')
+            self.check_use_cache = QCheckBox('Cache features in RAM')
             self.check_use_cache.setChecked(self.cache_enabled)
             self.advanced_cache_group.glayout.addWidget(self.check_use_cache, 1, 0, 1, 3)
 
@@ -909,9 +908,10 @@ class ConvpaintWidget(QWidget):
                  w.setToolTip('Number of PCA components to use for the features image.\nSet to 0 to disable PCA.')
             for w in [self.kmeans_label, self.text_features_kmeans]:
                 w.setToolTip('Number of Kmeans clusters to use for the features image.\nSet to 0 to disable Kmeans.')
-            self.check_use_cache.setToolTip('Keep the extracted features of recently processed images in memory,\n' +
+            self.check_use_cache.setToolTip('Keep the extracted features of recently processed images in RAM,\n' +
                                             'so that re-training or re-segmenting the same image does not extract them again.\n' +
-                                            'Features of annotation tiles (see "Tile annotations") are not kept, since predictions cannot reuse them.')
+                                            'Features of annotation tiles (see "Tile annotations") are not kept, since predictions cannot reuse them.\n' +
+                                            'Kept only while Convpaint runs; use the store below to keep them on disk.')
             for w in [self.cache_max_ram_label, self.cache_max_ram_spinbox]:
                 w.setToolTip('Maximum memory (RAM) the feature cache may use.\n' +
                              'When full, features you have reused are kept longest; among the never reused,\n' +
@@ -921,7 +921,7 @@ class ConvpaintWidget(QWidget):
             self.btn_cache_clear.setToolTip('Drop all cached features (they are extracted again when needed).')
             self.check_use_store.setToolTip('Keep the extracted features of all processed images/planes (incl. Multifile batches) in the folder below (also across sessions),\n' +
                                             'so that stacks and movies only need to be extracted once (e.g. for re-predicting after re-training).\n' +
-                                            'Nothing is dropped automatically; use "Delete stored features" to free the disk space.')
+                                            'Unlike the cache above, nothing is dropped when it grows; use "Delete stored features" to free the disk space.')
             for w in [self.store_folder_label, self.btn_store_folder]:
                 w.setToolTip('Folder of the feature store (must be empty, not yet existing, or a feature store); choosing one enables the store.')
             self.store_size_label.setToolTip('Number of stored images/planes and their size on disk.')
