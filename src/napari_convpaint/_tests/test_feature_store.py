@@ -210,11 +210,13 @@ def test_model_store_serves_across_instances(tmp_path):
     with _w.catch_warnings():
         _w.simplefilter('ignore')
         cp_off = ConvpaintModel('gaussian')
+        cp_off.disable_feature_cache()                 # reference run, without any reuse
         cp_off.set_params(tile_annotations=False, normalize=1)
         cp_off.train(stack, annot)
         seg_off = cp_off.segment(stack)
 
         cp1 = ConvpaintModel('gaussian')
+        cp1.disable_feature_cache()                    # the store alone, so the cache takes no hits
         cp1.set_params(tile_annotations=True, normalize=1)
         store = cp1.enable_feature_store(tmp_path / "store")
         cp1.train(stack, annot)                        # annotation tiles -> nothing stored
@@ -226,6 +228,7 @@ def test_model_store_serves_across_instances(tmp_path):
         assert len(store) == 3 and store.stats()['hits'] == 1
 
         cp2 = ConvpaintModel('gaussian')               # a new model (e.g. a new session)
+        cp2.disable_feature_cache()
         cp2.set_params(tile_annotations=False, normalize=1)
         store2 = cp2.enable_feature_store(tmp_path / "store")
         cp2.train(stack, annot)
@@ -273,11 +276,13 @@ def test_store_features_prepares_a_stack(tmp_path):
     with _w.catch_warnings():
         _w.simplefilter('ignore')
         cp_off = ConvpaintModel('gaussian')
+        cp_off.disable_feature_cache()                 # reference run, without any reuse
         cp_off.set_params(tile_annotations=False)
         cp_off.train(stack, annot)
         seg_off = cp_off.segment(stack)
 
         cp = ConvpaintModel('gaussian')
+        cp.disable_feature_cache()                     # the store alone, so the cache takes no hits
         cp.set_params(tile_annotations=False)          # default normalization (over the stack)
         store = cp.enable_feature_store(tmp_path / "store")
         with pytest.raises(ValueError):
@@ -538,6 +543,7 @@ def test_clear_feature_store_keeps_the_store(tmp_path):
     with _w.catch_warnings():
         _w.simplefilter('ignore')
         cp = ConvpaintModel('gaussian')
+        cp.disable_feature_cache()                     # the store alone, so the cache takes no hits
         fs = cp.enable_feature_store(tmp_path / "store")
         cp.get_feature_image(img)
         assert len(fs) == 1

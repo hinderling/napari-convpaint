@@ -298,6 +298,7 @@ def test_planes_are_the_unit_of_reuse():
         _w.simplefilter('ignore')
         # (no normalization, so that a plane is prepared identically alone and within its stack)
         cp_off = ConvpaintModel('gaussian')
+        cp_off.disable_feature_cache()                 # reference run, without any reuse
         cp_off.set_params(tile_annotations=False, normalize=1)
         cp_off.train(stack, annot)
         seg_off = cp_off.segment(stack)

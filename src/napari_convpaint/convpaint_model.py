@@ -37,6 +37,10 @@ class ConvpaintModel:
     - a `classifier`, which is responsible for the final pixel classification
     - a `Param` object, which defines the details of the model procedures, and is also defined in a separate class
 
+    Extracted features are **reused** from a RAM cache by default (the same image with the same settings
+    is not extracted twice); see `enable_feature_cache` / `disable_feature_cache`, and `enable_feature_store`
+    to keep them on disk as well.
+
     Note that the `ConvpaintModel` and its **`FeatureExtractor` model** are closely linked to each other. The intended way to
     use them is to create a `ConvpaintModel` instance, which will in turn create the corresponding `FeatureExtractor` instance.
     If a `ConvpaintModel` with another feature extractor is desired (including different configurations in layers),
@@ -110,7 +114,7 @@ class ConvpaintModel:
         self.num_features = 0
         self._fe_locked_device = None
         self._clf_locked_device = None
-        self._feature_cache = None  # created by enable_feature_cache
+        self.enable_feature_cache()  # Creates _feature_cache: features are reused from RAM by default
         self._feature_store = None  # created by enable_feature_store
         self._image_scope = None  # identity of the image worked on (see _update_image_scope)
         self._params_to_reset_training = ['channel_mode',
@@ -969,7 +973,7 @@ class ConvpaintModel:
         return features
     
 ### FEATURE REUSE: CACHE (RAM) AND STORE (DISK)
-# Both are off unless enabled (the widget enables the cache by default); see feature_cache.py and feature_store.py
+# The cache is on by default (in the API as in the widget), the store until a folder is given; see feature_cache.py and feature_store.py
 
     def enable_feature_cache(self, max_bytes=None):
         """Turn on feature caching (in RAM). When on, the native (pre-rescale) features
@@ -980,13 +984,14 @@ class ConvpaintModel:
         self-invalidating: a changed image simply misses. Bounded by a RAM budget
         (``max_bytes``, default: 2 GB, clamped to a quarter of the available RAM;
         least recently used entries are dropped).
-        Off by default in the API; the widget enables it by default."""
+        On by default; call this again to change the budget, or disable_feature_cache to
+        turn it off (e.g. in a batch over many images, where nothing is ever reused)."""
         from .feature_cache import FeatureCache
         self._feature_cache = FeatureCache(max_bytes=max_bytes)
         return self._feature_cache
 
     def disable_feature_cache(self):
-        """Turn off feature caching and free the cached features."""
+        """Turn off feature caching (on by default) and free the cached features."""
         self._feature_cache = None
 
     def clear_feature_cache(self):
