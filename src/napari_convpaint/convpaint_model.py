@@ -999,7 +999,7 @@ class ConvpaintModel:
         if self._feature_cache is not None:
             self._feature_cache.clear()
 
-    def enable_feature_store(self, folder, max_bytes=None):
+    def enable_feature_store(self, folder, max_bytes=None, prune_when_full_days=None):
         """Turn on the feature store: the native features of every extracted plane are
         kept as files in ``folder`` (no eviction, also across sessions) and reused like
         cached ones — e.g. extract the features of a stack or movie once (see
@@ -1007,11 +1007,13 @@ class ConvpaintModel:
         The folder must be empty, not yet existing, or a feature store. Nothing is ever
         removed from it automatically (see clear_feature_store and prune_feature_store);
         ``max_bytes`` caps its size instead, and once that is reached nothing more is
-        stored (default: 100 GB)."""
+        stored (default: 100 GB) - unless ``prune_when_full_days`` is given, which then
+        makes room by dropping what has not been used for that long."""
         from .feature_store import FeatureStore
         # Only replaced once the folder works: a failing constructor leaves a running store
         # connected (the widget relies on that when a chosen folder turns out to be unusable)
-        self._feature_store = FeatureStore(folder, max_bytes=max_bytes)
+        self._feature_store = FeatureStore(folder, max_bytes=max_bytes,
+                                           prune_when_full_days=prune_when_full_days)
         return self._feature_store
 
     def set_feature_cache_max_bytes(self, max_bytes):

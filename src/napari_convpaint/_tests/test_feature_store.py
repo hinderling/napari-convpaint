@@ -347,6 +347,68 @@ def test_prune_drops_what_was_not_used(tmp_path):
 
 # --- widget ------------------------------------------------------------------
 
+def test_a_full_store_makes_room_for_what_comes_next(tmp_path):
+    """With prune_when_full_days, a full store drops what went unused rather than stopping -
+    but only old entries, so a run cannot evict what it stored itself."""
+    import os, time
+    import warnings as _w
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    stack, _ = _stack_and_annot()
+    earlier = (stack[:1] * 0.5).astype(stack.dtype)  # Another image, so the stack does not reuse it
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        def model():
+            cp = ConvpaintModel('gaussian')
+            cp.disable_feature_cache()               # The store alone, so reading really reaches it
+            cp.set_params(tile_annotations=False, normalize=1) # A plane prepares as within the stack
+            return cp
+
+        cp = model()
+        store = cp.enable_feature_store(tmp_path / "store")
+        cp.store_features(earlier)
+        one_plane, old_entry = store.nbytes, store._entry_dirs()[0]
+        two_days_ago = time.time() - 2 * 86400
+        os.utime(old_entry, (two_days_ago, two_days_ago))
+
+        cp2 = model()                                # Room for two planes, one of them taken
+        store2 = cp2.enable_feature_store(tmp_path / "store", max_bytes=2 * one_plane,
+                                          prune_when_full_days=1)
+        cp2.store_features(stack)
+        assert not os.path.exists(old_entry)         # Made room with what went unused
+        assert len(store2) == 2 and store2.is_full   # And stopped rather than dropping its own
+
+        cp3 = model()                                # Without it, a full store only stops
+        store3 = cp3.enable_feature_store(tmp_path / "keeping", max_bytes=one_plane)
+        cp3.store_features(stack)
+        assert store3.is_full and len(store3) == 1
+
+
+def test_a_full_store_never_drops_the_running_session(tmp_path):
+    """Even with a span of 0, making room reaches back only to the start of the session, so a
+    run cannot wipe and rewrite its own work: it stops instead."""
+    import warnings as _w
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    stack, _ = _stack_and_annot()
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        def model():
+            cp = ConvpaintModel('gaussian')
+            cp.disable_feature_cache()
+            cp.set_params(tile_annotations=False, normalize=1)
+            return cp
+
+        cp = model()                                 # One plane, to learn what an entry costs
+        one_plane = cp.enable_feature_store(tmp_path / "measure")
+        cp.store_features(stack[:1])
+        size = one_plane.nbytes
+
+        cp2 = model()                                # Room for two, and everything is this session's
+        store = cp2.enable_feature_store(tmp_path / "store", max_bytes=2 * size,
+                                         prune_when_full_days=0)
+        cp2.store_features(stack)
+        assert store.is_full and len(store) == 2
+
+
 def test_prune_only_touches_a_marked_store(tmp_path):
     """A folder that Convpaint did not mark as a store is left alone, whatever is in it."""
     from napari_convpaint.feature_store import prune_folder

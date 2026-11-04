@@ -92,11 +92,19 @@ class FeatureStore:
         Size cap of the store; once reached, nothing more is stored (with a warning).
         None → `default_max_bytes()`. The size is tracked per session, so entries another
         instance adds in the meantime are not counted.
+    prune_when_full_days : int, optional
+        Make room when the cap is reached by dropping the entries that have not been used
+        for that many days (once per time it fills up, see prune). None (default) = keep
+        everything and stop storing instead, which is what a folder chosen for keeping wants.
+        What this session has written or read is never dropped, however long it runs, so the
+        span only says how far beyond this session to reach back; 0 keeps exactly this session's.
     """
 
-    def __init__(self, folder, max_bytes=None):
+    def __init__(self, folder, max_bytes=None, prune_when_full_days=None):
         self.folder = str(folder)
         self.max_bytes = default_max_bytes() if max_bytes is None else max_bytes
+        self.prune_when_full_days = prune_when_full_days
+        self._session_start = time.time() # Nothing used since then can be dropped to make room
         self.hits = 0
         self.misses = 0
         self.is_full = False # Nothing fits anymore (cap or disk); extracting to store is then pointless
@@ -232,6 +240,13 @@ class FeatureStore:
         nbytes = sum(a.nbytes for arrays, _, _ in entry["levels"] for a in arrays)
         if not self._folder_ready():
             return
+        if self.max_bytes is not None and self._nbytes + nbytes > self.max_bytes:
+            # Make room once with what went unused, reaching back at least to the start of this
+            # session (entries are touched when read), so that a run can never drop what it wrote
+            # or read itself, however long it takes and however short the span is
+            if self.prune_when_full_days is not None and not self.is_full:
+                session_days = (time.time() - self._session_start) / 86400
+                self.prune(max(self.prune_when_full_days, session_days))
         if self.max_bytes is not None and self._nbytes + nbytes > self.max_bytes:
             self.is_full = True
             self._warn_no_write(f"size cap ({self.max_bytes / 1e9:.1f} GB) reached, features are not "

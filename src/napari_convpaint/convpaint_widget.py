@@ -113,6 +113,8 @@ class ConvpaintWidget(QWidget):
         self.max_classes = 255 # Annotations and segmentation are uint8, so higher values would wrap around
         self.store_max_age_days = 7 # Features unused for that long are dropped from Convpaint's own folder
                                     # (None skips it; 0 empties it at every start, effectively a cache on disk)
+        self.store_full_age_days = 1 # Once it is full, that is how far back it makes room (default folder only;
+                                     # None skips it, 0 keeps only what the running session used)
         # suffixes for opening images in multifile, to exclude potential annotation/segmentation files
         self.multifile_annot_suffixes = ["annot", "annotation", "annotations", "scribble", "scribbles", "scrib"]
         self.multifile_seg_suffixes = ["seg", "segmentation", "segmentations", "prediction", "predictions", "pred", "preds", "mask", "masks"]
@@ -1118,7 +1120,11 @@ class ConvpaintWidget(QWidget):
             # Not disabled first: enable_feature_store replaces the store only once the new folder
             # works, so a store that is running survives an unusable one (see the except branch)
             try:
-                self.cp_model.enable_feature_store(self.store_folder, max_bytes=max_bytes)
+                # Convpaint's own folder makes room for what comes next; a chosen one keeps
+                # what it was given and says so when it is full
+                own = self.store_folder == self._store_folder_default
+                self.cp_model.enable_feature_store(self.store_folder, max_bytes=max_bytes,
+                                                   prune_when_full_days=self.store_full_age_days if own else None)
                 self._store_folder_ok = self.store_folder # Keep as the fall-back for the next call
                 self._note_store_folder(self.store_folder)
             except ValueError as e: # Folder not usable (not empty and not a feature store, no write access, ...)
