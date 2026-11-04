@@ -34,6 +34,17 @@ _META = "meta.json" # Per-entry description (shapes, native form)
 _DISK_HEADROOM_BYTES = 2 * 1024 ** 3 # Never fill the disk below this much free space
 
 
+# Default cap, see default_max_bytes().
+_DEFAULT_MAX_BYTES = 100 * 10**9  # 100 GB
+
+
+def default_max_bytes() -> int:
+    """The cap used when none is given: generous, as the store never drops anything by itself
+    and simply stops storing once it is reached - a guard rail against growing without end,
+    not a budget (the disk is protected by _DISK_HEADROOM_BYTES in any case)."""
+    return _DEFAULT_MAX_BYTES
+
+
 class FeatureStore:
     """Feature store in a folder: one sub-folder per entry (plane), no eviction.
 
@@ -44,13 +55,13 @@ class FeatureStore:
         folder must be empty or a feature store (marked by a marker file).
     max_bytes : int, optional
         Size cap of the store; once reached, nothing more is stored (with a warning).
-        None (default) = no cap (the disk headroom still applies). The size is tracked per
-        session, so entries another instance adds in the meantime are not counted.
+        None → `default_max_bytes()`. The size is tracked per session, so entries another
+        instance adds in the meantime are not counted.
     """
 
     def __init__(self, folder, max_bytes=None):
         self.folder = str(folder)
-        self.max_bytes = max_bytes
+        self.max_bytes = default_max_bytes() if max_bytes is None else max_bytes
         self.hits = 0
         self.misses = 0
         self._warned_no_write = False

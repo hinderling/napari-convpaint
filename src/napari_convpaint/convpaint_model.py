@@ -1005,8 +1005,8 @@ class ConvpaintModel:
         cached ones — e.g. extract the features of a stack or movie once (see
         store_features), then train and predict from them. Same keys as the cache.
         The folder must be empty, not yet existing, or a feature store. Nothing is ever
-        removed from it automatically (see clear_feature_store). ``max_bytes`` optionally
-        caps the size of the store (default: no cap, only a disk headroom)."""
+        removed from it automatically (see clear_feature_store); ``max_bytes`` caps its size
+        instead, and once that is reached nothing more is stored (default: 100 GB)."""
         from .feature_store import FeatureStore
         # Only replaced once the folder works: a failing constructor leaves a running store
         # connected (the widget relies on that when a chosen folder turns out to be unusable)

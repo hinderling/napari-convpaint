@@ -106,6 +106,10 @@ class ConvpaintWidget(QWidget):
         self.selected_channel = None
         self.spatial_dim_info_thresh = 1000000
         self.default_brush_size = 3
+        from .feature_cache import default_max_bytes as cache_default_max_bytes
+        from .feature_store import default_max_bytes as store_default_max_bytes
+        self.default_cache_max_mb = int(cache_default_max_bytes() / 1e6) # RAM (MB) the feature cache may use
+        self.default_store_max_gb = int(store_default_max_bytes() / 1e9) # Disk (GB) the feature store may use
         self.max_classes = 255 # Annotations and segmentation are uint8, so higher values would wrap around
         # suffixes for opening images in multifile, to exclude potential annotation/segmentation files
         self.multifile_annot_suffixes = ["annot", "annotation", "annotations", "scribble", "scribbles", "scrib"]
@@ -648,7 +652,7 @@ class ConvpaintWidget(QWidget):
             self.advanced_cache_group.glayout.addWidget(self.cache_max_ram_label, 2, 0, 1, 2)
             self.cache_max_ram_spinbox = QSpinBox()
             self.cache_max_ram_spinbox.setRange(64, 1024 * 1024)  # 64 MB .. 1 TB
-            self.cache_max_ram_spinbox.setSingleStep(256)
+            self.cache_max_ram_spinbox.setSingleStep(256) # Divides the default (2048), so the arrows stay round
             # Apply a typed limit only once it is complete: typing 4096 passes through 409 MB,
             # which would evict most of the cache on the way (the arrows still apply immediately)
             self.cache_max_ram_spinbox.setKeyboardTracking(False)
@@ -672,14 +676,22 @@ class ConvpaintWidget(QWidget):
             self.advanced_cache_group.glayout.addWidget(self.store_folder_label, 6, 0, 1, 2)
             self.btn_store_folder = QPushButton('Choose folder')
             self.advanced_cache_group.glayout.addWidget(self.btn_store_folder, 6, 2, 1, 1)
+            self.store_max_size_label = QLabel('Max store size (GB)')
+            self.advanced_cache_group.glayout.addWidget(self.store_max_size_label, 7, 0, 1, 2)
+            self.store_max_size_spinbox = QSpinBox()
+            self.store_max_size_spinbox.setRange(1, 10 * 1000)  # 1 GB .. 10 TB (disk is cheap)
+            self.store_max_size_spinbox.setSingleStep(10) # Divides the default (100), so the arrows stay round
+            self.store_max_size_spinbox.setKeyboardTracking(False) # Apply a typed limit only once complete
+            self.store_max_size_spinbox.setValue(self.store_max_gb)
+            self.advanced_cache_group.glayout.addWidget(self.store_max_size_spinbox, 7, 2, 1, 1)
             self.store_size_label = QLabel('Stored: (store off)')
-            self.advanced_cache_group.glayout.addWidget(self.store_size_label, 7, 0, 1, 2)
+            self.advanced_cache_group.glayout.addWidget(self.store_size_label, 8, 0, 1, 2)
             self.btn_store_delete = QPushButton('Delete stored features')
             self.btn_store_delete.setEnabled(self.store_enabled)
-            self.advanced_cache_group.glayout.addWidget(self.btn_store_delete, 7, 2, 1, 1)
+            self.advanced_cache_group.glayout.addWidget(self.btn_store_delete, 8, 2, 1, 1)
             self.btn_store_features = QPushButton('Store features of this image/stack')
             self.btn_store_features.setEnabled(self.store_enabled)
-            self.advanced_cache_group.glayout.addWidget(self.btn_store_features, 8, 0, 1, 3)
+            self.advanced_cache_group.glayout.addWidget(self.btn_store_features, 9, 0, 1, 3)
 
         # === MULTIFILE TAB ===
 
@@ -939,6 +951,10 @@ class ConvpaintWidget(QWidget):
             for w in [self.store_folder_label, self.btn_store_folder]:
                 w.setToolTip('Folder of the feature store (must be empty, not yet existing, or a feature store); choosing one enables the store.\n' +
                              'The folders used so far are listed in\n' + str(_store_folders_file()) + '.')
+            for w in [self.store_max_size_label, self.store_max_size_spinbox]:
+                w.setToolTip('Maximum size the feature store may take on disk.\n' +
+                             'Once it is reached nothing more is stored, and nothing is deleted either\n' +
+                             '(unlike the cache, which drops its oldest entries); use "Delete stored features".')
             self.store_size_label.setToolTip('Number of stored images/planes and their size on disk.')
             self.btn_store_delete.setToolTip('Delete all stored features in the folder (the store stays active).')
             self.btn_store_features.setToolTip('Extract the features of the selected image (all planes of a stack) into the feature store now,\n' +
@@ -1010,7 +1026,8 @@ class ConvpaintWidget(QWidget):
                       self.text_input_channels, self.btn_switch_axes, self.check_add_seg, self.check_add_probas, self.check_add_instances, self.inst_min_size_label, self.text_inst_min_size, self.check_split_touching, self.btn_add_features, self.btn_add_features_stack,
                       self.pca_label, self.text_features_pca, self.kmeans_label, self.text_features_kmeans,
                       self.check_use_cache, self.cache_max_ram_label, self.cache_max_ram_spinbox, self.cache_size_label, self.btn_cache_clear,
-                      self.check_use_store, self.store_folder_label, self.btn_store_folder, self.store_size_label, self.btn_store_delete,
+                      self.check_use_store, self.store_folder_label, self.btn_store_folder,
+                      self.store_max_size_label, self.store_max_size_spinbox, self.store_size_label, self.btn_store_delete,
                       self.btn_store_features]:
                 w.setToolTip('')
 
@@ -1091,13 +1108,15 @@ class ConvpaintWidget(QWidget):
         chosen folder; unchecking only disconnects it (the stored files are kept). The model's
         store is the single source of truth for the widget state (checkbox, buttons, labels).
         A folder that cannot be used is reported and not kept."""
+        self.store_max_gb = self.store_max_size_spinbox.value()
+        max_bytes = int(self.store_max_gb) * 1_000_000_000 # Decimal GB, as the store grows in that order
         if not self.check_use_store.isChecked():
             self.cp_model.disable_feature_store()
         elif recreate or self.cp_model._feature_store is None:
             # Not disabled first: enable_feature_store replaces the store only once the new folder
             # works, so a store that is running survives an unusable one (see the except branch)
             try:
-                self.cp_model.enable_feature_store(self.store_folder)
+                self.cp_model.enable_feature_store(self.store_folder, max_bytes=max_bytes)
                 self._store_folder_ok = self.store_folder # Keep as the fall-back for the next call
                 self._note_store_folder(self.store_folder)
             except ValueError as e: # Folder not usable (not empty and not a feature store, no write access, ...)
@@ -1107,6 +1126,8 @@ class ConvpaintWidget(QWidget):
                 show_info(f'Feature store folder not changed: {e}' if keep else
                           f'Feature store not enabled: {e}')
                 self.store_folder = self._store_folder_ok # Back to the last usable folder
+        else:
+            self.cp_model._feature_store.max_bytes = max_bytes # The cap is the one setting that changes in place
         self.store_enabled = self.cp_model._feature_store is not None
         self.check_use_store.blockSignals(True) # setChecked would call this method again
         self.check_use_store.setChecked(self.store_enabled)
@@ -1328,6 +1349,7 @@ class ConvpaintWidget(QWidget):
             self.cache_max_ram_spinbox.editingFinished.connect(self._warn_cache_ram)
             self.btn_cache_clear.clicked.connect(self._on_clear_cache)
             self.check_use_store.stateChanged.connect(self._apply_feature_store)
+            self.store_max_size_spinbox.valueChanged.connect(self._apply_feature_store)
             self.btn_store_folder.clicked.connect(self._on_choose_store_folder)
             self.btn_store_delete.clicked.connect(self._on_delete_stored_features)
             self.btn_store_features.clicked.connect(self._on_store_features)
@@ -2622,7 +2644,9 @@ class ConvpaintWidget(QWidget):
         self._apply_feature_cache(recreate=True)
         # The checkbox holds whether the store is on, and the model keeps the old folder until the
         # settings are applied again (setChecked stays silent if the checkbox is off already)
-        self.check_use_store.setChecked(self.store_enabled)
+        store_enabled, store_max_gb = self.store_enabled, self.store_max_gb
+        self.check_use_store.setChecked(store_enabled)
+        self.store_max_size_spinbox.setValue(store_max_gb)
         self._apply_feature_store(recreate=True)
         self.text_input_channels.setText(self.input_channels)
         self.check_add_seg.setChecked(self.add_seg)
@@ -2683,7 +2707,6 @@ class ConvpaintWidget(QWidget):
 
     def _reset_attributes(self):
         """Reset all attributes of the widget."""
-        from .feature_cache import default_max_bytes # The budget the API starts from as well
         # Set widget-specific attributes
         self.image_mean = None
         self.image_std = None
@@ -2712,9 +2735,10 @@ class ConvpaintWidget(QWidget):
         self.cont_training = "Image" # Update features for subsequent training ("Image" or "Off" or "Global")
         self.use_dask = False # Use Dask for parallel processing
         self.cache_enabled = True # Feature cache on by default: reuse extracted features when re-segmenting / re-training the same image
-        self.cache_max_mb = int(default_max_bytes() / 1e6) # Max RAM (MB) the feature cache may use (2 GB, clamped to a quarter of the available RAM for small machines)
+        self.cache_max_mb = self.default_cache_max_mb # Max RAM (MB) the feature cache may use
         self.untile_info_shown = False # Whether the user was informed that auto-segment with caching skips annotation tiles
         self.store_enabled = False # Feature store off by default (on = keep the features of all processed planes on disk)
+        self.store_max_gb = self.default_store_max_gb # Max disk space (GB) the feature store may take
         self.store_folder = str(_convpaint_cache_dir() / 'feature_store') # Default folder of the feature store
         self._store_folder_default = self.store_folder # Shown as the default rather than as a path
         self._store_folder_ok = self.store_folder # Last folder the store could be enabled with (to fall back to)
@@ -2995,7 +3019,9 @@ class ConvpaintWidget(QWidget):
             self.store_size_label.setText('Stored: (store off)')
         else:
             s = fs.stats()
-            self.store_size_label.setText(f'Stored: {s["entries"]} planes, {s["bytes"] / 1e6:.0f} MB')
+            size = (f'{s["bytes"] / 1e9:.1f} GB' if s["bytes"] >= 1e9 else # As the cap, which is in GB,
+                    f'{s["bytes"] / 1e6:.0f} MB')                         # unless the store is still small
+            self.store_size_label.setText(f'Stored: {s["entries"]} planes, {size}')
 
 
     def _get_layer_transform_kwargs(self, img_layer, num_spatial_dims, num_leading_dims=0):

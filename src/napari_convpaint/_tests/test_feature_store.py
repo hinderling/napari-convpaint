@@ -320,6 +320,25 @@ def test_widget_choose_folder_starts_where_the_store_is(make_napari_viewer, tmp_
     assert offered[-1] == str(chosen)
 
 
+def test_widget_store_size_cap(make_napari_viewer, tmp_path):
+    """The cap of the spinbox reaches the store, changes without recreating it, and is restored."""
+    from napari_convpaint.convpaint_widget import ConvpaintWidget
+    w = ConvpaintWidget(make_napari_viewer())
+    w.ensure_init()
+    default_gb = w.store_max_gb
+    w.store_folder = str(tmp_path / 'store')
+    w.check_use_store.setChecked(True)
+    w._apply_feature_store(recreate=True)
+    fs = w.cp_model._feature_store
+    assert fs.max_bytes == default_gb * 1_000_000_000
+
+    w.store_max_size_spinbox.setValue(5)
+    assert fs.max_bytes == 5 * 1_000_000_000 and w.cp_model._feature_store is fs # Changed in place
+
+    w._on_reset_convpaint()
+    assert w.store_max_gb == default_gb and w.store_max_size_spinbox.value() == default_gb
+
+
 def test_widget_notes_the_folders_used(make_napari_viewer, tmp_path):
     """Every folder the store is enabled with is listed once in Convpaint's own folder."""
     from napari_convpaint.convpaint_widget import ConvpaintWidget, _store_folders_file
