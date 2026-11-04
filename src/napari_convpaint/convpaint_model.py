@@ -1005,8 +1005,9 @@ class ConvpaintModel:
         cached ones — e.g. extract the features of a stack or movie once (see
         store_features), then train and predict from them. Same keys as the cache.
         The folder must be empty, not yet existing, or a feature store. Nothing is ever
-        removed from it automatically (see clear_feature_store); ``max_bytes`` caps its size
-        instead, and once that is reached nothing more is stored (default: 100 GB)."""
+        removed from it automatically (see clear_feature_store and prune_feature_store);
+        ``max_bytes`` caps its size instead, and once that is reached nothing more is
+        stored (default: 100 GB)."""
         from .feature_store import FeatureStore
         # Only replaced once the folder works: a failing constructor leaves a running store
         # connected (the widget relies on that when a chosen folder turns out to be unusable)
@@ -1032,6 +1033,13 @@ class ConvpaintModel:
         """Delete the stored features from disk, keeping the store itself enabled."""
         if self._feature_store is not None:
             self._feature_store.clear()
+
+    def prune_feature_store(self, max_age_days):
+        """Delete the stored features that have not been used for `max_age_days` days, keeping
+        the store enabled; returns how many entries were deleted. Nothing calls this on its own."""
+        if self._feature_store is None:
+            return 0
+        return self._feature_store.prune(max_age_days)
 
     def store_features(self, image, in_channels=None, skip_norm=False, fe_use_device=None):
         """
@@ -1069,7 +1077,8 @@ class ConvpaintModel:
             for unit in units:
                 if self._feature_store.is_full: # Extracting without being able to store is pointless
                     warnings.warn(f"Feature store full: stopped after {done} of {total} planes "
-                                  "(delete stored features or raise the cap, see set_feature_store_max_bytes).")
+                                  "(see clear_feature_store, prune_feature_store and "
+                                  "set_feature_store_max_bytes).")
                     return
                 self._get_features(unit, restore_input_form=False, in_channels=None, skip_norm=True,
                                    use_device=fe_use_device)

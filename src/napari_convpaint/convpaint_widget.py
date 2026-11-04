@@ -111,6 +111,8 @@ class ConvpaintWidget(QWidget):
         self.default_cache_max_mb = int(cache_default_max_bytes() / 1e6) # RAM (MB) the feature cache may use
         self.default_store_max_gb = int(store_default_max_bytes() / 1e9) # Disk (GB) the feature store may use
         self.max_classes = 255 # Annotations and segmentation are uint8, so higher values would wrap around
+        self.store_max_age_days = 7 # Features unused for that long are dropped from Convpaint's own folder
+                                    # (None skips it; 0 empties it at every start, effectively a cache on disk)
         # suffixes for opening images in multifile, to exclude potential annotation/segmentation files
         self.multifile_annot_suffixes = ["annot", "annotation", "annotations", "scribble", "scribbles", "scrib"]
         self.multifile_seg_suffixes = ["seg", "segmentation", "segmentations", "prediction", "predictions", "pred", "preds", "mask", "masks"]
@@ -1157,6 +1159,13 @@ class ConvpaintWidget(QWidget):
         # === MODEL DEFAULTS & WIDGET POPULATION ===
         self._import_convpaint_model_class()
         self.cp_model = self._cpm_class()
+        # Tidy up Convpaint's own folder once per session, whether the store is used or not (a
+        # chosen folder is never touched); nothing can age past the limit while a session runs
+        from .feature_store import prune_folder
+        dropped = prune_folder(self._store_folder_default, self.store_max_age_days)
+        if dropped:
+            show_info(f'Feature store: {dropped} planes unused for over {self.store_max_age_days} '
+                      'days were removed from the default location.')
         self.cache_max_ram_spinbox.setValue(self.cache_max_mb)
         self._apply_feature_cache(recreate=True)
         self._apply_feature_store(recreate=True)
@@ -3011,7 +3020,8 @@ class ConvpaintWidget(QWidget):
         if self.store_folder == self._store_folder_default:
             self.store_folder_label.setText(self.store_folder, text='Default location',
                                             tooltip="Convpaint's own folder:\n" + self.store_folder +
-                                                    "\nNothing here is ever deleted automatically.")
+                                                    f"\nFeatures unused for {self.store_max_age_days} days are "
+                                                    "dropped from it; a folder you choose is never touched.")
         else:
             self.store_folder_label.setText(self.store_folder)
         fs = self.cp_model._feature_store

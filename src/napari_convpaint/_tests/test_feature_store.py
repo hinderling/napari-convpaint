@@ -319,7 +319,72 @@ def test_store_features_stops_when_full(tmp_path):
     assert store.is_full
 
 
+def test_prune_drops_what_was_not_used(tmp_path):
+    """Entries are pruned by the time they were last used, not by the time they were stored:
+    reading one keeps it, and the store prunes only when it is asked to."""
+    import os, time
+    import warnings as _w
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    stack, annot = _stack_and_annot()
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        cp = ConvpaintModel('gaussian')
+        cp.disable_feature_cache()                 # So that reading really reaches the store
+        # (no normalization, so that a plane is prepared identically alone and within its stack)
+        cp.set_params(tile_annotations=False, normalize=1)
+        store = cp.enable_feature_store(tmp_path / "store")
+        cp.store_features(stack)
+        cp.train(stack, annot)
+        assert len(store) == 3
+
+        untouched = time.time() - 40 * 86400       # All three look unused for 40 days
+        for d in store._entry_dirs():
+            os.utime(d, (untouched, untouched))
+        cp.segment(stack[:1])                      # Reading the first plane marks it as used
+        assert len(store) == 3                     # Nothing is dropped without being asked
+        assert cp.prune_feature_store(30) == 2 and len(store) == 1
+
+
 # --- widget ------------------------------------------------------------------
+
+def test_prune_only_touches_a_marked_store(tmp_path):
+    """A folder that Convpaint did not mark as a store is left alone, whatever is in it."""
+    from napari_convpaint.feature_store import prune_folder
+    import os, time
+    foreign = tmp_path / 'not_a_store'
+    entry = foreign / 'looks_like_an_entry'
+    entry.mkdir(parents=True)
+    (entry / 'meta.json').write_text('{}')                  # Even with what an entry looks like
+    untouched = time.time() - 40 * 86400
+    os.utime(entry, (untouched, untouched))
+    assert prune_folder(foreign, 30) == 0 and entry.is_dir()
+
+
+def test_widget_prunes_its_own_folder_at_start(make_napari_viewer):
+    """Convpaint's own folder is tidied up once per session, whether the store is used or not."""
+    import os, time
+    import warnings as _w
+    import platformdirs
+    from pathlib import Path
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    from napari_convpaint.convpaint_widget import ConvpaintWidget
+    default = Path(platformdirs.user_cache_dir('convpaint', appauthor=False)) / 'feature_store'
+    stack, _ = _stack_and_annot()
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        cp = ConvpaintModel('gaussian')
+        cp.set_params(tile_annotations=False)
+        store = cp.enable_feature_store(default)
+        cp.store_features(stack)
+        assert len(store) == 3
+
+        untouched = time.time() - 40 * 86400       # Not used for 40 days, and nobody opens the store
+        for d in store._entry_dirs():
+            os.utime(d, (untouched, untouched))
+        w = ConvpaintWidget(make_napari_viewer())
+        w.ensure_init()
+    assert len(store) == 0 and not w.check_use_store.isChecked()
+
 
 def test_widget_choose_folder_starts_where_the_store_is(make_napari_viewer, tmp_path, monkeypatch):
     """The dialog opens at the folder in use - the default one (created for it) until another
