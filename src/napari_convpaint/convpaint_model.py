@@ -1013,6 +1013,17 @@ class ConvpaintModel:
         self._feature_store = FeatureStore(folder, max_bytes=max_bytes)
         return self._feature_store
 
+    def set_feature_cache_max_bytes(self, max_bytes):
+        """Change the RAM budget of the cache in place, dropping entries if it is over it now."""
+        if self._feature_cache is not None:
+            self._feature_cache.set_max_bytes(max_bytes)
+
+    def set_feature_store_max_bytes(self, max_bytes):
+        """Change the size cap of the store in place; nothing is deleted, but storing resumes
+        if the entries fit under the new cap again."""
+        if self._feature_store is not None:
+            self._feature_store.set_max_bytes(max_bytes)
+
     def disable_feature_store(self):
         """Turn off the feature store (the stored files are kept; see clear_feature_store)."""
         self._feature_store = None
@@ -1052,11 +1063,17 @@ class ConvpaintModel:
         data, _ = self._prep_dims(image)
         data = self._prep_whole_images(data, in_channels, skip_norm)
         # Extract plane by plane (bounded memory); FEs with 3D context need the whole stack
+        done, total = 0, sum(1 if self.fe_model.get_has_3d_context() else d.shape[1] for d in data)
         for d in data:
             units = [d] if self.fe_model.get_has_3d_context() else [d[:, z:z+1] for z in range(d.shape[1])]
             for unit in units:
+                if self._feature_store.is_full: # Extracting without being able to store is pointless
+                    warnings.warn(f"Feature store full: stopped after {done} of {total} planes "
+                                  "(delete stored features or raise the cap, see set_feature_store_max_bytes).")
+                    return
                 self._get_features(unit, restore_input_form=False, in_channels=None, skip_norm=True,
                                    use_device=fe_use_device)
+                done += 1
 
     def _update_image_scope(self, data):
         """Note when the work moves on to another image, identified by its shape and its

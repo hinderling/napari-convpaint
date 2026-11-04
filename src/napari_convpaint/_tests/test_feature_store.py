@@ -297,6 +297,28 @@ def test_store_features_prepares_a_stack(tmp_path):
     assert np.array_equal(seg, seg_off)
 
 
+def test_store_features_stops_when_full(tmp_path):
+    """Once nothing fits anymore, store_features stops instead of extracting for nothing;
+    raising the cap lets it take the rest."""
+    from napari_convpaint.convpaint_model import ConvpaintModel
+    stack, _ = _stack_and_annot()
+    cp = ConvpaintModel('gaussian')
+    cp.disable_feature_cache()                     # The store alone, so its hits are its own
+    cp.set_params(tile_annotations=False)
+    store = cp.enable_feature_store(tmp_path / "store", max_bytes=1)   # Nothing fits at all
+    with pytest.warns(UserWarning, match='stopped after 1 of 3 planes'): # The first one has to be tried
+        cp.store_features(stack)
+    assert len(store) == 0 and store.is_full
+
+    cp.set_feature_store_max_bytes(10 ** 9)        # Room again, and the mark is given another try
+    assert not store.is_full
+    cp.store_features(stack)
+    assert len(store) == 3
+
+    cp.set_feature_store_max_bytes(store.nbytes // 2) # Below what is stored: full without trying
+    assert store.is_full
+
+
 # --- widget ------------------------------------------------------------------
 
 def test_widget_choose_folder_starts_where_the_store_is(make_napari_viewer, tmp_path, monkeypatch):

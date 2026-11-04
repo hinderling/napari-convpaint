@@ -1099,7 +1099,7 @@ class ConvpaintWidget(QWidget):
         elif fc is None or recreate:
             self.cp_model.enable_feature_cache(max_bytes=max_bytes)
         else:
-            fc.set_max_bytes(max_bytes)
+            self.cp_model.set_feature_cache_max_bytes(max_bytes)
         self._refresh_reuse_labels()
 
     def _apply_feature_store(self, *args, recreate=False):
@@ -1127,7 +1127,7 @@ class ConvpaintWidget(QWidget):
                           f'Feature store not enabled: {e}')
                 self.store_folder = self._store_folder_ok # Back to the last usable folder
         else:
-            self.cp_model._feature_store.max_bytes = max_bytes # The cap is the one setting that changes in place
+            self.cp_model.set_feature_store_max_bytes(max_bytes) # The one setting that changes in place
         self.store_enabled = self.cp_model._feature_store is not None
         self.check_use_store.blockSignals(True) # setChecked would call this method again
         self.check_use_store.setChecked(self.store_enabled)
@@ -4274,6 +4274,11 @@ class ConvpaintWidget(QWidget):
             pbr = progress(range(num_steps))
             for step in pbr:
                 pbr.set_description(self._reuse_progress_text('Storing features', reuse_before))
+                if self.cp_model._feature_store.is_full: # Extracting without being able to store is pointless
+                    show_info(f'Feature store full: stopped after {step} of {num_steps} planes. '
+                              'Delete stored features or raise the max store size.')
+                    pbr.close()
+                    break
                 image = image_stack_norm[..., step, :, :]
                 self.cp_model.store_features(image, in_channels=in_channels, skip_norm=True,
                                              fe_use_device=self.fe_device)
